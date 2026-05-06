@@ -71,6 +71,12 @@ class DreEntryData:
     category: str
 
 
+@dataclass
+class CashImportData:
+    header_date: date | None
+    entries: list[DreEntryData]
+
+
 def normalize_text(value: Any) -> str:
     text = "" if value is None else str(value)
     text = unicodedata.normalize("NFKD", text)
@@ -342,6 +348,65 @@ def categorize_expense(history: str) -> str:
     return "outras_despesas"
 
 
+def extract_cpr_rows(rows: list[tuple[Any, ...]], reference_date: date | None) -> list[DreEntryData]:
+    entries: list[DreEntryData] = []
+
+    for index, row in enumerate(rows):
+        if not any(normalize_text(cell) == "cpr" for cell in row):
+            continue
+
+        print(f"Secao CPR encontrada na linha {index + 1}.")
+        start_index = index + 2
+
+        for row_index, data_row in enumerate(rows[start_index:], start=start_index + 1):
+            first_cell = normalize_text(data_row[0] if data_row else None)
+            if first_cell.startswith("totais"):
+                print(f"Fim da secao CPR encontrado na linha {row_index}: {data_row[0]}")
+                break
+            if all(cell is None or str(cell).strip() == "" for cell in data_row):
+                print(f"Fim da secao CPR por linha vazia na linha {row_index}.")
+                break
+
+            row_date = parse_date(data_row[0] if len(data_row) > 0 else None)
+            description = str(data_row[1] if len(data_row) > 1 and data_row[1] is not None else "").strip()
+            amount = parse_decimal(data_row[2] if len(data_row) > 2 else None)
+            translated_history = str(
+                data_row[5] if len(data_row) > 5 and data_row[5] is not None else description
+            ).strip()
+
+            if amount is None or amount == Decimal("0"):
+                continue
+
+            entry_date = reference_date or row_date
+            if entry_date is None:
+                print(f"Aviso: linha CPR ignorada sem data de referencia: {data_row}")
+                continue
+
+            category = categorize_expense(translated_history)
+            print(
+                "CPR linha encontrada: "
+                f"linha={row_index}, data={row_date}, descricao='{description}', "
+                f"valor={amount}, historico='{translated_history}', categoria={category}"
+            )
+
+            entries.append(
+                DreEntryData(
+                    reference_date=entry_date,
+                    description=description or translated_history,
+                    amount=amount,
+                    translated_history=translated_history,
+                    category=category,
+                )
+            )
+
+        break
+
+    if not entries:
+        print("Aviso: nenhuma linha de despesa encontrada na secao CPR.")
+
+    return entries
+
+
 def extract_section_rows(rows: list[tuple[Any, ...]], section_name: str) -> list[DreEntryData]:
     section_key = normalized_key(section_name)
     entries: list[DreEntryData] = []
@@ -403,11 +468,13 @@ def load_carteira(path: Path) -> tuple[FundQuoteData, list[FinancialPositionData
     return quote, positions
 
 
-def load_caixa(path: Path) -> list[DreEntryData]:
+def load_caixa(path: Path, reference_date: date | None = None) -> CashImportData:
     workbook = load_workbook(path, data_only=True)
     worksheet = workbook["número1"] if "número1" in workbook.sheetnames else workbook.active
     rows = iter_rows(worksheet)
-    return extract_section_rows(rows, "CPR") + extract_section_rows(rows, "OutrosAtivos")
+    header_date = reference_date
+    entries = extract_cpr_rows(rows, header_date) + extract_section_rows(rows, "OutrosAtivos")
+    return CashImportData(header_date=header_date, entries=entries)
 
 
 def stable_id(prefix: str, *parts: Any) -> str:
@@ -430,7 +497,22 @@ def load_environment() -> None:
 def find_fund_id(cursor: Any, fund_name: str) -> str:
     cursor.execute(
         """
-        SELECT id
+        SELECT id, name
+        FROM funds
+        WHERE name = %s OR "shortName" = %s
+        ORDER BY name
+        LIMIT 1
+        """,
+        (fund_name, fund_name),
+    )
+    row = cursor.fetchone()
+    if row:
+        print(f"Fundo encontrado por correspondencia exata: {row[1]} ({row[0]})")
+        return row[0]
+
+    cursor.execute(
+        """
+        SELECT id, name
         FROM funds
         WHERE name ILIKE %s OR "shortName" ILIKE %s
         ORDER BY name
@@ -440,6 +522,7 @@ def find_fund_id(cursor: Any, fund_name: str) -> str:
     )
     row = cursor.fetchone()
     if row:
+        print(f"Fundo encontrado por busca parcial: {row[1]} ({row[0]})")
         return row[0]
 
     normalized_name = normalize_text(fund_name)
@@ -447,7 +530,7 @@ def find_fund_id(cursor: Any, fund_name: str) -> str:
     for word in words:
         cursor.execute(
             """
-            SELECT id
+            SELECT id, name
             FROM funds
             WHERE name ILIKE %s OR "shortName" ILIKE %s
             ORDER BY name
@@ -457,6 +540,7 @@ def find_fund_id(cursor: Any, fund_name: str) -> str:
         )
         row = cursor.fetchone()
         if row:
+            print(f"Fundo encontrado por palavra-chave '{word}': {row[1]} ({row[0]})")
             return row[0]
 
     raise ValueError(f"Fundo nao encontrado no banco para o nome extraido: {fund_name}")
@@ -465,14 +549,7 @@ def find_fund_id(cursor: Any, fund_name: str) -> str:
 def dre_account_ids(cursor: Any) -> dict[str, str]:
     cursor.execute("SELECT id, code FROM dre_accounts")
     rows = cursor.fetchall()
-    accounts = {code: account_id for account_id, code in rows}
-    missing = sorted(set(DRE_CATEGORIES) - set(accounts))
-    if missing:
-        raise ValueError(
-            "Contas DRE ausentes no banco. Rode o seed antes da importacao. "
-            f"Faltando: {', '.join(missing)}"
-        )
-    return accounts
+    return {code: account_id for account_id, code in rows}
 
 
 def upsert_quote(cursor: Any, fund_id: str, quote: FundQuoteData) -> None:
@@ -506,7 +583,24 @@ def upsert_quote(cursor: Any, fund_id: str, quote: FundQuoteData) -> None:
 
 
 def upsert_dre_entries(cursor: Any, fund_id: str, accounts: dict[str, str], entries: list[DreEntryData]) -> int:
+    imported_count = 0
+
     for entry in entries:
+        account_id = accounts.get(entry.category)
+        if account_id is None:
+            print(
+                f"Aviso: conta DRE '{entry.category}' nao encontrada. "
+                "Usando fallback 'outras_despesas'."
+            )
+            account_id = accounts.get("outras_despesas")
+
+        if account_id is None:
+            print(
+                "Aviso: conta DRE fallback 'outras_despesas' nao existe. "
+                f"Registro ignorado: {entry.description}"
+            )
+            continue
+
         entry_id = stable_id(
             "dre",
             fund_id,
@@ -532,13 +626,15 @@ def upsert_dre_entries(cursor: Any, fund_id: str, accounts: dict[str, str], entr
             (
                 entry_id,
                 fund_id,
-                accounts[entry.category],
+                account_id,
                 entry.reference_date,
                 entry.amount,
                 entry.description,
             ),
         )
-    return len(entries)
+        imported_count += 1
+
+    return imported_count
 
 
 def upsert_positions(cursor: Any, fund_id: str, positions: list[FinancialPositionData]) -> int:
@@ -592,14 +688,14 @@ def run_import(carteira_path: Path, caixa_path: Path) -> None:
         raise RuntimeError("DATABASE_URL nao encontrada. Configure o arquivo .env antes de importar.")
 
     quote, positions = load_carteira(carteira_path)
-    dre_entries = load_caixa(caixa_path)
+    cash_import = load_caixa(caixa_path, quote.position_date)
 
     with psycopg2.connect(database_url) as connection:
         with connection.cursor() as cursor:
             fund_id = find_fund_id(cursor, quote.fund_name)
             accounts = dre_account_ids(cursor)
             upsert_quote(cursor, fund_id, quote)
-            dre_count = upsert_dre_entries(cursor, fund_id, accounts, dre_entries)
+            dre_count = upsert_dre_entries(cursor, fund_id, accounts, cash_import.entries)
             position_count = upsert_positions(cursor, fund_id, positions)
         connection.commit()
 
