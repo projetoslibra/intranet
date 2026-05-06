@@ -1,0 +1,6 @@
+{
+  "framework": "nextjs",
+  "rootDirectory": "apps/web",
+  "buildCommand": "pnpm build",
+  "installCommand": "pnpm install"
+}

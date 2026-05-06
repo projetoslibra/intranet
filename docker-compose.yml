@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: osher-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: osher_db
+      POSTGRES_USER: osher
+      POSTGRES_PASSWORD: osher123
+    ports:
+      - "5432:5432"
+    volumes:
+      - osher_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  osher_postgres_data:

@@ -1,0 +1,274 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+enum FundType {
+  FIDC
+  FII
+  FIM
+  FIA
+  RENDA_FIXA
+  MULTIMERCADO
+  OUTRO
+}
+
+enum FundStatus {
+  ACTIVE
+  INACTIVE
+  CLOSED
+}
+
+enum FundAccessLevel {
+  VIEW
+  MANAGE
+}
+
+enum DreAccountType {
+  REVENUE
+  EXPENSE
+  ASSET
+  LIABILITY
+  EQUITY
+}
+
+enum CashAccountType {
+  CHECKING
+  SAVINGS
+  INVESTMENT
+  OTHER
+}
+
+enum CashAccountStatus {
+  ACTIVE
+  INACTIVE
+  CLOSED
+}
+
+enum CashTransactionType {
+  CREDIT
+  DEBIT
+}
+
+enum ImportModule {
+  FUNDS
+  QUOTES
+  DRE
+  CASH
+  POSITIONS
+  USERS
+}
+
+enum ImportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id            String           @id @default(cuid())
+  name          String
+  email         String           @unique
+  passwordHash  String
+  status        UserStatus       @default(ACTIVE)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  auditLogs     AuditLog[]
+  fundAccesses  UserFundAccess[]
+  importBatches ImportBatch[]
+  roles         UserRole[]
+
+  @@map("users")
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  name        String           @unique
+  description String?
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  key         String           @unique
+  description String?
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model UserRole {
+  userId String
+  roleId String
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Fund {
+  id                 String              @id @default(cuid())
+  name               String
+  shortName          String
+  cnpj               String              @unique
+  fundType           FundType
+  status             FundStatus          @default(ACTIVE)
+  startDate          DateTime            @db.Date
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  dreEntries         DreEntry[]
+  financialPositions FinancialPosition[]
+  quotes             FundQuote[]
+  userAccesses       UserFundAccess[]
+
+  @@map("funds")
+}
+
+model UserFundAccess {
+  userId      String
+  fundId      String
+  accessLevel FundAccessLevel
+  fund        Fund            @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, fundId])
+  @@map("user_fund_accesses")
+}
+
+model FundQuote {
+  id             String   @id @default(cuid())
+  fundId         String
+  quoteDate      DateTime @db.Date
+  quotaValue     Decimal  @db.Decimal(20, 8)
+  netAssetValue  Decimal  @db.Decimal(20, 2)
+  sharesQuantity Decimal  @db.Decimal(20, 8)
+  dailyReturn    Decimal  @db.Decimal(12, 8)
+  monthReturn    Decimal  @db.Decimal(12, 8)
+  yearReturn     Decimal  @db.Decimal(12, 8)
+  createdAt      DateTime @default(now())
+  fund           Fund     @relation(fields: [fundId], references: [id], onDelete: Cascade)
+
+  @@unique([fundId, quoteDate])
+  @@map("fund_quotes")
+}
+
+model DreAccount {
+  id      String         @id @default(cuid())
+  code    String         @unique
+  name    String
+  type    DreAccountType
+  entries DreEntry[]
+
+  @@map("dre_accounts")
+}
+
+model DreEntry {
+  id            String     @id @default(cuid())
+  fundId        String
+  accountId     String
+  referenceDate DateTime   @db.Date
+  amount        Decimal    @db.Decimal(20, 2)
+  description   String?
+  source        String
+  account       DreAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  fund          Fund       @relation(fields: [fundId], references: [id], onDelete: Cascade)
+
+  @@index([fundId, referenceDate])
+  @@map("dre_entries")
+}
+
+model CompanyCashAccount {
+  id           String                   @id @default(cuid())
+  name         String
+  bankName     String
+  accountType  CashAccountType
+  status       CashAccountStatus        @default(ACTIVE)
+  transactions CompanyCashTransaction[]
+
+  @@map("company_cash_accounts")
+}
+
+model CompanyCashTransaction {
+  id              String              @id @default(cuid())
+  cashAccountId   String
+  transactionDate DateTime            @db.Date
+  description     String
+  type            CashTransactionType
+  amount          Decimal             @db.Decimal(20, 2)
+  category        String
+  source          String
+  cashAccount     CompanyCashAccount  @relation(fields: [cashAccountId], references: [id], onDelete: Cascade)
+
+  @@index([cashAccountId, transactionDate])
+  @@map("company_cash_transactions")
+}
+
+model FinancialPosition {
+  id           String   @id @default(cuid())
+  fundId       String
+  positionDate DateTime @db.Date
+  assetClass   String
+  assetName    String
+  quantity     Decimal  @db.Decimal(20, 8)
+  grossValue   Decimal  @db.Decimal(20, 2)
+  netValue     Decimal  @db.Decimal(20, 2)
+  fund         Fund     @relation(fields: [fundId], references: [id], onDelete: Cascade)
+
+  @@index([fundId, positionDate])
+  @@map("financial_positions")
+}
+
+model ImportBatch {
+  id               String       @id @default(cuid())
+  importedByUserId String
+  module           ImportModule
+  fileName         String
+  status           ImportStatus @default(PENDING)
+  totalRows        Int          @default(0)
+  importedRows     Int          @default(0)
+  errorRows        Int          @default(0)
+  createdAt        DateTime     @default(now())
+  importedByUser   User         @relation(fields: [importedByUserId], references: [id], onDelete: Restrict)
+
+  @@map("import_batches")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
