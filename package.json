@@ -3,14 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "pnpm --filter @osher/web dev",
-    "build": "pnpm --filter @osher/web build",
-    "start": "pnpm --filter @osher/web start",
-    "lint": "pnpm --filter @osher/web lint",
-    "typecheck": "pnpm --filter @osher/web typecheck"
+    "dev": "corepack pnpm --filter @osher/web dev",
+    "build": "corepack pnpm --filter @osher/web build",
+    "start": "corepack pnpm --filter @osher/web start",
+    "lint": "corepack pnpm --filter @osher/web lint",
+    "typecheck": "corepack pnpm --filter @osher/web typecheck"
   },
   "engines": {
     "node": ">=20.11.0",
     "pnpm": ">=9.0.0"
+  },
+  "dependencies": {
+    "next": "14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
   }
 }
