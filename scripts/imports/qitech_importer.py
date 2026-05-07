@@ -20,6 +20,26 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 POSITION_SECTIONS = {"SRP", "DIR", "MEZAN", "NTN-B", "OUTROSFUNDOS"}
 
+CAIXA_EXPENSE_TERMS = {
+    "taxa",
+    "despesa",
+    "consultoria",
+    "auditoria",
+    "iof",
+    "cetip",
+    "selic",
+    "custo",
+    "tarifa",
+}
+
+CAIXA_IGNORED_TERMS = {
+    "resgate",
+    "aplicacao",
+    "liquidados",
+    "saldo",
+    "reembolso",
+}
+
 DRE_CATEGORIES = {
     "taxa_gestao": "Taxa de Gestao",
     "taxa_administracao": "Taxa de Administracao",
@@ -130,6 +150,15 @@ def parse_date(value: Any) -> date | None:
         except ValueError:
             continue
     return None
+
+
+def first_date_in_text(value: Any) -> date | None:
+    if value is None:
+        return None
+    match = re.search(r"\d{2}/\d{2}/\d{4}", str(value))
+    if not match:
+        return parse_date(value)
+    return parse_date(match.group(0))
 
 
 def first_decimal(values: Iterable[Any]) -> Decimal | None:
@@ -348,61 +377,83 @@ def categorize_expense(history: str) -> str:
     return "outras_despesas"
 
 
-def extract_cpr_rows(rows: list[tuple[Any, ...]], reference_date: date | None) -> list[DreEntryData]:
+def extract_caixa_header_date(rows: list[tuple[Any, ...]]) -> date | None:
+    for row in rows[:4]:
+        for cell in row:
+            parsed_date = first_date_in_text(cell)
+            if parsed_date is not None:
+                print(f"Data do demonstrativo de caixa encontrada no cabecalho: {parsed_date.strftime('%d/%m/%Y')}")
+                return parsed_date
+    return None
+
+
+def is_caixa_balance_row(value: Any) -> bool:
+    return parse_date(value) is not None or first_date_in_text(value) is not None
+
+
+def should_ignore_caixa_row(description: str) -> bool:
+    normalized_description = normalize_text(description)
+    return any(term in normalized_description for term in CAIXA_IGNORED_TERMS)
+
+
+def is_caixa_expense(description: str, history: str) -> bool:
+    normalized_text = normalize_text(f"{description} {history}")
+    return any(term in normalized_text for term in CAIXA_EXPENSE_TERMS)
+
+
+def extract_caixa_entries(rows: list[tuple[Any, ...]], reference_date: date | None) -> list[DreEntryData]:
     entries: list[DreEntryData] = []
 
-    for index, row in enumerate(rows):
-        if not any(normalize_text(cell) == "cpr" for cell in row):
+    if reference_date is None:
+        print("Aviso: demonstrativo de caixa sem data de referencia no cabecalho.")
+
+    for row_index, row in enumerate(rows[4:], start=5):
+        if all(cell is None or str(cell).strip() == "" for cell in row):
             continue
 
-        print(f"Secao CPR encontrada na linha {index + 1}.")
-        start_index = index + 2
+        col1 = row[0] if len(row) > 0 else None
+        if is_caixa_balance_row(col1):
+            print(f"Fim dos lancamentos de caixa na linha {row_index}: saldo/data em Col1 = {col1}")
+            break
 
-        for row_index, data_row in enumerate(rows[start_index:], start=start_index + 1):
-            first_cell = normalize_text(data_row[0] if data_row else None)
-            if first_cell.startswith("totais"):
-                print(f"Fim da secao CPR encontrado na linha {row_index}: {data_row[0]}")
-                break
-            if all(cell is None or str(cell).strip() == "" for cell in data_row):
-                print(f"Fim da secao CPR por linha vazia na linha {row_index}.")
-                break
+        description = str(row[1] if len(row) > 1 and row[1] is not None else "").strip()
+        translated_history = str(row[3] if len(row) > 3 and row[3] is not None else "").strip() or description
+        inflow = parse_decimal(row[4] if len(row) > 4 else None)
+        outflow = parse_decimal(row[5] if len(row) > 5 else None)
 
-            row_date = parse_date(data_row[0] if len(data_row) > 0 else None)
-            description = str(data_row[1] if len(data_row) > 1 and data_row[1] is not None else "").strip()
-            amount = parse_decimal(data_row[2] if len(data_row) > 2 else None)
-            translated_history = str(
-                data_row[5] if len(data_row) > 5 and data_row[5] is not None else description
-            ).strip()
+        if (inflow is None or inflow == Decimal("0")) and (outflow is None or outflow == Decimal("0")):
+            continue
+        if should_ignore_caixa_row(description):
+            continue
+        if not is_caixa_expense(description, translated_history):
+            continue
+        if reference_date is None:
+            print(f"Aviso: despesa ignorada sem reference_date na linha {row_index}: {description}")
+            continue
 
-            if amount is None or amount == Decimal("0"):
-                continue
+        amount = outflow if outflow is not None and outflow != Decimal("0") else inflow
+        if amount is None or amount == Decimal("0"):
+            continue
 
-            entry_date = reference_date or row_date
-            if entry_date is None:
-                print(f"Aviso: linha CPR ignorada sem data de referencia: {data_row}")
-                continue
+        category = categorize_expense(translated_history)
+        print(
+            "Despesa de caixa encontrada: "
+            f"linha={row_index}, descricao='{description}', historico='{translated_history}', "
+            f"valor={amount}, categoria={category}"
+        )
 
-            category = categorize_expense(translated_history)
-            print(
-                "CPR linha encontrada: "
-                f"linha={row_index}, data={row_date}, descricao='{description}', "
-                f"valor={amount}, historico='{translated_history}', categoria={category}"
+        entries.append(
+            DreEntryData(
+                reference_date=reference_date,
+                description=description or translated_history,
+                amount=amount,
+                translated_history=translated_history,
+                category=category,
             )
-
-            entries.append(
-                DreEntryData(
-                    reference_date=entry_date,
-                    description=description or translated_history,
-                    amount=amount,
-                    translated_history=translated_history,
-                    category=category,
-                )
-            )
-
-        break
+        )
 
     if not entries:
-        print("Aviso: nenhuma linha de despesa encontrada na secao CPR.")
+        print("Aviso: nenhuma despesa encontrada no demonstrativo de caixa.")
 
     return entries
 
@@ -470,10 +521,14 @@ def load_carteira(path: Path) -> tuple[FundQuoteData, list[FinancialPositionData
 
 def load_caixa(path: Path, reference_date: date | None = None) -> CashImportData:
     workbook = load_workbook(path, data_only=True)
-    worksheet = workbook["número1"] if "número1" in workbook.sheetnames else workbook.active
+    worksheet = (
+        workbook["Relatorio_Demonstrativo_Caixa"]
+        if "Relatorio_Demonstrativo_Caixa" in workbook.sheetnames
+        else workbook.active
+    )
     rows = iter_rows(worksheet)
-    header_date = reference_date
-    entries = extract_cpr_rows(rows, header_date) + extract_section_rows(rows, "OutrosAtivos")
+    header_date = extract_caixa_header_date(rows) or reference_date
+    entries = extract_caixa_entries(rows, header_date) + extract_section_rows(rows, "OutrosAtivos")
     return CashImportData(header_date=header_date, entries=entries)
 
 
@@ -707,6 +762,31 @@ def run_import(carteira_path: Path, caixa_path: Path) -> None:
     print(f"financial_positions: {position_count} registros inseridos/atualizados")
 
 
+def debug_caixa(filepath: str) -> None:
+    workbook = load_workbook(filepath, data_only=True)
+    print("Abas disponiveis:")
+    for index, sheet_name in enumerate(workbook.sheetnames):
+        print(f"{index}: {sheet_name}")
+
+    worksheet = workbook.worksheets[0]
+    print(f"\nDiagnostico das primeiras 100 linhas na primeira aba: {worksheet.title}")
+
+    for row in worksheet.iter_rows(max_row=100):
+        for cell in row:
+            if cell.value is None or str(cell.value).strip() == "":
+                continue
+
+            text = str(cell.value)
+            normalized = normalize_text(text)
+            marker = ""
+            if normalized == "cpr":
+                marker = " >>> CPR <<<"
+            elif "totais" in normalized:
+                marker = " >>> TOTAIS <<<"
+
+            print(f"Linha {cell.row}, Col {cell.column}: {text}{marker}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Importa arquivos XLSX QITECH para o banco OSHER.")
     parser.add_argument("carteira", help="Caminho do arquivo ATIVO_CARTEIRA_DIARIA_*.xlsx")
@@ -722,4 +802,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--debug":
+        debug_caixa(sys.argv[2])
+        sys.exit(0)
+
     raise SystemExit(main())
