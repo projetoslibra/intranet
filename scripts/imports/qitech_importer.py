@@ -20,26 +20,6 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 POSITION_SECTIONS = {"SRP", "DIR", "MEZAN", "NTN-B", "OUTROSFUNDOS"}
 
-CAIXA_EXPENSE_TERMS = {
-    "taxa",
-    "despesa",
-    "consultoria",
-    "auditoria",
-    "iof",
-    "cetip",
-    "selic",
-    "custo",
-    "tarifa",
-}
-
-CAIXA_IGNORED_TERMS = {
-    "resgate",
-    "aplicacao",
-    "liquidados",
-    "saldo",
-    "reembolso",
-}
-
 DRE_CATEGORIES = {
     "taxa_gestao": "Taxa de Gestao",
     "taxa_administracao": "Taxa de Administracao",
@@ -94,7 +74,7 @@ class DreEntryData:
 @dataclass
 class CashImportData:
     header_date: date | None
-    entries: list[DreEntryData]
+    treasury_balance: Decimal | None
 
 
 def normalize_text(value: Any) -> str:
@@ -377,6 +357,13 @@ def categorize_expense(history: str) -> str:
     return "outras_despesas"
 
 
+def first_filled_value(row: Iterable[Any]) -> Any:
+    for value in row:
+        if value is not None and str(value).strip() != "":
+            return value
+    return None
+
+
 def extract_caixa_header_date(rows: list[tuple[Any, ...]]) -> date | None:
     for row in rows[:4]:
         for cell in row:
@@ -387,75 +374,115 @@ def extract_caixa_header_date(rows: list[tuple[Any, ...]]) -> date | None:
     return None
 
 
-def is_caixa_balance_row(value: Any) -> bool:
-    return parse_date(value) is not None or first_date_in_text(value) is not None
-
-
-def should_ignore_caixa_row(description: str) -> bool:
-    normalized_description = normalize_text(description)
-    return any(term in normalized_description for term in CAIXA_IGNORED_TERMS)
-
-
-def is_caixa_expense(description: str, history: str) -> bool:
-    normalized_text = normalize_text(f"{description} {history}")
-    return any(term in normalized_text for term in CAIXA_EXPENSE_TERMS)
-
-
-def extract_caixa_entries(rows: list[tuple[Any, ...]], reference_date: date | None) -> list[DreEntryData]:
+def extract_carteira_cpr_entries(workbook: Any, reference_date: date) -> list[DreEntryData]:
     entries: list[DreEntryData] = []
 
-    if reference_date is None:
-        print("Aviso: demonstrativo de caixa sem data de referencia no cabecalho.")
+    for worksheet in workbook.worksheets:
+        for row in worksheet.iter_rows():
+            cpr_cell = next((cell for cell in row if normalize_text(cell.value) == "cpr"), None)
+            if cpr_cell is None:
+                continue
 
-    for row_index, row in enumerate(rows[4:], start=5):
-        if all(cell is None or str(cell).strip() == "" for cell in row):
-            continue
-
-        col1 = row[0] if len(row) > 0 else None
-        if is_caixa_balance_row(col1):
-            print(f"Fim dos lancamentos de caixa na linha {row_index}: saldo/data em Col1 = {col1}")
-            break
-
-        description = str(row[1] if len(row) > 1 and row[1] is not None else "").strip()
-        translated_history = str(row[3] if len(row) > 3 and row[3] is not None else "").strip() or description
-        inflow = parse_decimal(row[4] if len(row) > 4 else None)
-        outflow = parse_decimal(row[5] if len(row) > 5 else None)
-
-        if (inflow is None or inflow == Decimal("0")) and (outflow is None or outflow == Decimal("0")):
-            continue
-        if should_ignore_caixa_row(description):
-            continue
-        if not is_caixa_expense(description, translated_history):
-            continue
-        if reference_date is None:
-            print(f"Aviso: despesa ignorada sem reference_date na linha {row_index}: {description}")
-            continue
-
-        amount = outflow if outflow is not None and outflow != Decimal("0") else inflow
-        if amount is None or amount == Decimal("0"):
-            continue
-
-        category = categorize_expense(translated_history)
-        print(
-            "Despesa de caixa encontrada: "
-            f"linha={row_index}, descricao='{description}', historico='{translated_history}', "
-            f"valor={amount}, categoria={category}"
-        )
-
-        entries.append(
-            DreEntryData(
-                reference_date=reference_date,
-                description=description or translated_history,
-                amount=amount,
-                translated_history=translated_history,
-                category=category,
+            print(f"Secao CPR da carteira encontrada na aba '{worksheet.title}', celula {cpr_cell.coordinate}.")
+            header_cells = next(
+                worksheet.iter_rows(min_row=cpr_cell.row + 1, max_row=cpr_cell.row + 1),
+                None,
             )
-        )
+            if header_cells is None:
+                continue
+
+            headers = [cell.value for cell in header_cells]
+            date_index = find_header(headers, "Data")
+            description_index = find_header(headers, "Descricao", "Descrição")
+            amount_index = find_header(headers, "Valor")
+            history_index = find_header(headers, "Historico Traduzido", "Histórico Traduzido")
+
+            missing_columns = [
+                name
+                for name, index in {
+                    "Descricao": description_index,
+                    "Valor": amount_index,
+                    "Historico Traduzido": history_index,
+                }.items()
+                if index is None
+            ]
+            if missing_columns:
+                print(
+                    "Aviso: secao CPR ignorada por colunas ausentes "
+                    f"na aba '{worksheet.title}': {', '.join(missing_columns)}"
+                )
+                continue
+
+            for data_cells in worksheet.iter_rows(min_row=cpr_cell.row + 2):
+                data_row = tuple(cell.value for cell in data_cells)
+                first_value = first_filled_value(data_row)
+                if first_value is not None and normalize_text(first_value).startswith("totais"):
+                    print(f"Fim da secao CPR da carteira na linha {data_cells[0].row}: {first_value}")
+                    break
+                if first_value is None:
+                    continue
+
+                amount = parse_decimal(data_row[amount_index])
+                if amount is None or amount == Decimal("0"):
+                    continue
+
+                description = str(data_row[description_index] or "").strip()
+                translated_history = str(data_row[history_index] or description).strip()
+                entry_date = (
+                    parse_date(data_row[date_index])
+                    if date_index is not None and date_index < len(data_row)
+                    else None
+                ) or reference_date
+                category = categorize_expense(translated_history)
+
+                print(
+                    "Despesa CPR encontrada: "
+                    f"aba='{worksheet.title}', linha={data_cells[0].row}, data={entry_date}, "
+                    f"descricao='{description}', historico='{translated_history}', "
+                    f"valor={amount}, categoria={category}"
+                )
+
+                entries.append(
+                    DreEntryData(
+                        reference_date=entry_date,
+                        description=description or translated_history,
+                        amount=amount,
+                        translated_history=translated_history,
+                        category=category,
+                    )
+                )
+
+            return entries
 
     if not entries:
-        print("Aviso: nenhuma despesa encontrada no demonstrativo de caixa.")
+        print("Aviso: nenhuma despesa CPR encontrada na carteira.")
 
     return entries
+
+
+def extract_treasury_balance(rows: list[tuple[Any, ...]]) -> Decimal | None:
+    for row_index, row in enumerate(rows, start=1):
+        for column_index, value in enumerate(row, start=1):
+            if "saldo em tesouraria" not in normalize_text(value):
+                continue
+
+            candidates = list(row[column_index:]) + list(row[: column_index - 1])
+            balance = first_decimal(candidates)
+            if balance is not None:
+                print(
+                    "Saldo em Tesouraria encontrado no demonstrativo de caixa: "
+                    f"linha={row_index}, coluna={column_index}, valor={balance}"
+                )
+                return balance
+
+            print(
+                "Aviso: linha 'Saldo em Tesouraria' encontrada, "
+                f"mas sem valor numerico: linha={row_index}, coluna={column_index}"
+            )
+            return None
+
+    print("Aviso: Saldo em Tesouraria nao encontrado no demonstrativo de caixa.")
+    return None
 
 
 def extract_section_rows(rows: list[tuple[Any, ...]], section_name: str) -> list[DreEntryData]:
@@ -509,14 +536,15 @@ def extract_section_rows(rows: list[tuple[Any, ...]], section_name: str) -> list
     return entries
 
 
-def load_carteira(path: Path) -> tuple[FundQuoteData, list[FinancialPositionData]]:
+def load_carteira(path: Path) -> tuple[FundQuoteData, list[FinancialPositionData], list[DreEntryData]]:
     workbook = load_workbook(path, data_only=True)
     worksheet = workbook.active
     rows = iter_rows(worksheet)
     fund_name, position_date = extract_header_data(workbook)
     quote = extract_rentability(rows, fund_name, position_date)
     positions = extract_positions(rows, position_date)
-    return quote, positions
+    dre_entries = extract_carteira_cpr_entries(workbook, position_date)
+    return quote, positions, dre_entries
 
 
 def load_caixa(path: Path, reference_date: date | None = None) -> CashImportData:
@@ -528,8 +556,8 @@ def load_caixa(path: Path, reference_date: date | None = None) -> CashImportData
     )
     rows = iter_rows(worksheet)
     header_date = extract_caixa_header_date(rows) or reference_date
-    entries = extract_caixa_entries(rows, header_date) + extract_section_rows(rows, "OutrosAtivos")
-    return CashImportData(header_date=header_date, entries=entries)
+    treasury_balance = extract_treasury_balance(rows)
+    return CashImportData(header_date=header_date, treasury_balance=treasury_balance)
 
 
 def stable_id(prefix: str, *parts: Any) -> str:
@@ -742,7 +770,7 @@ def run_import(carteira_path: Path, caixa_path: Path) -> None:
     if not database_url:
         raise RuntimeError("DATABASE_URL nao encontrada. Configure o arquivo .env antes de importar.")
 
-    quote, positions = load_carteira(carteira_path)
+    quote, positions, dre_entries = load_carteira(carteira_path)
     cash_import = load_caixa(caixa_path, quote.position_date)
 
     with psycopg2.connect(database_url) as connection:
@@ -750,7 +778,7 @@ def run_import(carteira_path: Path, caixa_path: Path) -> None:
             fund_id = find_fund_id(cursor, quote.fund_name)
             accounts = dre_account_ids(cursor)
             upsert_quote(cursor, fund_id, quote)
-            dre_count = upsert_dre_entries(cursor, fund_id, accounts, cash_import.entries)
+            dre_count = upsert_dre_entries(cursor, fund_id, accounts, dre_entries)
             position_count = upsert_positions(cursor, fund_id, positions)
         connection.commit()
 
@@ -760,6 +788,8 @@ def run_import(carteira_path: Path, caixa_path: Path) -> None:
     print("fund_quotes: 1 registro inserido/atualizado")
     print(f"dre_entries: {dre_count} registros inseridos/atualizados")
     print(f"financial_positions: {position_count} registros inseridos/atualizados")
+    if cash_import.treasury_balance is not None:
+        print(f"saldo_tesouraria_caixa: {cash_import.treasury_balance}")
 
 
 def debug_caixa(filepath: str) -> None:
