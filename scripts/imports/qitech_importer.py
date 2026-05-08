@@ -19,6 +19,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 
 POSITION_SECTIONS = {"SRP", "DIR", "MEZAN", "NTN-B", "OUTROSFUNDOS"}
+POSITION_STOP_SECTIONS = POSITION_SECTIONS | {"PDDDIR", "OUTROSATIVOS", "CPR", "RENTABILIDADE"}
 
 DRE_CATEGORIES = {
     "taxa_gestao": "Taxa de Gestao",
@@ -300,9 +301,6 @@ def classify_asset_class(section: str, asset_name: str) -> str:
     if normalized_section == "dir":
         return "direitos_creditorios"
 
-    if normalized_section == "pdddir":
-        return "pdd"
-
     return normalized_section or section
 
 
@@ -343,7 +341,7 @@ def extract_positions(rows: list[tuple[Any, ...]], default_position_date: date) 
             if all(cell is None or str(cell).strip() == "" for cell in data_row):
                 break
             first_cell = normalize_text(data_row[0] if data_row else None)
-            if normalized_key(first_cell) in {normalized_key(item) for item in POSITION_SECTIONS}:
+            if normalized_key(first_cell) in {normalized_key(item) for item in POSITION_STOP_SECTIONS}:
                 break
 
             is_outros_fundos = normalized_key(section) == "outrosfundos"
