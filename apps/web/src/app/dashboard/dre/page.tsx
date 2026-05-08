@@ -18,10 +18,13 @@ type DreRow = {
 };
 
 const assetClasses = {
-  investedFunds: "OutrosFundos",
-  srp: "SRP",
-  mezan: "MEZAN",
-  ntnb: "NTN-B",
+  creditRights: "direitos_creditorios",
+  otherFunds: "outros_fundos",
+  senior: "senior",
+  mezzanine: "mezanino",
+  ntnb: "ntnb",
+  otherAssets: "dir",
+  pdd: "pdd",
 };
 
 const expenseRows = [
@@ -289,9 +292,10 @@ export default async function DrePage({ searchParams }: DrePageProps) {
   quotes.forEach((quote) => dateSet.add(dateKey(quote.quoteDate)));
   const dates = Array.from(dateSet).sort();
 
-  const investedFunds = new Map<string, number>();
-  const srp = new Map<string, number>();
-  const mezan = new Map<string, number>();
+  const creditRights = new Map<string, number>();
+  const otherFunds = new Map<string, number>();
+  const senior = new Map<string, number>();
+  const mezzanine = new Map<string, number>();
   const ntnb = new Map<string, number>();
   const otherAssets = new Map<string, number>();
   const pddPositions = new Map<string, number>();
@@ -314,18 +318,20 @@ export default async function DrePage({ searchParams }: DrePageProps) {
     const assetClass = normalizeAssetClass(position.assetClass);
     const value = Number(position.netValue);
 
-    if (assetClass === normalizeAssetClass(assetClasses.investedFunds)) {
-      addToMap(investedFunds, key, value);
-    } else if (assetClass === normalizeAssetClass(assetClasses.srp)) {
-      addToMap(srp, key, value);
-    } else if (assetClass === normalizeAssetClass(assetClasses.mezan)) {
-      addToMap(mezan, key, value);
+    if (assetClass === normalizeAssetClass(assetClasses.creditRights)) {
+      addToMap(creditRights, key, value);
+    } else if (assetClass === normalizeAssetClass(assetClasses.otherFunds)) {
+      addToMap(otherFunds, key, value);
+    } else if (assetClass === normalizeAssetClass(assetClasses.senior)) {
+      addToMap(senior, key, value);
+    } else if (assetClass === normalizeAssetClass(assetClasses.mezzanine)) {
+      addToMap(mezzanine, key, value);
     } else if (assetClass === normalizeAssetClass(assetClasses.ntnb)) {
       addToMap(ntnb, key, value);
-    } else if (assetClass === "PDD") {
-      addToMap(pddPositions, key, value);
-    } else {
+    } else if (assetClass === normalizeAssetClass(assetClasses.otherAssets)) {
       addToMap(otherAssets, key, value);
+    } else if (assetClass === normalizeAssetClass(assetClasses.pdd)) {
+      addToMap(pddPositions, key, value);
     }
   }
 
@@ -352,15 +358,22 @@ export default async function DrePage({ searchParams }: DrePageProps) {
 
   const rows: DreRow[] = [
     { label: "ATIVOS", kind: "section" },
-    { label: "Fundos Investidos", values: investedFunds },
-    { label: "Renda Fixa — SRP", values: srp },
-    { label: "Renda Fixa — MEZAN", values: mezan },
+    { label: "Direitos Creditórios", values: creditRights },
+    { label: "Outros Fundos Investidos", values: otherFunds },
     { label: "Renda Fixa — NTN-B", values: ntnb },
     { label: "Outros Ativos", values: otherAssets },
     {
       label: "Total Ativos",
       kind: "subtotal",
-      values: sumMaps(dates, [investedFunds, srp, mezan, ntnb, otherAssets]),
+      values: sumMaps(dates, [creditRights, otherFunds, ntnb, otherAssets]),
+    },
+    { label: "SUPERIORES", kind: "section" },
+    { label: "Cotas Sênior", values: senior },
+    { label: "Cotas Mezanino", values: mezzanine },
+    {
+      label: "Total Superiores",
+      kind: "subtotal",
+      values: sumMaps(dates, [senior, mezzanine]),
     },
     { label: "DESPESAS OPERACIONAIS", kind: "section" },
     ...expenseRows.map(([code, label]) => ({

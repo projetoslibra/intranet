@@ -274,6 +274,38 @@ def extract_rentability(rows: list[tuple[Any, ...]], fund_name: str, position_da
     )
 
 
+def classify_asset_class(section: str, asset_name: str) -> str:
+    normalized_section = normalized_key(section)
+    normalized_asset_name = normalize_text(asset_name)
+
+    if normalized_section == "outrosfundos":
+        if (
+            "a vencer" in normalized_asset_name
+            or "vencidos" in normalized_asset_name
+            or "bristol" in normalized_asset_name
+        ):
+            return "direitos_creditorios"
+
+        return "outros_fundos"
+
+    if normalized_section == "srp":
+        return "senior"
+
+    if normalized_section == "mezan":
+        return "mezanino"
+
+    if normalized_section == "ntnb":
+        return "ntnb"
+
+    if normalized_section == "dir":
+        return "dir"
+
+    if normalized_section == "pdddir":
+        return "pdddir"
+
+    return normalized_section or section
+
+
 def extract_positions(rows: list[tuple[Any, ...]], default_position_date: date) -> list[FinancialPositionData]:
     positions: list[FinancialPositionData] = []
 
@@ -316,7 +348,7 @@ def extract_positions(rows: list[tuple[Any, ...]], default_position_date: date) 
 
             positions.append(
                 FinancialPositionData(
-                    asset_class=section,
+                    asset_class=classify_asset_class(section, str(asset_name)),
                     position_date=position_date,
                     code=str(row_value(data_row, headers, "Codigo", "Código", "Cod.") or "").strip(),
                     asset_name=str(asset_name).strip(),
@@ -382,7 +414,7 @@ def extract_pdd_positions(rows: list[tuple[Any, ...]], default_position_date: da
 
             positions.append(
                 FinancialPositionData(
-                    asset_class="PDD",
+                    asset_class="pdd",
                     position_date=position_date,
                     code=code,
                     asset_name=description,
