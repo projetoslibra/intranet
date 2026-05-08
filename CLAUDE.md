@@ -74,6 +74,7 @@ ADMIN | DIRETOR | SOCIO | FINANCEIRO | LEITURA
 - [x] TASK 3 — Auth.js + login funcionando
 - [x] TASK 4 — Layout executivo (sidebar + topbar + dashboard vazio)
 - [x] TASK 5 — Módulo de Fundos + Script de Importação QITECH
+- [x] TASK 6 — DRE dos fundos com dados reais
 
 ## Convenções
 - Valores financeiros: Decimal (nunca float)

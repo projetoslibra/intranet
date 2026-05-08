@@ -10,7 +10,7 @@ import { prisma } from "@/lib/prisma";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/formatters";
 
 export default async function DashboardPage() {
-  const [funds, activeFundCount] = await Promise.all([
+  const [funds, activeFundCount, fundsWithLatestQuote] = await Promise.all([
     prisma.fund.findMany({
       orderBy: {
         name: "asc",
@@ -30,18 +30,50 @@ export default async function DashboardPage() {
         status: "ACTIVE",
       },
     }),
+    prisma.fund.findMany({
+      where: {
+        status: "ACTIVE",
+      },
+      select: {
+        quotes: {
+          orderBy: {
+            quoteDate: "desc",
+          },
+          take: 1,
+          select: {
+            netAssetValue: true,
+            monthReturn: true,
+            quoteDate: true,
+          },
+        },
+      },
+    }),
   ]);
+
+  const latestQuotes = fundsWithLatestQuote.flatMap((fund) => fund.quotes);
+  const consolidatedNetAssetValue = latestQuotes.reduce(
+    (total, quote) => total + Number(quote.netAssetValue),
+    0
+  );
+  const mainFundLatestQuote = latestQuotes
+    .slice()
+    .sort((current, next) => next.quoteDate.getTime() - current.quoteDate.getTime())[0];
 
   const kpis = [
     {
       label: "PL Consolidado",
-      value: formatCurrency(0),
+      value: formatCurrency(consolidatedNetAssetValue),
       variation: formatPercent(0),
       icon: Banknote,
     },
     {
       label: "Rentabilidade Mês",
-      value: formatPercent(0),
+      value: mainFundLatestQuote
+        ? `${Number(mainFundLatestQuote.monthReturn).toLocaleString("pt-BR", {
+            minimumFractionDigits: 4,
+            maximumFractionDigits: 4,
+          })}%`
+        : formatPercent(0),
       variation: formatPercent(0),
       icon: TrendingUp,
     },
