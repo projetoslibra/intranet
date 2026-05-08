@@ -322,7 +322,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
       addToMap(mezan, key, value);
     } else if (assetClass === normalizeAssetClass(assetClasses.ntnb)) {
       addToMap(ntnb, key, value);
-    } else if (assetClass === "PDD" || assetClass === "PDDDIR") {
+    } else if (assetClass === "PDD") {
       addToMap(pddPositions, key, value);
     } else {
       addToMap(otherAssets, key, value);

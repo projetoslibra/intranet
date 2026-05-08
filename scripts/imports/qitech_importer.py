@@ -332,6 +332,74 @@ def extract_positions(rows: list[tuple[Any, ...]], default_position_date: date) 
     return positions
 
 
+def extract_pdd_positions(rows: list[tuple[Any, ...]], default_position_date: date) -> list[FinancialPositionData]:
+    positions: list[FinancialPositionData] = []
+
+    for index, row in enumerate(rows):
+        if not any(normalize_text(cell) == "outrosativos" for cell in row):
+            continue
+
+        header_index = index + 1
+        if header_index >= len(rows):
+            continue
+
+        headers = list(rows[header_index])
+        date_index = find_header(headers, "Data")
+        code_index = find_header(headers, "Codigo", "Código")
+        description_index = find_header(headers, "Descricao", "Descrição")
+        value_index = find_header(headers, "Valor Total")
+
+        if code_index is None or description_index is None or value_index is None:
+            print("Aviso: secao OutrosAtivos encontrada, mas colunas de PDD ausentes.")
+            continue
+
+        for data_row in rows[header_index + 1 :]:
+            first_value = first_filled_value(data_row)
+            if first_value is None:
+                continue
+            if normalize_text(first_value).startswith("totais"):
+                break
+
+            code = str(data_row[code_index] or "").strip()
+            description = str(data_row[description_index] or "").strip()
+            if normalize_text(code) != "pdd" and "pdd" not in normalize_text(description):
+                continue
+
+            total_value = parse_decimal(data_row[value_index])
+            if total_value is None or total_value == Decimal("0"):
+                continue
+
+            position_date = (
+                parse_date(data_row[date_index])
+                if date_index is not None and date_index < len(data_row)
+                else None
+            ) or default_position_date
+
+            print(
+                "PDD encontrada em OutrosAtivos: "
+                f"data={position_date}, codigo='{code}', descricao='{description}', valor={total_value}"
+            )
+
+            positions.append(
+                FinancialPositionData(
+                    asset_class="PDD",
+                    position_date=position_date,
+                    code=code,
+                    asset_name=description,
+                    quantity=Decimal("0"),
+                    market_unit_price=Decimal("0"),
+                    gross_value=total_value,
+                    net_value=total_value,
+                    indexer=None,
+                    maturity_date=None,
+                )
+            )
+
+        break
+
+    return positions
+
+
 def categorize_expense(history: str) -> str:
     normalized = normalize_text(history)
     if "gestao" in normalized:
@@ -542,7 +610,7 @@ def load_carteira(path: Path) -> tuple[FundQuoteData, list[FinancialPositionData
     rows = iter_rows(worksheet)
     fund_name, position_date = extract_header_data(workbook)
     quote = extract_rentability(rows, fund_name, position_date)
-    positions = extract_positions(rows, position_date)
+    positions = extract_positions(rows, position_date) + extract_pdd_positions(rows, position_date)
     dre_entries = extract_carteira_cpr_entries(workbook, position_date)
     return quote, positions, dre_entries
 
