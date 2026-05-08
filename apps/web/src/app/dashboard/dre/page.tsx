@@ -23,7 +23,6 @@ const assetClasses = {
   senior: "senior",
   mezzanine: "mezanino",
   ntnb: "ntnb",
-  otherAssets: "dir",
   pdd: "pdd",
 };
 
@@ -297,7 +296,6 @@ export default async function DrePage({ searchParams }: DrePageProps) {
   const senior = new Map<string, number>();
   const mezzanine = new Map<string, number>();
   const ntnb = new Map<string, number>();
-  const otherAssets = new Map<string, number>();
   const pddPositions = new Map<string, number>();
   const expensesByCode = new Map<string, Map<string, number>>();
   const quoteMaps = {
@@ -328,8 +326,6 @@ export default async function DrePage({ searchParams }: DrePageProps) {
       addToMap(mezzanine, key, value);
     } else if (assetClass === normalizeAssetClass(assetClasses.ntnb)) {
       addToMap(ntnb, key, value);
-    } else if (assetClass === normalizeAssetClass(assetClasses.otherAssets)) {
-      addToMap(otherAssets, key, value);
     } else if (assetClass === normalizeAssetClass(assetClasses.pdd)) {
       addToMap(pddPositions, key, value);
     }
@@ -361,11 +357,10 @@ export default async function DrePage({ searchParams }: DrePageProps) {
     { label: "Direitos Creditórios", values: creditRights },
     { label: "Outros Fundos Investidos", values: otherFunds },
     { label: "Renda Fixa — NTN-B", values: ntnb },
-    { label: "Outros Ativos", values: otherAssets },
     {
       label: "Total Ativos",
       kind: "subtotal",
-      values: sumMaps(dates, [creditRights, otherFunds, ntnb, otherAssets]),
+      values: sumMaps(dates, [creditRights, otherFunds, ntnb]),
     },
     { label: "SUPERIORES", kind: "section" },
     { label: "Cotas Sênior", values: senior },

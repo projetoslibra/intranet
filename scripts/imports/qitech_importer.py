@@ -298,12 +298,22 @@ def classify_asset_class(section: str, asset_name: str) -> str:
         return "ntnb"
 
     if normalized_section == "dir":
-        return "dir"
+        return "direitos_creditorios"
 
     if normalized_section == "pdddir":
-        return "pdddir"
+        return "pdd"
 
     return normalized_section or section
+
+
+def classify_outros_fundos(code: str, fund_name: str) -> str:
+    normalized_code = normalize_text(code)
+    normalized_fund_name = normalize_text(fund_name)
+
+    if "bris" in normalized_code or "bristol" in normalized_fund_name:
+        return "direitos_creditorios"
+
+    return "outros_fundos"
 
 
 def extract_positions(rows: list[tuple[Any, ...]], default_position_date: date) -> list[FinancialPositionData]:
@@ -336,8 +346,13 @@ def extract_positions(rows: list[tuple[Any, ...]], default_position_date: date) 
             if normalized_key(first_cell) in {normalized_key(item) for item in POSITION_SECTIONS}:
                 break
 
-            asset_name = row_value(data_row, headers, "Nome Papel", "Papel", "Ativo")
-            gross_value = parse_decimal(row_value(data_row, headers, "Valor Bruto"))
+            is_outros_fundos = normalized_key(section) == "outrosfundos"
+            asset_name = row_value(data_row, headers, "Fundo", "Nome Papel", "Papel", "Ativo")
+            gross_value = (
+                parse_decimal(row_value(data_row, headers, "Valor Liquido", "Valor Líquido"))
+                if is_outros_fundos
+                else parse_decimal(row_value(data_row, headers, "Valor Bruto"))
+            )
             net_value = parse_decimal(row_value(data_row, headers, "Valor Liquido", "Valor Líquido"))
             if not asset_name or (gross_value is None and net_value is None):
                 continue
@@ -345,12 +360,25 @@ def extract_positions(rows: list[tuple[Any, ...]], default_position_date: date) 
             quantity = parse_decimal(row_value(data_row, headers, "Quantidade", "Qtd")) or Decimal("0")
             market_unit_price = parse_decimal(row_value(data_row, headers, "PU Mercado", "PU")) or Decimal("0")
             position_date = parse_date(row_value(data_row, headers, "Data Posicao", "Data Posição")) or default_position_date
+            code = str(row_value(data_row, headers, "Codigo", "Código", "Cod.") or "").strip()
+            asset_class = (
+                classify_outros_fundos(code, str(asset_name))
+                if is_outros_fundos
+                else classify_asset_class(section, str(asset_name))
+            )
+
+            if is_outros_fundos:
+                print(
+                    "OutrosFundos encontrado: "
+                    f"codigo='{code}', nome='{asset_name}', valor_liquido={net_value or gross_value}, "
+                    f"asset_class={asset_class}"
+                )
 
             positions.append(
                 FinancialPositionData(
-                    asset_class=classify_asset_class(section, str(asset_name)),
+                    asset_class=asset_class,
                     position_date=position_date,
-                    code=str(row_value(data_row, headers, "Codigo", "Código", "Cod.") or "").strip(),
+                    code=code,
                     asset_name=str(asset_name).strip(),
                     quantity=quantity,
                     market_unit_price=market_unit_price,
