@@ -307,7 +307,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
     yearReturn: new Map<string, number>(),
   };
 
-  for (const [code] of [...expenseRows, ["pdd", "PDD"] as const]) {
+  for (const [code] of expenseRows) {
     expensesByCode.set(code, new Map<string, number>());
   }
 
@@ -350,7 +350,6 @@ export default async function DrePage({ searchParams }: DrePageProps) {
   }
 
   const expenseMaps = expenseRows.map(([code]) => expensesByCode.get(code) ?? new Map());
-  const pddEntries = expensesByCode.get("pdd") ?? new Map<string, number>();
 
   const rows: DreRow[] = [
     { label: "ATIVOS", kind: "section" },
@@ -383,7 +382,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
     { label: "RESULTADO", kind: "section" },
     {
       label: "PDD — Provisão para Devedores Duvidosos",
-      values: sumMaps(dates, [pddPositions, pddEntries]),
+      values: pddPositions,
     },
     {
       label: "Patrimônio Líquido",
