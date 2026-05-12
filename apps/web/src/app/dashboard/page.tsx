@@ -89,24 +89,46 @@ export default async function DashboardPage() {
 
   const fundsData = await Promise.all(
     activeFunds.map(async (fund) => {
-      const [latestQuote, seniorPosition, mezzaninePosition] = await Promise.all([
+      const [latestQuote, latestPositionDate] = await Promise.all([
         prisma.fundQuote.findFirst({
           where: { fundId: fund.id },
           orderBy: { quoteDate: "desc" },
         }),
         prisma.financialPosition.findFirst({
-          where: { fundId: fund.id, assetClass: "senior" },
+          where: {
+            fundId: fund.id,
+            assetClass: {
+              in: ["senior", "mezanino"],
+            },
+          },
           orderBy: { positionDate: "desc" },
-        }),
-        prisma.financialPosition.findFirst({
-          where: { fundId: fund.id, assetClass: "mezanino" },
-          orderBy: { positionDate: "desc" },
+          select: { positionDate: true },
         }),
       ]);
 
-      const seniorValue = Math.abs(Number(seniorPosition?.netValue ?? 0));
-      const mezzanineValue = Math.abs(Number(mezzaninePosition?.netValue ?? 0));
-      const juniorValue = Number(latestQuote?.netAssetValue ?? 0);
+      const classPositions = latestPositionDate
+        ? await prisma.financialPosition.findMany({
+            where: {
+              fundId: fund.id,
+              positionDate: latestPositionDate.positionDate,
+              assetClass: {
+                in: ["senior", "mezanino"],
+              },
+            },
+            select: {
+              assetClass: true,
+              netValue: true,
+            },
+          })
+        : [];
+
+      const seniorValue = classPositions
+        .filter((position) => position.assetClass === "senior")
+        .reduce((sum, position) => sum + Math.abs(Number(position.netValue)), 0);
+      const mezzanineValue = classPositions
+        .filter((position) => position.assetClass === "mezanino")
+        .reduce((sum, position) => sum + Math.abs(Number(position.netValue)), 0);
+      const juniorValue = Math.abs(Number(latestQuote?.netAssetValue ?? 0));
       const totalPl = seniorValue + mezzanineValue + juniorValue;
 
       return {
@@ -196,7 +218,7 @@ export default async function DashboardPage() {
 
             <div className="mt-6">
               <p className="text-sm font-medium text-slate-500">
-                Patrimônio Líquido
+                Patrimônio Total
               </p>
               <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950">
                 {formatCurrency(fund.totalPl)}
