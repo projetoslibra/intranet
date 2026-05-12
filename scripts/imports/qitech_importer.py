@@ -89,6 +89,14 @@ def normalized_key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", normalize_text(value))
 
 
+def normalize_asset_class(value: Any) -> str:
+    asset_class = "" if value is None else str(value).strip()
+    if normalized_key(asset_class) == "pdd":
+        return "pdd"
+
+    return asset_class
+
+
 def parse_decimal(value: Any) -> Decimal | None:
     if value is None or value == "":
         return None
@@ -364,6 +372,7 @@ def extract_positions(rows: list[tuple[Any, ...]], default_position_date: date) 
                 if is_outros_fundos
                 else classify_asset_class(section, str(asset_name))
             )
+            asset_class = normalize_asset_class(asset_class)
 
             if is_outros_fundos:
                 print(
@@ -848,11 +857,12 @@ def upsert_dre_entries(cursor: Any, fund_id: str, accounts: dict[str, str], entr
 
 def upsert_positions(cursor: Any, fund_id: str, positions: list[FinancialPositionData]) -> int:
     for position in positions:
+        asset_class = normalize_asset_class(position.asset_class)
         position_id = stable_id(
             "pos",
             fund_id,
             position.position_date,
-            position.asset_class,
+            asset_class,
             position.code,
             position.asset_name,
         )
@@ -875,7 +885,7 @@ def upsert_positions(cursor: Any, fund_id: str, positions: list[FinancialPositio
                 position_id,
                 fund_id,
                 position.position_date,
-                position.asset_class,
+                asset_class,
                 position.asset_name,
                 position.quantity,
                 position.gross_value,
