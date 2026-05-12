@@ -98,3 +98,8 @@ ADMIN | DIRETOR | SOCIO | FINANCEIRO | LEITURA
 - Repositório GitHub: `https://github.com/projetoslibra/intranet.git`.
 - Deploy: Vercel conectado ao repositório GitHub.
 - Variáveis de ambiente necessárias na Vercel: `DATABASE_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`.
+
+## Atualizacoes recentes
+- [x] TASK 7 - DRE com abas Carteira e DRE/Variacao + fluxos de caixa dos fundos.
+- Nova tabela `FundCashFlow` (`fund_cash_flows`) armazena aplicacoes/resgates dos fundos importados do demonstrativo de caixa QITECH.
+- Tela DRE possui duas abas: `Carteira` para valores absolutos e `DRE / Variacao` para delta diario ajustado por aplicacoes/resgates.

@@ -76,6 +76,17 @@ class DreEntryData:
 class CashImportData:
     header_date: date | None
     treasury_balance: Decimal | None
+    fund_cash_flows: list[FundCashFlowData]
+
+
+@dataclass
+class FundCashFlowData:
+    flow_date: date
+    description: str
+    flow_type: str
+    asset_class: str
+    asset_code: str
+    amount: Decimal
 
 
 def normalize_text(value: Any) -> str:
@@ -322,6 +333,30 @@ def classify_outros_fundos(code: str, fund_name: str) -> str:
         or "vencidos" in normalized_fund_name
     ):
         return "direitos_creditorios"
+
+    return "outros_fundos"
+
+
+def classify_cash_flow_asset_class(asset_code: str, description: str) -> str:
+    normalized_code = normalize_text(asset_code)
+    normalized_description = normalize_text(description)
+    combined = f"{normalized_code} {normalized_description}"
+
+    if (
+        normalized_code.endswith(("av", "ve"))
+        or "a vencer" in normalized_description
+        or "vencidos" in normalized_description
+    ):
+        return "direitos_creditorios"
+
+    if normalized_code == "739704" or "soberano" in combined or "itau" in combined:
+        return "outros_fundos"
+
+    if "senior" in combined or "srp" in combined:
+        return "senior"
+
+    if "mezan" in combined or "mez" in combined:
+        return "mezanino"
 
     return "outros_fundos"
 
@@ -624,6 +659,68 @@ def extract_treasury_balance(rows: list[tuple[Any, ...]]) -> Decimal | None:
     return None
 
 
+def extract_fund_cash_flows(rows: list[tuple[Any, ...]], default_flow_date: date | None) -> list[FundCashFlowData]:
+    flows: list[FundCashFlowData] = []
+
+    for row_index, row in enumerate(rows[4:], start=5):
+        if not row:
+            continue
+
+        if parse_date(row[0] if len(row) > 0 else None) is not None:
+            break
+
+        description = str(row[1] if len(row) > 1 and row[1] is not None else "").strip()
+        normalized_description = normalize_text(description)
+        if not description:
+            continue
+
+        if normalized_description.startswith("aplicacao no fundo"):
+            flow_type = "aplicacao"
+            amount = parse_decimal(row[5] if len(row) > 5 else None)
+        elif normalized_description.startswith("resgate do fundo"):
+            flow_type = "resgate"
+            amount = parse_decimal(row[4] if len(row) > 4 else None)
+        else:
+            continue
+
+        if amount is None or amount == Decimal("0"):
+            continue
+
+        code_match = re.search(r"\[([^\]]+)\]", description)
+        if code_match is None:
+            print(f"Aviso: fluxo de caixa sem codigo na linha {row_index}: {description}")
+            continue
+
+        flow_date = first_date_in_text(description) or default_flow_date
+        if flow_date is None:
+            print(f"Aviso: fluxo de caixa sem data na linha {row_index}: {description}")
+            continue
+
+        asset_code = code_match.group(1).strip()
+        asset_class = classify_cash_flow_asset_class(asset_code, description)
+        positive_amount = abs(amount)
+
+        print(
+            "Fluxo de caixa de fundo encontrado: "
+            f"linha={row_index}, data={flow_date}, tipo={flow_type}, "
+            f"codigo={asset_code}, asset_class={asset_class}, valor={positive_amount}, "
+            f"descricao='{description}'"
+        )
+
+        flows.append(
+            FundCashFlowData(
+                flow_date=flow_date,
+                description=description,
+                flow_type=flow_type,
+                asset_class=asset_class,
+                asset_code=asset_code,
+                amount=positive_amount,
+            )
+        )
+
+    return flows
+
+
 def extract_section_rows(rows: list[tuple[Any, ...]], section_name: str) -> list[DreEntryData]:
     section_key = normalized_key(section_name)
     entries: list[DreEntryData] = []
@@ -696,7 +793,12 @@ def load_caixa(path: Path, reference_date: date | None = None) -> CashImportData
     rows = iter_rows(worksheet)
     header_date = extract_caixa_header_date(rows) or reference_date
     treasury_balance = extract_treasury_balance(rows)
-    return CashImportData(header_date=header_date, treasury_balance=treasury_balance)
+    fund_cash_flows = extract_fund_cash_flows(rows, header_date)
+    return CashImportData(
+        header_date=header_date,
+        treasury_balance=treasury_balance,
+        fund_cash_flows=fund_cash_flows,
+    )
 
 
 def stable_id(prefix: str, *parts: Any) -> str:
@@ -899,6 +1001,54 @@ def upsert_positions(cursor: Any, fund_id: str, positions: list[FinancialPositio
     return len(positions)
 
 
+def upsert_fund_cash_flows(cursor: Any, fund_id: str, flows: list[FundCashFlowData]) -> int:
+    aggregated_flows: dict[tuple[date, str, str, str], FundCashFlowData] = {}
+
+    for flow in flows:
+        key = (flow.flow_date, flow.description, flow.flow_type, flow.asset_code)
+        existing = aggregated_flows.get(key)
+        if existing is None:
+            aggregated_flows[key] = flow
+            continue
+
+        existing.amount += flow.amount
+
+    for flow in aggregated_flows.values():
+        flow_id = stable_id(
+            "flow",
+            fund_id,
+            flow.flow_date,
+            flow.description,
+            flow.flow_type,
+            flow.asset_code,
+        )
+        cursor.execute(
+            """
+            INSERT INTO fund_cash_flows (
+              id, "fundId", "flowDate", description, "flowType",
+              "assetClass", "assetCode", amount, source, "createdAt"
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'QITECH', NOW())
+            ON CONFLICT ("fundId", "flowDate", description, "flowType", "assetCode")
+            DO UPDATE SET
+              "assetClass" = EXCLUDED."assetClass",
+              amount = EXCLUDED.amount,
+              source = EXCLUDED.source
+            """,
+            (
+                flow_id,
+                fund_id,
+                flow.flow_date,
+                flow.description,
+                flow.flow_type,
+                flow.asset_class,
+                flow.asset_code,
+                flow.amount,
+            ),
+        )
+    return len(aggregated_flows)
+
+
 def run_import(carteira_path: Path, caixa_path: Path) -> None:
     if not carteira_path.exists():
         raise FileNotFoundError(f"Arquivo de carteira nao encontrado: {carteira_path}")
@@ -920,6 +1070,7 @@ def run_import(carteira_path: Path, caixa_path: Path) -> None:
             upsert_quote(cursor, fund_id, quote)
             dre_count = upsert_dre_entries(cursor, fund_id, accounts, dre_entries)
             position_count = upsert_positions(cursor, fund_id, positions)
+            cash_flow_count = upsert_fund_cash_flows(cursor, fund_id, cash_import.fund_cash_flows)
         connection.commit()
 
     print("Importacao QITECH concluida.")
@@ -928,6 +1079,7 @@ def run_import(carteira_path: Path, caixa_path: Path) -> None:
     print("fund_quotes: 1 registro inserido/atualizado")
     print(f"dre_entries: {dre_count} registros inseridos/atualizados")
     print(f"financial_positions: {position_count} registros inseridos/atualizados")
+    print(f"fund_cash_flows: {cash_flow_count} registros inseridos/atualizados")
     if cash_import.treasury_balance is not None:
         print(f"saldo_tesouraria_caixa: {cash_import.treasury_balance}")
 

@@ -142,6 +142,7 @@ model Fund {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   dreEntries         DreEntry[]
+  fundCashFlows      FundCashFlow[]
   financialPositions FinancialPosition[]
   quotes             FundQuote[]
   userAccesses       UserFundAccess[]
@@ -241,6 +242,23 @@ model FinancialPosition {
 
   @@index([fundId, positionDate])
   @@map("financial_positions")
+}
+
+model FundCashFlow {
+  id          String   @id @default(cuid())
+  fundId      String
+  flowDate    DateTime @db.Date
+  description String
+  flowType    String
+  assetClass  String
+  assetCode   String
+  amount      Decimal  @db.Decimal(20, 6)
+  source      String   @default("QITECH")
+  createdAt   DateTime @default(now())
+  fund        Fund     @relation(fields: [fundId], references: [id])
+
+  @@unique([fundId, flowDate, description, flowType, assetCode])
+  @@map("fund_cash_flows")
 }
 
 model ImportBatch {

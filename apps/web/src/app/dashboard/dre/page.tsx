@@ -7,6 +7,7 @@ type DrePageProps = {
     period?: string;
     from?: string;
     to?: string;
+    view?: string;
   };
 };
 
@@ -15,6 +16,7 @@ type DreRow = {
   kind?: "section" | "subtotal" | "pl";
   valueType?: "currency" | "decimal" | "percent";
   values?: Map<string, number>;
+  isDelta?: boolean;
 };
 
 const assetClasses = {
@@ -147,6 +149,62 @@ function sumMaps(dates: string[], maps: Array<Map<string, number>>) {
   return result;
 }
 
+function deltaMap(dates: string[], values: Map<string, number>) {
+  const result = new Map<string, number>();
+
+  for (let index = 1; index < dates.length; index += 1) {
+    const key = dates[index];
+    const previousKey = dates[index - 1];
+    result.set(key, (values.get(key) ?? 0) - (values.get(previousKey) ?? 0));
+  }
+
+  return result;
+}
+
+function assetDeltaMap(
+  dates: string[],
+  values: Map<string, number>,
+  applications: Map<string, number>,
+  redemptions: Map<string, number>
+) {
+  const result = new Map<string, number>();
+
+  for (let index = 1; index < dates.length; index += 1) {
+    const key = dates[index];
+    const previousKey = dates[index - 1];
+    result.set(
+      key,
+      (values.get(key) ?? 0) -
+        (values.get(previousKey) ?? 0) -
+        (applications.get(key) ?? 0) +
+        (redemptions.get(key) ?? 0)
+    );
+  }
+
+  return result;
+}
+
+function liabilityDeltaMap(
+  dates: string[],
+  values: Map<string, number>,
+  redemptions: Map<string, number>
+) {
+  const result = new Map<string, number>();
+
+  for (let index = 1; index < dates.length; index += 1) {
+    const key = dates[index];
+    const previousKey = dates[index - 1];
+    result.set(
+      key,
+      (values.get(key) ?? 0) -
+        (values.get(previousKey) ?? 0) +
+        (redemptions.get(key) ?? 0)
+    );
+  }
+
+  return result;
+}
+
 function formatValue(value: number | undefined, valueType: DreRow["valueType"]) {
   const safeValue = value ?? 0;
 
@@ -159,6 +217,14 @@ function formatValue(value: number | undefined, valueType: DreRow["valueType"]) 
   }
 
   return currencyFormatter.format(safeValue);
+}
+
+function formatCellValue(row: DreRow, value: number | undefined) {
+  if (row.isDelta && (value === undefined || Math.abs(value) < 0.005)) {
+    return "—";
+  }
+
+  return formatValue(value, row.valueType);
 }
 
 function formatDateHeader(key: string) {
@@ -186,6 +252,14 @@ function rowClassName(row: DreRow) {
 }
 
 function valueClassName(row: DreRow, value: number | undefined) {
+  if (row.isDelta) {
+    if (value === undefined || Math.abs(value) < 0.005) {
+      return "text-slate-400";
+    }
+
+    return value > 0 ? "text-emerald-700" : "text-red-700";
+  }
+
   if (row.valueType === "percent") {
     if ((value ?? 0) > 0) {
       return "text-emerald-700";
@@ -201,6 +275,7 @@ function valueClassName(row: DreRow, value: number | undefined) {
 
 export default async function DrePage({ searchParams }: DrePageProps) {
   const { period, startDate, endDate } = getPeriodRange(searchParams);
+  const selectedView = searchParams?.view === "variacao" ? "variacao" : "carteira";
   const funds = await prisma.fund.findMany({
     where: {
       status: "ACTIVE",
@@ -229,7 +304,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
     );
   }
 
-  const [positions, dreEntries, quotes] = await Promise.all([
+  const [positions, dreEntries, quotes, cashFlows] = await Promise.all([
     prisma.financialPosition.findMany({
       where: {
         fundId: selectedFund.id,
@@ -283,12 +358,28 @@ export default async function DrePage({ searchParams }: DrePageProps) {
         yearReturn: true,
       },
     }),
+    prisma.fundCashFlow.findMany({
+      where: {
+        fundId: selectedFund.id,
+        flowDate: {
+          gte: startDate,
+          lte: endDate,
+        },
+      },
+      select: {
+        flowDate: true,
+        flowType: true,
+        assetClass: true,
+        amount: true,
+      },
+    }),
   ]);
 
   const dateSet = new Set<string>();
   positions.forEach((position) => dateSet.add(dateKey(position.positionDate)));
   dreEntries.forEach((entry) => dateSet.add(dateKey(entry.referenceDate)));
   quotes.forEach((quote) => dateSet.add(dateKey(quote.quoteDate)));
+  cashFlows.forEach((flow) => dateSet.add(dateKey(flow.flowDate)));
   const dates = Array.from(dateSet).sort();
 
   const creditRights = new Map<string, number>();
@@ -297,6 +388,8 @@ export default async function DrePage({ searchParams }: DrePageProps) {
   const mezzanine = new Map<string, number>();
   const ntnb = new Map<string, number>();
   const pddPositions = new Map<string, number>();
+  const applicationsByAssetClass = new Map<string, Map<string, number>>();
+  const redemptionsByAssetClass = new Map<string, Map<string, number>>();
   const expensesByCode = new Map<string, Map<string, number>>();
   const quoteMaps = {
     netAssetValue: new Map<string, number>(),
@@ -349,9 +442,51 @@ export default async function DrePage({ searchParams }: DrePageProps) {
     quoteMaps.yearReturn.set(key, Number(quote.yearReturn));
   }
 
-  const expenseMaps = expenseRows.map(([code]) => expensesByCode.get(code) ?? new Map());
+  for (const flow of cashFlows) {
+    const key = dateKey(flow.flowDate);
+    const assetClass = normalizeAssetClass(flow.assetClass);
+    const target =
+      flow.flowType === "resgate" ? redemptionsByAssetClass : applicationsByAssetClass;
+    const map = target.get(assetClass) ?? new Map<string, number>();
+    addToMap(map, key, Number(flow.amount));
+    target.set(assetClass, map);
+  }
 
-  const rows: DreRow[] = [
+  const cashFlowMap = (
+    maps: Map<string, Map<string, number>>,
+    assetClass: string
+  ) => maps.get(normalizeAssetClass(assetClass)) ?? new Map<string, number>();
+  const expenseMaps = expenseRows.map(([code]) => expensesByCode.get(code) ?? new Map());
+  const expenseDeltaMaps = expenseRows.map(([code]) =>
+    deltaMap(dates, expensesByCode.get(code) ?? new Map<string, number>())
+  );
+
+  const creditRightsDelta = assetDeltaMap(
+    dates,
+    creditRights,
+    cashFlowMap(applicationsByAssetClass, assetClasses.creditRights),
+    cashFlowMap(redemptionsByAssetClass, assetClasses.creditRights)
+  );
+  const otherFundsDelta = assetDeltaMap(
+    dates,
+    otherFunds,
+    cashFlowMap(applicationsByAssetClass, assetClasses.otherFunds),
+    cashFlowMap(redemptionsByAssetClass, assetClasses.otherFunds)
+  );
+  const ntnbDelta = deltaMap(dates, ntnb);
+  const seniorDelta = liabilityDeltaMap(
+    dates,
+    senior,
+    cashFlowMap(redemptionsByAssetClass, assetClasses.senior)
+  );
+  const mezzanineDelta = liabilityDeltaMap(
+    dates,
+    mezzanine,
+    cashFlowMap(redemptionsByAssetClass, assetClasses.mezzanine)
+  );
+  const pddDelta = deltaMap(dates, pddPositions);
+
+  const portfolioRows: DreRow[] = [
     { label: "ATIVOS", kind: "section" },
     { label: "Direitos Creditórios", values: creditRights },
     { label: "Outros Fundos Investidos", values: otherFunds },
@@ -416,13 +551,94 @@ export default async function DrePage({ searchParams }: DrePageProps) {
       values: quoteMaps.yearReturn,
     },
   ];
+  const variationRows: DreRow[] = [
+    { label: "ATIVOS", kind: "section" },
+    { label: "Direitos Creditórios", values: creditRightsDelta, isDelta: true },
+    { label: "Outros Fundos Investidos", values: otherFundsDelta, isDelta: true },
+    { label: "Renda Fixa — NTN-B", values: ntnbDelta, isDelta: true },
+    {
+      label: "Total Ativos",
+      kind: "subtotal",
+      values: sumMaps(dates, [creditRightsDelta, otherFundsDelta, ntnbDelta]),
+      isDelta: true,
+    },
+    { label: "SUPERIORES", kind: "section" },
+    { label: "Cotas Sênior", values: seniorDelta, isDelta: true },
+    { label: "Cotas Mezanino", values: mezzanineDelta, isDelta: true },
+    {
+      label: "Total Superiores",
+      kind: "subtotal",
+      values: sumMaps(dates, [seniorDelta, mezzanineDelta]),
+      isDelta: true,
+    },
+    { label: "DESPESAS OPERACIONAIS", kind: "section" },
+    ...expenseRows.map(([code, label]) => ({
+      label,
+      values: deltaMap(dates, expensesByCode.get(code) ?? new Map<string, number>()),
+      isDelta: true,
+    })),
+    {
+      label: "Total Despesas",
+      kind: "subtotal",
+      values: sumMaps(dates, expenseDeltaMaps),
+      isDelta: true,
+    },
+    { label: "RESULTADO", kind: "section" },
+    {
+      label: "PDD — Provisão para Devedores Duvidosos",
+      values: pddDelta,
+      isDelta: true,
+    },
+    {
+      label: "Patrimônio Líquido",
+      kind: "pl",
+      values: quoteMaps.netAssetValue,
+    },
+    { label: "COTAS", kind: "section" },
+    {
+      label: "Quantidade de Cotas",
+      valueType: "decimal",
+      values: quoteMaps.sharesQuantity,
+    },
+    {
+      label: "Valor da Cota",
+      valueType: "decimal",
+      values: quoteMaps.quotaValue,
+    },
+    {
+      label: "Rentabilidade Diária %",
+      valueType: "percent",
+      values: quoteMaps.dailyReturn,
+    },
+    {
+      label: "Rentabilidade Mensal %",
+      valueType: "percent",
+      values: quoteMaps.monthReturn,
+    },
+    {
+      label: "Rentabilidade Anual %",
+      valueType: "percent",
+      values: quoteMaps.yearReturn,
+    },
+  ];
 
   const hasData = dates.length > 0;
+  const rows = selectedView === "variacao" ? variationRows : portfolioRows;
+  const viewHref = (view: "carteira" | "variacao") => {
+    const params = new URLSearchParams();
+    params.set("fundId", selectedFund.id);
+    params.set("period", period);
+    params.set("from", dateKey(startDate));
+    params.set("to", dateKey(endDate));
+    params.set("view", view);
+    return `/dashboard/dre?${params.toString()}`;
+  };
 
   return (
     <div className="space-y-6">
       <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
         <form className="grid gap-4 lg:grid-cols-[minmax(220px,1fr)_190px_160px_160px_auto] lg:items-end">
+          <input name="view" type="hidden" value={selectedView} />
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700" htmlFor="fundId">
               Fundo
@@ -513,6 +729,25 @@ export default async function DrePage({ searchParams }: DrePageProps) {
           </p>
         </div>
 
+        <div className="flex border-b border-slate-200 px-5 pt-3">
+          {[
+            ["carteira", "Carteira"],
+            ["variacao", "DRE / Variação"],
+          ].map(([view, label]) => (
+            <a
+              className={`border-b-2 px-4 py-2 text-sm font-semibold transition ${
+                selectedView === view
+                  ? "border-primary text-primary"
+                  : "border-transparent text-slate-500 hover:text-slate-900"
+              }`}
+              href={viewHref(view as "carteira" | "variacao")}
+              key={view}
+            >
+              {label}
+            </a>
+          ))}
+        </div>
+
         {!hasData ? (
           <p className="px-5 py-8 text-sm text-slate-500">
             Nenhum dado encontrado para o período selecionado.
@@ -551,9 +786,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
                           className={`min-w-[130px] px-4 py-3 text-right ${valueClassName(row, value)}`}
                           key={key}
                         >
-                          {row.kind === "section"
-                            ? ""
-                            : formatValue(value, row.valueType)}
+                          {row.kind === "section" ? "" : formatCellValue(row, value)}
                         </td>
                       );
                     })}
