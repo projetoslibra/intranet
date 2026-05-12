@@ -316,7 +316,11 @@ def classify_outros_fundos(code: str, fund_name: str) -> str:
     normalized_code = normalize_text(code)
     normalized_fund_name = normalize_text(fund_name)
 
-    if "bris" in normalized_code or "bristol" in normalized_fund_name:
+    if (
+        normalized_code.endswith(("av", "ve"))
+        or "a vencer" in normalized_fund_name
+        or "vencidos" in normalized_fund_name
+    ):
         return "direitos_creditorios"
 
     return "outros_fundos"
