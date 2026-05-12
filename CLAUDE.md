@@ -103,3 +103,4 @@ ADMIN | DIRETOR | SOCIO | FINANCEIRO | LEITURA
 - [x] TASK 7 - DRE com abas Carteira e DRE/Variacao + fluxos de caixa dos fundos.
 - Nova tabela `FundCashFlow` (`fund_cash_flows`) armazena aplicacoes/resgates dos fundos importados do demonstrativo de caixa QITECH.
 - Tela DRE possui duas abas: `Carteira` para valores absolutos e `DRE / Variacao` para delta diario ajustado por aplicacoes/resgates.
+- [x] TASK 8 - Dashboard principal com PL por classe, KPIs consolidados e rentabilidades reais dos fundos.
