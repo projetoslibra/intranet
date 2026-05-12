@@ -59,19 +59,6 @@ function returnClassName(value: number) {
   return "text-slate-500";
 }
 
-function weightedAverage(
-  funds: FundDashboardData[],
-  field: "dailyReturn" | "monthReturn"
-) {
-  const weightedTotal = funds.reduce(
-    (total, fund) => total + fund[field] * fund.totalPl,
-    0
-  );
-  const totalPl = funds.reduce((total, fund) => total + fund.totalPl, 0);
-
-  return totalPl === 0 ? 0 : weightedTotal / totalPl;
-}
-
 export default async function DashboardPage() {
   const activeFunds = await prisma.fund.findMany({
     where: {
@@ -150,21 +137,11 @@ export default async function DashboardPage() {
   );
 
   const consolidatedPl = fundsData.reduce((total, fund) => total + fund.totalPl, 0);
-  const averageDailyReturn = weightedAverage(fundsData, "dailyReturn");
-  const averageMonthReturn = weightedAverage(fundsData, "monthReturn");
 
   const kpis = [
     {
       label: "PL Total Consolidado",
       value: formatCurrency(consolidatedPl),
-    },
-    {
-      label: "Rent. diária média",
-      value: formatReturn(averageDailyReturn),
-    },
-    {
-      label: "Rent. mensal média",
-      value: formatReturn(averageMonthReturn),
     },
     {
       label: "Fundos ativos",
@@ -174,7 +151,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-7">
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 md:grid-cols-2">
         {kpis.map((kpi) => (
           <article
             className="rounded-lg p-5"
