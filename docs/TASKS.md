@@ -21,14 +21,13 @@
 
 | Task | Responsável | Branch | Início | Notas |
 |------|-------------|--------|--------|-------|
-| _(exemplo — apague)_ | Juan | `feat/caixa` | 2026-06-25 | Implementar módulo Caixa |
+| **TASK 10 — Caixa da empresa** | Juan | `feat/caixa` | 2026-06-25 | Código pronto (schema, actions, UI, backfill). Migration `add_cash_daily_balances` criada — **pendente aplicar no banco** e decidir CNPJ dos 4 fundos. |
 
 ---
 
 ## 🟡 Próximas (backlog priorizado)
 > Pegue de cima para baixo. Se for começar, mova para "Em andamento".
 
-- [ ] **Módulo Caixa** (`/dashboard/caixa`) — hoje é placeholder vazio
 - [ ] **Módulo Usuários** (`/dashboard/usuarios`) — CRUD + atribuição de roles (placeholder)
 - [ ] **Módulo Relatórios** (`/dashboard/relatorios`) — exportações (placeholder)
 - [ ] **Enforcement de permissões** — hoje o middleware só checa login, não as permissões `*.view`/`*.manage`
