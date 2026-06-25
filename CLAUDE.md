@@ -76,6 +76,13 @@ ADMIN | DIRETOR | SOCIO | FINANCEIRO | LEITURA
 - [x] TASK 5 — Módulo de Fundos + Script de Importação QITECH
 - [x] TASK 6 — DRE dos fundos com dados reais
 
+## Trabalho em equipe (IMPORTANTE — ler no início de cada sessão)
+- O projeto é tocado por mais de uma pessoa, todas via Claude Code. O quadro de coordenação fica em `docs/TASKS.md`.
+- **No início de cada sessão**: `git pull`, ler `docs/TASKS.md` e este `CLAUDE.md`. **Antes de finalizar**: atualizar `docs/TASKS.md` (mover tasks entre Em andamento / Concluídas) e commitá-lo junto.
+- **Fluxo de git**: `main` é sempre deployável (Vercel faz deploy automático dela). Trabalhar em **branch por task** (`feat/...`, `fix/...`) e abrir **PR** para a `main` — não fazer push direto na `main` sem alinhar com o outro.
+- **Banco compartilhado**: o schema `OSHER` é único e compartilhado. Só uma pessoa cria migration por vez; registrar em `docs/TASKS.md` antes. Após merge, o outro roda `prisma migrate deploy` para sincronizar.
+- Ao mudar variáveis de ambiente, atualizar `.env.example` (só nomes, sem valores) e avisar em `docs/TASKS.md`.
+
 ## Convenções
 - Valores financeiros: Decimal (nunca float)
 - Formatação de moeda: `Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })`
