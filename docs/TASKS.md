@@ -21,7 +21,7 @@
 
 | Task | Responsável | Branch | Início | Notas |
 |------|-------------|--------|--------|-------|
-| **TASK 10 — Caixa da empresa** | Juan | `feat/caixa` | 2026-06-25 | Código pronto (schema, actions, UI, backfill). Migration `add_cash_daily_balances` criada — **pendente aplicar no banco** e decidir CNPJ dos 4 fundos. |
+| **TASK 10 — Caixa da empresa** | Juan | `feat/caixa` | 2026-06-25 | Migration `add_cash_daily_balances` **aplicada** no schema OSHER; seed dos 4 fundos (CNPJ placeholder) feito. **PR aberto — aguardando revisão do João.** Falta validar UI ao vivo e rodar o backfill (`cash_backfill.py --dry-run`). |
 
 ---
 
