@@ -12,7 +12,7 @@
 
 ## 👥 Pessoas
 - **Juan** — @projetoslibra (juan.carneiro@libracapital.com.br)
-- **[colega]** — @[handle] ([email]) · _preencher_
+- **João** — @[handle do GitHub] ([email]) · _preencher handle/email_
 
 ---
 
