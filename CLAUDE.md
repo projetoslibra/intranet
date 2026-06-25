@@ -83,7 +83,10 @@ ADMIN | DIRETOR | SOCIO | FINANCEIRO | LEITURA
 - Idioma do código: inglês (variáveis, funções, schema)
 - Idioma da interface: português brasileiro
 - Para rodar scripts do database, sempre usar `corepack pnpm --filter @osher/database <script>` e não `corepack pnpm <script>` na raiz.
-- O banco de dados está no Railway em `metro.proxy.rlwy.net:20041`, schema `public`, banco `railway`.
+  - ATENÇÃO: o pnpm v11 bloqueia build scripts e faz o wrapper de script falhar com `ERR_PNPM_IGNORED_BUILDS`. Enquanto isso não for resolvido (`pnpm approve-builds` ou `pnpm.onlyBuiltDependencies` no package.json), rode o Prisma direto pelo binário: a partir de `packages/database`, `./node_modules/.bin/prisma <cmd>` (ex.: `migrate deploy`, `generate`) e `./node_modules/.bin/tsx prisma/seed.ts`.
+- BANCO DE DADOS (atualizado em 2026-06-25): Railway, host `trolley.proxy.rlwy.net:56227`, banco `railway`. É uma instância COMPARTILHADA, multi-tenant por schema (o CRM/intranet vive em `public`; há ainda `MesaRV`, `cambio`, `rh`, `DashboardSquadLeaders`). **O OSHER usa o schema dedicado `OSHER`** — a `DATABASE_URL` é a mesma string do projeto, acrescida de `&schema=OSHER` no final. NUNCA rodar migrations sem o `&schema=OSHER`, sob risco de criar tabelas no `public` (CRM). O host antigo `metro.proxy.rlwy.net:20041` registrado anteriormente está OBSOLETO.
+  - Schema `OSHER` já migrado e seedado (16 tabelas + dados da seed). NÃO rodar `migrate` na Vercel — só no setup; o deploy apenas lê/escreve dados.
+  - A connection string completa (com senha) NÃO fica versionada — apenas nos arquivos `.env` locais (gitignored: raiz, `apps/web/`, `packages/database/`) e nas Environment Variables da Vercel.
 
 ## Observações importantes
 - Caminho atual do projeto: `C:\PROGRAMAS-JP\osher-finance-app`.
@@ -96,11 +99,13 @@ ADMIN | DIRETOR | SOCIO | FINANCEIRO | LEITURA
 - Dependências Python do importador: `scripts/imports/requirements.txt`.
 - Contas DRE padrão seedadas no banco para despesas, PDD e receitas.
 - Repositório GitHub: `https://github.com/projetoslibra/intranet.git`.
-- Deploy: Vercel conectado ao repositório GitHub.
-- Variáveis de ambiente necessárias na Vercel: `DATABASE_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`.
+- Deploy: Vercel conectado ao repositório GitHub. URL de produção: `https://osher-lilac.vercel.app`.
+- Variáveis de ambiente necessárias na Vercel (Production/Preview/Development): `DATABASE_URL` (com `&schema=OSHER`), `NEXTAUTH_SECRET`, `NEXTAUTH_URL` (em produção = a URL pública do deploy). Os valores reais ficam só na Vercel e nos `.env` locais — não versionar.
+- Caminho real do repositório nesta máquina: `C:\Users\Juan Carneiro\Documents\GitHub\intranet` (o repo se chama `intranet`, mas contém o monorepo `osher-finance-app`).
 
 ## Atualizacoes recentes
 - [x] TASK 7 - DRE com abas Carteira e DRE/Variacao + fluxos de caixa dos fundos.
 - Nova tabela `FundCashFlow` (`fund_cash_flows`) armazena aplicacoes/resgates dos fundos importados do demonstrativo de caixa QITECH.
 - Tela DRE possui duas abas: `Carteira` para valores absolutos e `DRE / Variacao` para delta diario ajustado por aplicacoes/resgates.
 - [x] TASK 8 - Dashboard principal com PL por classe, KPIs consolidados e rentabilidades reais dos fundos.
+- [2026-06-25] Banco de produção configurado: schema `OSHER` no Railway compartilhado (`trolley.proxy.rlwy.net:56227`), migrations aplicadas (16 tabelas) e seed executada (admin, role ADMIN, 11 permissões, 14 contas DRE, fundo "FIDC Alpha Senior"). Detalhe de reconhecimento do projeto em `docs/PROJECT-MAP.md`.
