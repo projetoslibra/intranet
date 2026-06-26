@@ -1,3 +1,14 @@
 packages:
   - "apps/web"
   - "packages/database"
+
+# pnpm v10+ bloqueia build scripts de dependências por padrão. O Prisma PRECISA
+# rodar o postinstall do @prisma/engines para instalar o query engine; sem isso o
+# client é gerado mas falha em RUNTIME (server-side exception em toda query) — foi
+# o que derrubou o deploy na Vercel (pnpm 10). Mesma lista no package.json raiz.
+onlyBuiltDependencies:
+  - "@prisma/client"
+  - "@prisma/engines"
+  - "prisma"
+  - "esbuild"
+  - "unrs-resolver"
