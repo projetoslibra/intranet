@@ -5,6 +5,9 @@ import { prisma } from "@/lib/prisma";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   secret: process.env.NEXTAUTH_SECRET,
+  // Em produção o Auth.js v5 exige confiar no host explicitamente; sem isso
+  // toda chamada a auth() lança UntrustedHost e derruba o /dashboard inteiro.
+  trustHost: true,
   pages: {
     signIn: "/login",
   },
