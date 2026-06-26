@@ -123,6 +123,32 @@ async function main() {
     },
   });
 
+  // Fundos do módulo Caixa. CNPJ/tipo/data são PLACEHOLDERS (não informados) —
+  // substituir pelos dados reais quando disponíveis.
+  const cashFundNames = ["Antena", "Apuama", "Bristol", "Consignado"];
+
+  for (const name of cashFundNames) {
+    const existing = await prisma.fund.findFirst({ where: { name } });
+
+    if (existing) {
+      console.log(`Fundo Caixa já existia: ${name}`);
+      continue;
+    }
+
+    await prisma.fund.create({
+      data: {
+        name,
+        shortName: name,
+        cnpj: `PENDENTE-${name.toUpperCase()}`,
+        fundType: "OUTRO",
+        status: "ACTIVE",
+        startDate: new Date("2024-01-01T00:00:00.000Z"),
+      },
+    });
+
+    console.log(`Fundo Caixa criado (CNPJ placeholder): ${name}`);
+  }
+
   for (const [code, name] of dreAccounts) {
     await prisma.dreAccount.upsert({
       where: { code },

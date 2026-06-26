@@ -21,14 +21,13 @@
 
 | Task | Responsável | Branch | Início | Notas |
 |------|-------------|--------|--------|-------|
-| _(exemplo — apague)_ | Juan | `feat/caixa` | 2026-06-25 | Implementar módulo Caixa |
+| **TASK 10 — Caixa da empresa** | Juan | `feat/caixa` | 2026-06-25 | Migration `add_cash_daily_balances` **aplicada** no schema OSHER; seed dos 4 fundos (CNPJ placeholder) feito. **PR aberto — aguardando revisão do João.** Falta validar UI ao vivo e rodar o backfill (`cash_backfill.py --dry-run`). |
 
 ---
 
 ## 🟡 Próximas (backlog priorizado)
 > Pegue de cima para baixo. Se for começar, mova para "Em andamento".
 
-- [ ] **Módulo Caixa** (`/dashboard/caixa`) — hoje é placeholder vazio
 - [ ] **Módulo Usuários** (`/dashboard/usuarios`) — CRUD + atribuição de roles (placeholder)
 - [ ] **Módulo Relatórios** (`/dashboard/relatorios`) — exportações (placeholder)
 - [ ] **Enforcement de permissões** — hoje o middleware só checa login, não as permissões `*.view`/`*.manage`
