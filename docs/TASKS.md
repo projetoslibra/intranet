@@ -21,7 +21,7 @@
 
 | Task | Responsável | Branch | Início | Notas |
 |------|-------------|--------|--------|-------|
-| **TASK 10 — Caixa da empresa** | Juan | `feat/caixa` | 2026-06-25 | Migration `add_cash_daily_balances` **aplicada** no schema OSHER; seed dos 4 fundos (CNPJ placeholder) feito. **PR aberto — aguardando revisão do João.** Falta validar UI ao vivo e rodar o backfill (`cash_backfill.py --dry-run`). |
+| _(ninguém com task ativa)_ | — | — | — | — |
 
 ---
 
@@ -38,6 +38,7 @@
 ---
 
 ## 🟢 Concluídas (recentes)
+- [x] **[2026-06-26]** TASK 10 — Caixa da empresa: matriz de visualização + input diário por fundo, migration `add_cash_daily_balances`, seed dos 4 fundos (CNPJ placeholder), backfill `cash_backfill.py` — _Juan_ · PR #1. Pendências: validar UI ao vivo e rodar o backfill em `--dry-run`.
 - [x] **[2026-06-25]** Banco de produção configurado no schema `OSHER` (Railway compartilhado): migrations + seed — _Juan_
 - [x] **[2026-06-25]** Reconhecimento do projeto → `docs/PROJECT-MAP.md` — _Juan_
 - [x] TASK 1–8 (base, banco, auth, layout, fundos, DRE, caixa-dos-fundos, dashboard) — ver histórico no `CLAUDE.md`
