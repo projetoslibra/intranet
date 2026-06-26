@@ -14,8 +14,14 @@ const globalForPrisma = globalThis as unknown as {
  */
 function resolveDatabaseUrl(): string | undefined {
   const url = process.env.DATABASE_URL;
-  if (!url || /[?&]schema=/.test(url)) {
+  if (!url) {
     return url;
+  }
+
+  // Força o schema OSHER, sobrescrevendo qualquer valor existente (inclusive
+  // schema=public) ou adicionando quando ausente. O app é sempre OSHER.
+  if (/[?&]schema=/.test(url)) {
+    return url.replace(/([?&]schema=)[^&]*/, "$1OSHER");
   }
 
   return `${url}${url.includes("?") ? "&" : "?"}schema=OSHER`;
