@@ -1,5 +1,10 @@
 import { Download } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { CarteiraImportPanel } from "@/features/carteiras/components/CarteiraImportPanel";
+import {
+  getMostRecentBusinessDate,
+  toDateKey,
+} from "@/server/singulare/date-utils";
 
 type DrePageProps = {
   searchParams?: {
@@ -184,10 +189,11 @@ function assetDeltaMap(
   return result;
 }
 
-function liabilityDeltaMap(
+function creditRightsDeltaMap(
   dates: string[],
   values: Map<string, number>,
-  redemptions: Map<string, number>
+  purchases: Map<string, number>,
+  liquidations: Map<string, number>
 ) {
   const result = new Map<string, number>();
 
@@ -198,7 +204,8 @@ function liabilityDeltaMap(
       key,
       (values.get(key) ?? 0) -
         (values.get(previousKey) ?? 0) +
-        (redemptions.get(key) ?? 0)
+        -(purchases.get(key) ?? 0) +
+        (liquidations.get(key) ?? 0)
     );
   }
 
@@ -233,6 +240,205 @@ function formatDateHeader(key: string) {
 
 function normalizeAssetClass(value: string) {
   return value.trim().toUpperCase();
+}
+
+function resolveCarteiraFundo(fund: { name: string; shortName: string }) {
+  const label = `${fund.shortName} ${fund.name}`.toUpperCase();
+
+  if (label.includes("APUAMA")) {
+    return "APUAMA";
+  }
+
+  if (label.includes("BRISTOL")) {
+    return "BRISTOL";
+  }
+
+  return null;
+}
+
+function normalizeCarteiraAtivo(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+function classifyCarteiraAtivo(value: string) {
+  const ativo = normalizeCarteiraAtivo(value);
+
+  if (ativo === "PATRIMONIO") {
+    return "patrimonio";
+  }
+
+  if (ativo === "VARIACAO DIARIA") {
+    return "variacao_diaria";
+  }
+
+  if (ativo === "VARIACAO MENSAL") {
+    return "variacao_mensal";
+  }
+
+  if (ativo === "VARIACAO ANUAL") {
+    return "variacao_anual";
+  }
+
+  if (ativo.includes("PDD")) {
+    return "pdd";
+  }
+
+  if (
+    ativo.includes("LIQUIDADOS") ||
+    ativo.includes("CONCILIA") ||
+    ativo.includes("SALDO EM TESOURARIA") ||
+    ativo === "BRADESCO" ||
+    ativo === "SOCOPA"
+  ) {
+    return "reconciliation";
+  }
+
+  if (ativo === "SRP" || ativo.includes("SENIOR")) {
+    return "senior";
+  }
+
+  if (ativo === "MEZAN" || ativo.includes("MEZANINO")) {
+    return "mezzanine";
+  }
+
+  if (
+    ativo.includes("A VENCER") ||
+    ativo.includes("VENCIDOS") ||
+    ativo === "DIR"
+  ) {
+    return "creditRights";
+  }
+
+  if (
+    ativo.includes("NTN") ||
+    ativo.includes("LFT") ||
+    ativo.includes("SELIC")
+  ) {
+    return "ntnb";
+  }
+
+  if (
+    ativo.includes("TAXA") ||
+    ativo.includes("DESPESA") ||
+    ativo.includes("DIFERIMENTO") ||
+    ativo.includes("AUDITORIA") ||
+    ativo.includes("CETIP") ||
+    ativo.includes("CUSTO") ||
+    ativo.includes("CONSULTORIA") ||
+    ativo.includes("RATING")
+  ) {
+    return "expense";
+  }
+
+  return "otherFunds";
+}
+
+function expenseCodeFromCarteiraAtivo(value: string) {
+  const ativo = normalizeCarteiraAtivo(value);
+
+  if (ativo.includes("GESTAO")) {
+    return "taxa_gestao";
+  }
+
+  if (ativo.includes("ADMINISTRACAO")) {
+    return "taxa_administracao";
+  }
+
+  if (ativo.includes("CUSTODIA")) {
+    return "taxa_custodia";
+  }
+
+  if (ativo.includes("AUDITORIA")) {
+    return "auditoria";
+  }
+
+  if (ativo.includes("COBRANCA")) {
+    return "servicos_cobranca";
+  }
+
+  if (ativo.includes("IOF")) {
+    return "iof";
+  }
+
+  if (ativo.includes("CETIP")) {
+    return "cetip";
+  }
+
+  if (ativo.includes("SELIC")) {
+    return "selic";
+  }
+
+  if (ativo.includes("CONSULTORIA")) {
+    return "consultoria";
+  }
+
+  if (ativo.includes("RATING")) {
+    return "rating";
+  }
+
+  return "outras_despesas";
+}
+
+function caixaFlowType(value: string) {
+  const descricao = normalizeCarteiraAtivo(value);
+
+  if (descricao.startsWith("APLICACAO NO FUNDO")) {
+    return "aplicacao";
+  }
+
+  if (descricao.startsWith("RESGATE DO FUNDO")) {
+    return "resgate";
+  }
+
+  return null;
+}
+
+function classifyCaixaAssetClass(
+  descricao: string,
+  historicoTraduzido: string | null,
+  clienteId: string
+) {
+  const text = normalizeCarteiraAtivo(
+    `${descricao} ${historicoTraduzido ?? ""} ${clienteId}`
+  );
+
+  if (
+    text.includes("MZ") ||
+    text.includes("MEZ") ||
+    text.includes("MEZAN") ||
+    text.includes("MEZANINO")
+  ) {
+    return assetClasses.mezzanine;
+  }
+
+  if (text.includes(" SR") || text.includes("SRP") || text.includes("SENIOR")) {
+    return assetClasses.senior;
+  }
+
+  if (
+    text.includes("A VENCER") ||
+    text.includes("VENCIDOS") ||
+    text.includes("BRISAVE") ||
+    text.includes("BRISVENC") ||
+    text.includes("APULBAV") ||
+    text.includes("APULBVE")
+  ) {
+    return assetClasses.creditRights;
+  }
+
+  if (
+    text.includes("NTN") ||
+    text.includes("LFT") ||
+    text.includes("SELIC")
+  ) {
+    return assetClasses.ntnb;
+  }
+
+  return assetClasses.otherFunds;
 }
 
 function rowClassName(row: DreRow) {
@@ -276,6 +482,7 @@ function valueClassName(row: DreRow, value: number | undefined) {
 export default async function DrePage({ searchParams }: DrePageProps) {
   const { period, startDate, endDate } = getPeriodRange(searchParams);
   const selectedView = searchParams?.view === "variacao" ? "variacao" : "carteira";
+  const defaultImportDate = toDateKey(getMostRecentBusinessDate());
   const funds = await prisma.fund.findMany({
     where: {
       status: "ACTIVE",
@@ -295,16 +502,20 @@ export default async function DrePage({ searchParams }: DrePageProps) {
 
   if (!selectedFund) {
     return (
-      <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
-        <h2 className="text-lg font-semibold text-slate-950">DRE dos Fundos</h2>
-        <p className="mt-2 text-sm text-slate-500">
-          Nenhum fundo ativo encontrado para exibir a DRE.
-        </p>
-      </section>
+      <div className="space-y-6">
+        <CarteiraImportPanel defaultDate={defaultImportDate} />
+        <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
+          <h2 className="text-lg font-semibold text-slate-950">DRE dos Fundos</h2>
+          <p className="mt-2 text-sm text-slate-500">
+            Nenhum fundo ativo encontrado para exibir a DRE.
+          </p>
+        </section>
+      </div>
     );
   }
 
-  const [positions, dreEntries, quotes, cashFlows] = await Promise.all([
+  const carteiraFundo = resolveCarteiraFundo(selectedFund);
+  const [positions, dreEntries, quotes, cashFlows, carteiras, caixas] = await Promise.all([
     prisma.financialPosition.findMany({
       where: {
         fundId: selectedFund.id,
@@ -373,6 +584,45 @@ export default async function DrePage({ searchParams }: DrePageProps) {
         amount: true,
       },
     }),
+    carteiraFundo
+      ? prisma.carteira.findMany({
+          where: {
+            fundo: carteiraFundo,
+            dataAnalise: {
+              gte: startDate,
+              lte: endDate,
+            },
+          },
+          orderBy: [{ dataAnalise: "asc" }, { ativo: "asc" }],
+          select: {
+            ativo: true,
+            valor: true,
+            dataAnalise: true,
+          },
+        })
+      : Promise.resolve([]),
+    carteiraFundo
+      ? prisma.caixaSingulare.findMany({
+          where: {
+            dataAnalise: {
+              gte: startDate,
+              lte: endDate,
+            },
+            OR: [
+              { clienteId: { contains: carteiraFundo, mode: "insensitive" } },
+              { clienteNome: { contains: carteiraFundo, mode: "insensitive" } },
+            ],
+          },
+          select: {
+            dataAnalise: true,
+            descricao: true,
+            historicoTraduzido: true,
+            clienteId: true,
+            entradas: true,
+            saidas: true,
+          },
+        })
+      : Promise.resolve([]),
   ]);
 
   const dateSet = new Set<string>();
@@ -380,6 +630,8 @@ export default async function DrePage({ searchParams }: DrePageProps) {
   dreEntries.forEach((entry) => dateSet.add(dateKey(entry.referenceDate)));
   quotes.forEach((quote) => dateSet.add(dateKey(quote.quoteDate)));
   cashFlows.forEach((flow) => dateSet.add(dateKey(flow.flowDate)));
+  carteiras.forEach((carteira) => dateSet.add(dateKey(carteira.dataAnalise)));
+  caixas.forEach((caixa) => dateSet.add(dateKey(caixa.dataAnalise)));
   const dates = Array.from(dateSet).sort();
 
   const creditRights = new Map<string, number>();
@@ -388,6 +640,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
   const mezzanine = new Map<string, number>();
   const ntnb = new Map<string, number>();
   const pddPositions = new Map<string, number>();
+  const reconciliation = new Map<string, number>();
   const applicationsByAssetClass = new Map<string, Map<string, number>>();
   const redemptionsByAssetClass = new Map<string, Map<string, number>>();
   const expensesByCode = new Map<string, Map<string, number>>();
@@ -424,6 +677,41 @@ export default async function DrePage({ searchParams }: DrePageProps) {
     }
   }
 
+  for (const carteira of carteiras) {
+    const key = dateKey(carteira.dataAnalise);
+    const value = Number(carteira.valor);
+    const category = classifyCarteiraAtivo(carteira.ativo);
+
+    if (category === "patrimonio") {
+      quoteMaps.netAssetValue.set(key, value);
+    } else if (category === "variacao_diaria") {
+      quoteMaps.dailyReturn.set(key, value);
+    } else if (category === "variacao_mensal") {
+      quoteMaps.monthReturn.set(key, value);
+    } else if (category === "variacao_anual") {
+      quoteMaps.yearReturn.set(key, value);
+    } else if (category === "creditRights") {
+      addToMap(creditRights, key, value);
+    } else if (category === "otherFunds") {
+      addToMap(otherFunds, key, value);
+    } else if (category === "ntnb") {
+      addToMap(ntnb, key, value);
+    } else if (category === "senior") {
+      addToMap(senior, key, value);
+    } else if (category === "mezzanine") {
+      addToMap(mezzanine, key, value);
+    } else if (category === "pdd") {
+      addToMap(pddPositions, key, value);
+    } else if (category === "reconciliation") {
+      addToMap(reconciliation, key, value);
+    } else if (category === "expense") {
+      const code = expenseCodeFromCarteiraAtivo(carteira.ativo);
+      const map = expensesByCode.get(code) ?? new Map<string, number>();
+      addToMap(map, key, value);
+      expensesByCode.set(code, map);
+    }
+  }
+
   for (const entry of dreEntries) {
     const key = dateKey(entry.referenceDate);
     const code = entry.account.code;
@@ -452,6 +740,37 @@ export default async function DrePage({ searchParams }: DrePageProps) {
     target.set(assetClass, map);
   }
 
+  for (const caixa of caixas) {
+    const flowType = caixaFlowType(caixa.descricao);
+
+    if (!flowType) {
+      continue;
+    }
+
+    const key = dateKey(caixa.dataAnalise);
+    const assetClass = normalizeAssetClass(
+      classifyCaixaAssetClass(
+        caixa.descricao,
+        caixa.historicoTraduzido,
+        caixa.clienteId
+      )
+    );
+    const amount =
+      flowType === "aplicacao"
+        ? Math.abs(Number(caixa.saidas))
+        : Math.abs(Number(caixa.entradas));
+
+    if (amount === 0) {
+      continue;
+    }
+
+    const target =
+      flowType === "resgate" ? redemptionsByAssetClass : applicationsByAssetClass;
+    const map = target.get(assetClass) ?? new Map<string, number>();
+    addToMap(map, key, amount);
+    target.set(assetClass, map);
+  }
+
   const cashFlowMap = (
     maps: Map<string, Map<string, number>>,
     assetClass: string
@@ -460,8 +779,9 @@ export default async function DrePage({ searchParams }: DrePageProps) {
   const expenseDeltaMaps = expenseRows.map(([code]) =>
     deltaMap(dates, expensesByCode.get(code) ?? new Map<string, number>())
   );
+  const reconciliationDelta = deltaMap(dates, reconciliation);
 
-  const creditRightsDelta = assetDeltaMap(
+  const creditRightsDelta = creditRightsDeltaMap(
     dates,
     creditRights,
     cashFlowMap(applicationsByAssetClass, assetClasses.creditRights),
@@ -473,15 +793,22 @@ export default async function DrePage({ searchParams }: DrePageProps) {
     cashFlowMap(applicationsByAssetClass, assetClasses.otherFunds),
     cashFlowMap(redemptionsByAssetClass, assetClasses.otherFunds)
   );
-  const ntnbDelta = deltaMap(dates, ntnb);
-  const seniorDelta = liabilityDeltaMap(
+  const ntnbDelta = assetDeltaMap(
+    dates,
+    ntnb,
+    cashFlowMap(applicationsByAssetClass, assetClasses.ntnb),
+    cashFlowMap(redemptionsByAssetClass, assetClasses.ntnb)
+  );
+  const seniorDelta = assetDeltaMap(
     dates,
     senior,
+    cashFlowMap(applicationsByAssetClass, assetClasses.senior),
     cashFlowMap(redemptionsByAssetClass, assetClasses.senior)
   );
-  const mezzanineDelta = liabilityDeltaMap(
+  const mezzanineDelta = assetDeltaMap(
     dates,
     mezzanine,
+    cashFlowMap(applicationsByAssetClass, assetClasses.mezzanine),
     cashFlowMap(redemptionsByAssetClass, assetClasses.mezzanine)
   );
   const pddDelta = deltaMap(dates, pddPositions);
@@ -495,6 +822,13 @@ export default async function DrePage({ searchParams }: DrePageProps) {
       label: "Total Ativos",
       kind: "subtotal",
       values: sumMaps(dates, [creditRights, otherFunds, ntnb]),
+    },
+    { label: "CONCILIAÇÃO / LIQUIDAÇÕES", kind: "section" },
+    { label: "Liquidações, bancos e tesouraria", values: reconciliation },
+    {
+      label: "Total Conciliação",
+      kind: "subtotal",
+      values: reconciliation,
     },
     { label: "SUPERIORES", kind: "section" },
     { label: "Cotas Sênior", values: senior },
@@ -560,6 +894,18 @@ export default async function DrePage({ searchParams }: DrePageProps) {
       label: "Total Ativos",
       kind: "subtotal",
       values: sumMaps(dates, [creditRightsDelta, otherFundsDelta, ntnbDelta]),
+      isDelta: true,
+    },
+    { label: "CONCILIAÇÃO / LIQUIDAÇÕES", kind: "section" },
+    {
+      label: "Liquidações, bancos e tesouraria",
+      values: reconciliationDelta,
+      isDelta: true,
+    },
+    {
+      label: "Total Conciliação",
+      kind: "subtotal",
+      values: reconciliationDelta,
       isDelta: true,
     },
     { label: "SUPERIORES", kind: "section" },
@@ -636,6 +982,8 @@ export default async function DrePage({ searchParams }: DrePageProps) {
 
   return (
     <div className="space-y-6">
+      <CarteiraImportPanel defaultDate={defaultImportDate} />
+
       <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
         <form className="grid gap-4 lg:grid-cols-[minmax(220px,1fr)_190px_160px_160px_auto] lg:items-end">
           <input name="view" type="hidden" value={selectedView} />

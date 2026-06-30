@@ -286,6 +286,44 @@ model CompanyCashDailyBalance {
   @@map("company_cash_daily_balances")
 }
 
+model Carteira {
+  id          String   @id @default(cuid())
+  dataPosicao DateTime @map("data_posicao") @db.Date
+  ativo       String
+  valor       Decimal  @db.Decimal(24, 10)
+  fundo       String
+  dataAnalise DateTime @map("data_analise") @db.Date
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([dataAnalise, fundo])
+  @@map("CARTEIRAS")
+}
+
+model CaixaSingulare {
+  id                 String   @id @default(cuid())
+  dataLiquidacao     DateTime @map("data_liquidacao") @db.Date
+  tipoDeRegistro     Int      @map("tipo_de_registro")
+  descricao          String   @map("descricao")
+  entradas           Decimal  @default(0) @db.Decimal(24, 10)
+  saidas             Decimal  @default(0) @map("saidas") @db.Decimal(24, 10)
+  saldo              Decimal  @default(0) @db.Decimal(24, 10)
+  historicoTraduzido String?  @map("historico_traduzido")
+  idConta            Int?     @map("id_conta")
+  banco              String?
+  agencia            String?
+  contaCorrente      String?  @map("conta_corrente")
+  digito             String?
+  contaInvestimento  String?  @map("conta_investimento")
+  cpfDoCliente       String?  @map("cpf_do_cliente")
+  clienteNome        String   @map("cliente_nome")
+  clienteId          String   @map("cliente_id")
+  dataAnalise        DateTime @map("data_analise") @db.Date
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  @@index([dataAnalise, clienteId])
+  @@map("CAIXAS")
+}
+
 model ImportBatch {
   id               String       @id @default(cuid())
   importedByUserId String
