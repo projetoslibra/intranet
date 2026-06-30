@@ -31,6 +31,58 @@ type FundDashboardData = {
   yearReturn: number;
 };
 
+function resolveCarteiraFundo(fund: { name: string; shortName: string }) {
+  const label = `${fund.shortName} ${fund.name}`.toUpperCase();
+
+  if (label.includes("APUAMA")) {
+    return "APUAMA";
+  }
+
+  if (label.includes("BRISTOL")) {
+    return "BRISTOL";
+  }
+
+  return null;
+}
+
+function normalizeCarteiraAtivo(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+function classifyCarteiraAtivo(value: string) {
+  const ativo = normalizeCarteiraAtivo(value);
+
+  if (ativo === "PATRIMONIO") {
+    return "patrimonio";
+  }
+
+  if (ativo === "VARIACAO DIARIA") {
+    return "variacao_diaria";
+  }
+
+  if (ativo === "VARIACAO MENSAL") {
+    return "variacao_mensal";
+  }
+
+  if (ativo === "VARIACAO ANUAL") {
+    return "variacao_anual";
+  }
+
+  if (ativo === "SRP" || ativo.includes("SENIOR")) {
+    return "senior";
+  }
+
+  if (ativo === "MEZAN" || ativo.includes("MEZANINO")) {
+    return "mezzanine";
+  }
+
+  return "outros";
+}
+
 function formatCurrency(value: number) {
   return currencyFormatter.format(value);
 }
@@ -71,67 +123,76 @@ export default async function DashboardPage() {
       id: true,
       name: true,
       cnpj: true,
+      shortName: true,
     },
   });
 
   const fundsData = await Promise.all(
     activeFunds.map(async (fund) => {
-      const [latestQuote, latestPositionDate] = await Promise.all([
-        prisma.fundQuote.findFirst({
-          where: { fundId: fund.id },
-          orderBy: { quoteDate: "desc" },
-        }),
-        prisma.financialPosition.findFirst({
-          where: {
-            fundId: fund.id,
-            assetClass: {
-              in: ["senior", "mezanino"],
-            },
-          },
-          orderBy: { positionDate: "desc" },
-          select: { positionDate: true },
-        }),
-      ]);
-
-      const classPositions = latestPositionDate
-        ? await prisma.financialPosition.findMany({
-            where: {
-              fundId: fund.id,
-              positionDate: latestPositionDate.positionDate,
-              assetClass: {
-                in: ["senior", "mezanino"],
-              },
-            },
-            select: {
-              assetClass: true,
-              netValue: true,
-            },
+      const carteiraFundo = resolveCarteiraFundo(fund);
+      const latestCarteira = carteiraFundo
+        ? await prisma.carteira.findFirst({
+            where: { fundo: carteiraFundo },
+            orderBy: { dataAnalise: "desc" },
+            select: { dataAnalise: true },
           })
-        : [];
+        : null;
+      const carteiras =
+        carteiraFundo && latestCarteira
+          ? await prisma.carteira.findMany({
+              where: {
+                fundo: carteiraFundo,
+                dataAnalise: latestCarteira.dataAnalise,
+              },
+              select: {
+                ativo: true,
+                valor: true,
+              },
+            })
+          : [];
 
-      const seniorValue = classPositions
-        .filter((position) => position.assetClass === "senior")
-        .reduce((sum, position) => sum + Math.abs(Number(position.netValue)), 0);
-      const mezzanineValue = classPositions
-        .filter((position) => position.assetClass === "mezanino")
-        .reduce((sum, position) => sum + Math.abs(Number(position.netValue)), 0);
-      const juniorValue = Math.abs(Number(latestQuote?.netAssetValue ?? 0));
+      let seniorValue = 0;
+      let mezzanineValue = 0;
+      let juniorValue = 0;
+      let dailyReturn = 0;
+      let monthReturn = 0;
+      let yearReturn = 0;
+
+      for (const carteira of carteiras) {
+        const value = Number(carteira.valor);
+        const category = classifyCarteiraAtivo(carteira.ativo);
+
+        if (category === "patrimonio") {
+          juniorValue += Math.abs(value);
+        } else if (category === "senior") {
+          seniorValue += Math.abs(value);
+        } else if (category === "mezzanine") {
+          mezzanineValue += Math.abs(value);
+        } else if (category === "variacao_diaria") {
+          dailyReturn += value;
+        } else if (category === "variacao_mensal") {
+          monthReturn += value;
+        } else if (category === "variacao_anual") {
+          yearReturn += value;
+        }
+      }
+
       const totalPl = seniorValue + mezzanineValue + juniorValue;
 
       return {
         id: fund.id,
         name: fund.name,
         cnpj: fund.cnpj,
-        dataLabel: latestQuote
-          ? `Dados de ${dateFormatter.format(latestQuote.quoteDate)}`
-          : "Sem dados de cota",
+        dataLabel: latestCarteira
+          ? `Dados de ${dateFormatter.format(latestCarteira.dataAnalise)}`
+          : "Sem dados na CARTEIRAS",
         seniorValue,
         mezzanineValue,
         juniorValue,
         totalPl,
-        dailyReturn: Number(latestQuote?.dailyReturn ?? 0),
-        monthReturn: Number(latestQuote?.monthReturn ?? 0),
-        yearReturn: Number(latestQuote?.yearReturn ?? 0),
+        dailyReturn,
+        monthReturn,
+        yearReturn,
       };
     })
   );

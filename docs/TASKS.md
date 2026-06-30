@@ -38,6 +38,7 @@
 ---
 
 ## 🟢 Concluídas (recentes)
+- [x] **[2026-06-30]** Fazer a tela DASHBOARDS pegar os dados reais da table `CARTEIRAS`: cards do dashboard agora usam a última carteira importada por fundo para PL, cotas superiores e rentabilidades — _João_ · branch `feat/dashboard-carteiras`.
 - [x] **[2026-06-30]** Criação API para importar carteira e caixa Singulare: tabelas `CARTEIRAS`/`CAIXAS`, importação via DRE, classificação de carteira, DRE/Variação ajustada por compras/liquidações e conciliação separada — _João_ · branch `feat/criação-api`.
 - [x] **[2026-06-26]** TASK 10 — Caixa da empresa: matriz de visualização + input diário por fundo, migration `add_cash_daily_balances`, seed dos 4 fundos (CNPJ placeholder), backfill `cash_backfill.py` — _Juan_ · PR #1. Pendências: validar UI ao vivo e rodar o backfill em `--dry-run`.
 - [x] **[2026-06-25]** Banco de produção configurado no schema `OSHER` (Railway compartilhado): migrations + seed — _Juan_
