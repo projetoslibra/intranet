@@ -21,7 +21,7 @@
 
 | Task | Responsável | Branch | Início | Notas |
 |------|-------------|--------|--------|-------|
-| Botão "Exportar Excel" da DRE | João | `feat/exportar-dre-excel` | 2026-07-01 | Tornar a tabela atual da DRE exportável para Excel. |
+| _(ninguém com task ativa)_ | — | — | — | — |
 
 ---
 
@@ -36,6 +36,7 @@
 ---
 
 ## 🟢 Concluídas (recentes)
+- [x] **[2026-07-01]** Botão "Exportar Excel" da DRE: exporta a tabela filtrada atual da DRE em `.xls` e remove o fundo de teste FIDC Alpha Senior da seed, telas e banco — _João_ · branch `feat/exportar-dre-excel`.
 - [x] **[2026-07-01]** Cadastrar fundos reais (APUAMA, BRISTOL) e importar planilhas QITECH — _João_.
 - [x] **[2026-06-30]** Fazer a tela DASHBOARDS pegar os dados reais da table `CARTEIRAS`: cards do dashboard agora usam a última carteira importada por fundo para PL, cotas superiores e rentabilidades — _João_ · branch `feat/dashboard-carteiras`.
 - [x] **[2026-06-30]** Criação API para importar carteira e caixa Singulare: tabelas `CARTEIRAS`/`CAIXAS`, importação via DRE, classificação de carteira, DRE/Variação ajustada por compras/liquidações e conciliação separada — _João_ · branch `feat/criação-api`.
