@@ -115,6 +115,9 @@ export default async function DashboardPage() {
   const activeFunds = await prisma.fund.findMany({
     where: {
       status: "ACTIVE",
+      cnpj: {
+        not: "00.000.000/0001-00",
+      },
     },
     orderBy: {
       name: "asc",

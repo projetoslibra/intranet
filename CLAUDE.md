@@ -115,11 +115,11 @@ ADMIN | DIRETOR | SOCIO | FINANCEIRO | LEITURA
 - Nova tabela `FundCashFlow` (`fund_cash_flows`) armazena aplicacoes/resgates dos fundos importados do demonstrativo de caixa QITECH.
 - Tela DRE possui duas abas: `Carteira` para valores absolutos e `DRE / Variacao` para delta diario ajustado por aplicacoes/resgates.
 - [x] TASK 8 - Dashboard principal com PL por classe, KPIs consolidados e rentabilidades reais dos fundos.
-- [2026-06-25] Banco de produção configurado: schema `OSHER` no Railway compartilhado (`trolley.proxy.rlwy.net:56227`), migrations aplicadas e seed executada (admin, role ADMIN, 11 permissões, 14 contas DRE, fundo "FIDC Alpha Senior").
+- [2026-06-25] Banco de produção configurado: schema `OSHER` no Railway compartilhado (`trolley.proxy.rlwy.net:56227`), migrations aplicadas e seed executada (admin, role ADMIN, 11 permissões, 14 contas DRE).
 - [x] TASK 10 — Caixa da empresa com input manual de posição diária.
 - Nova tabela `CompanyCashDailyBalance` (`company_cash_daily_balances`) para snapshots diários de saldo por fundo.
 - Tabelas existentes `company_cash_accounts` e `company_cash_transactions` mantidas intocadas.
-- Fundos no Caixa: Antena, Apuama, Bristol, Consignado (criados na seed com **CNPJ placeholder `PENDENTE-<NOME>`**, tipo `OUTRO` e data placeholder — substituir pelos dados reais quando disponíveis). O fundo de teste "FIDC Alpha Senior" também é ACTIVE e aparece no Caixa até ser desativado.
+- Fundos no Caixa: Antena, Apuama, Bristol, Consignado (criados na seed com **CNPJ placeholder `PENDENTE-<NOME>`**, tipo `OUTRO` e data placeholder — substituir pelos dados reais quando disponíveis).
 - Tela com matriz de visualização (linhas=contas, colunas=fundos) + formulário de input por data. `Caixa = Conta pgto − Reserva − Usado` (calculado em runtime, `Prisma.Decimal`, nunca float).
 - Decisão: "Reserva" (`reserveBalance`) foi incluída como input/linha (consta no schema Zod e na fórmula), embora o texto da task listasse só 4 inputs.
 - Gate de permissões granular criado em `apps/web/src/lib/permissions.ts` (`cash.view`/`cash.manage`), consultando roles→permissions (a sessão só carrega o nome do role).

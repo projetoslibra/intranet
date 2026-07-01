@@ -173,8 +173,8 @@ user_roles · users
 Tabela de fundos (após migration): **`OSHER.funds`** (model `Fund`).
 
 O que será criado quando rodarmos migration + seed:
-- **Seed** ([seed.ts](../packages/database/prisma/seed.ts)) cria 1 fundo fixo: **"FIDC Alpha Senior"** (shortName "Alpha Senior", CNPJ `00.000.000/0001-00`, tipo FIDC, ACTIVE).
-- As pastas `scripts/imports/APUAMA/` e `scripts/imports/BRISTOL/` contêm planilhas QITECH — os fundos **APUAMA** e **BRISTOL** precisariam ser cadastrados em `funds` antes de importar cotas/posições (o importador localiza o fundo por nome via `find_fund_id`).
+- **Seed** ([seed.ts](../packages/database/prisma/seed.ts)) cria usuários/permissões, contas DRE e os fundos operacionais do Caixa.
+- As pastas `scripts/imports/APUAMA/` e `scripts/imports/BRISTOL/` contêm planilhas QITECH — os fundos **APUAMA** e **BRISTOL** devem existir em `funds` antes de importar cotas/posições (o importador localiza o fundo por nome via `find_fund_id`).
 
 > ⚠️ Atenção: a tabela `public.users` (do CRM) **não** é a mesma `OSHER.users`. São schemas isolados — o login do OSHER usará `OSHER.users` (criada pela seed com `admin@osher.com.br`).
 
@@ -198,7 +198,7 @@ Cada `page.tsx` em `apps/web/src/app/` é uma rota (App Router).
 | `/dashboard/usuarios` | dashboard/usuarios/page.tsx | 🚧 **Placeholder** — só renderiza "Usuários" |
 | `/dashboard/relatorios` | dashboard/relatorios/page.tsx | 🚧 **Placeholder** — só renderiza "Relatórios" |
 
-**Botões não funcionais conhecidos**: "Exportar Excel" na DRE é um `<button type="button">` sem handler (decorativo).
+**Exportações**: "Exportar Excel" na DRE baixa a tabela filtrada atual em arquivo `.xls`.
 
 ---
 
@@ -241,7 +241,7 @@ Roda via `corepack pnpm --filter @osher/database db:seed` (`tsx prisma/seed.ts`)
 1. **Usuário admin** — `admin@osher.com.br` / senha `Admin@2024` (bcrypt, 12 rounds), status ACTIVE.
 2. **Role `ADMIN`** + vínculo `userRole` admin↔ADMIN.
 3. **11 permissões** (lista da seção 6) + vínculo de **todas** ao role ADMIN.
-4. **1 fundo** — "FIDC Alpha Senior" (CNPJ `00.000.000/0001-00`).
+4. **Fundos operacionais do Caixa** — Antena, Apuama, Bristol e Consignado com CNPJ placeholder `PENDENTE-<NOME>`.
 5. **14 contas DRE** (`dre_accounts`): taxa_gestao, taxa_administracao, taxa_custodia, auditoria, servicos_cobranca, iof, cetip, selic, consultoria, rating, outras_despesas, pdd, receita_credito, receita_fundo. Tipo: `REVENUE` se começa com `receita_`, senão `EXPENSE`.
 
 ### Scripts de importação ([scripts/imports/](../scripts/imports/))

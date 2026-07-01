@@ -93,7 +93,12 @@ export async function getActiveCashFunds(): Promise<CashFund[]> {
   }
 
   return prisma.fund.findMany({
-    where: { status: "ACTIVE" },
+    where: {
+      status: "ACTIVE",
+      cnpj: {
+        not: "00.000.000/0001-00",
+      },
+    },
     orderBy: { name: "asc" },
     select: { id: true, name: true, shortName: true },
   });

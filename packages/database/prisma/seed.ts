@@ -104,25 +104,6 @@ async function main() {
     });
   }
 
-  await prisma.fund.upsert({
-    where: { cnpj: "00.000.000/0001-00" },
-    update: {
-      name: "FIDC Alpha Senior",
-      shortName: "Alpha Senior",
-      fundType: "FIDC",
-      status: "ACTIVE",
-      startDate: new Date("2024-01-01T00:00:00.000Z"),
-    },
-    create: {
-      name: "FIDC Alpha Senior",
-      shortName: "Alpha Senior",
-      cnpj: "00.000.000/0001-00",
-      fundType: "FIDC",
-      status: "ACTIVE",
-      startDate: new Date("2024-01-01T00:00:00.000Z"),
-    },
-  });
-
   // Fundos do módulo Caixa. CNPJ/tipo/data são PLACEHOLDERS (não informados) —
   // substituir pelos dados reais quando disponíveis.
   const cashFundNames = ["Antena", "Apuama", "Bristol", "Consignado"];
