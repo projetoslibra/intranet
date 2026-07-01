@@ -31,13 +31,13 @@
 - [ ] **Módulo Usuários** (`/dashboard/usuarios`) — CRUD + atribuição de roles (placeholder)
 - [ ] **Módulo Relatórios** (`/dashboard/relatorios`) — exportações (placeholder)
 - [ ] **Enforcement de permissões** — hoje o middleware só checa login, não as permissões `*.view`/`*.manage`
-- [ ] **Cadastrar fundos reais** (APUAMA, BRISTOL) e importar planilhas QITECH
-- [ ] **Botão "Exportar Excel" da DRE** — hoje é decorativo, sem handler
 - [ ] **Unificar formatters** — Dashboard e DRE redefinem formatters em vez de usar `lib/formatters.ts`
 
 ---
 
 ## 🟢 Concluídas (recentes)
+- [x] **[2026-07-01]** Botão "Exportar Excel" da DRE: exporta a tabela filtrada atual da DRE em `.xls` e remove o fundo de teste FIDC Alpha Senior da seed, telas e banco — _João_ · branch `feat/exportar-dre-excel`.
+- [x] **[2026-07-01]** Cadastrar fundos reais (APUAMA, BRISTOL) e importar planilhas QITECH — _João_.
 - [x] **[2026-06-30]** Fazer a tela DASHBOARDS pegar os dados reais da table `CARTEIRAS`: cards do dashboard agora usam a última carteira importada por fundo para PL, cotas superiores e rentabilidades — _João_ · branch `feat/dashboard-carteiras`.
 - [x] **[2026-06-30]** Criação API para importar carteira e caixa Singulare: tabelas `CARTEIRAS`/`CAIXAS`, importação via DRE, classificação de carteira, DRE/Variação ajustada por compras/liquidações e conciliação separada — _João_ · branch `feat/criação-api`.
 - [x] **[2026-06-26]** TASK 10 — Caixa da empresa: matriz de visualização + input diário por fundo, migration `add_cash_daily_balances`, seed dos 4 fundos (CNPJ placeholder), backfill `cash_backfill.py` — _Juan_ · PR #1. Pendências: validar UI ao vivo e rodar o backfill em `--dry-run`.

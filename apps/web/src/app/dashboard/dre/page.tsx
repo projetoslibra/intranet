@@ -238,6 +238,84 @@ function formatDateHeader(key: string) {
   return dateHeaderFormatter.format(new Date(`${key}T00:00:00.000Z`));
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function slugifyFilePart(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildExcelWorkbook({
+  title,
+  subtitle,
+  dates,
+  rows,
+}: {
+  title: string;
+  subtitle: string;
+  dates: string[];
+  rows: DreRow[];
+}) {
+  const headerCells = dates
+    .map(
+      (key) =>
+        `<th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:right;">${escapeHtml(formatDateHeader(key))}</th>`
+    )
+    .join("");
+  const bodyRows = rows
+    .map((row) => {
+      const isSection = row.kind === "section";
+      const rowStyle = isSection
+        ? "background:#f1f5f9;font-weight:bold;text-transform:uppercase;"
+        : row.kind === "subtotal" || row.kind === "pl"
+          ? "font-weight:bold;"
+          : "";
+      const valueCells = dates
+        .map((key) => {
+          const value = row.values?.get(key);
+          const label = isSection ? "" : formatCellValue(row, value);
+          return `<td style="border:1px solid #e2e8f0;text-align:right;${rowStyle}">${escapeHtml(label)}</td>`;
+        })
+        .join("");
+
+      return `<tr><td style="border:1px solid #e2e8f0;${rowStyle}">${escapeHtml(row.label)}</td>${valueCells}</tr>`;
+    })
+    .join("");
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+</head>
+<body>
+  <table>
+    <tr><th colspan="${dates.length + 1}" style="font-size:16px;text-align:left;">${escapeHtml(title)}</th></tr>
+    <tr><td colspan="${dates.length + 1}" style="text-align:left;">${escapeHtml(subtitle)}</td></tr>
+    <tr></tr>
+    <tr>
+      <th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:left;">Conta / Indicador</th>
+      ${headerCells}
+    </tr>
+    ${bodyRows}
+  </table>
+</body>
+</html>`;
+}
+
+function buildExcelDataUri(workbook: string) {
+  return `data:application/vnd.ms-excel;charset=utf-8,${encodeURIComponent(workbook)}`;
+}
+
 function normalizeAssetClass(value: string) {
   return value.trim().toUpperCase();
 }
@@ -486,6 +564,9 @@ export default async function DrePage({ searchParams }: DrePageProps) {
   const funds = await prisma.fund.findMany({
     where: {
       status: "ACTIVE",
+      cnpj: {
+        not: "00.000.000/0001-00",
+      },
     },
     orderBy: {
       name: "asc",
@@ -970,6 +1051,17 @@ export default async function DrePage({ searchParams }: DrePageProps) {
 
   const hasData = dates.length > 0;
   const rows = selectedView === "variacao" ? variationRows : portfolioRows;
+  const exportTitle = `DRE dos Fundos - ${
+    selectedView === "variacao" ? "DRE / Variação" : "Carteira"
+  }`;
+  const exportSubtitle = `${selectedFund.name} · ${dateKey(startDate)} a ${dateKey(endDate)}`;
+  const excelWorkbook = buildExcelWorkbook({
+    title: exportTitle,
+    subtitle: exportSubtitle,
+    dates,
+    rows,
+  });
+  const excelFileName = `dre-${slugifyFilePart(selectedFund.shortName || selectedFund.name)}-${selectedView}-${dateKey(startDate)}-${dateKey(endDate)}.xls`;
   const viewHref = (view: "carteira" | "variacao") => {
     const params = new URLSearchParams();
     params.set("fundId", selectedFund.id);
@@ -1056,13 +1148,17 @@ export default async function DrePage({ searchParams }: DrePageProps) {
             >
               Aplicar
             </button>
-            <button
-              className="inline-flex h-10 items-center gap-2 rounded border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              type="button"
+            <a
+              aria-disabled={!hasData}
+              className={`inline-flex h-10 items-center gap-2 rounded border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 ${
+                hasData ? "" : "pointer-events-none opacity-50"
+              }`}
+              download={excelFileName}
+              href={hasData ? buildExcelDataUri(excelWorkbook) : undefined}
             >
               <Download className="h-4 w-4" />
               Exportar Excel
-            </button>
+            </a>
           </div>
         </form>
       </section>
