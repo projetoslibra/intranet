@@ -9,6 +9,7 @@ import {
   FileBarChart,
   LayoutDashboard,
   LogOut,
+  TrendingUp,
   Users,
   Wallet,
 } from "lucide-react";
@@ -38,6 +39,11 @@ const navigation = [
     title: "DRE",
     href: "/dashboard/dre",
     icon: BarChart3,
+  },
+  {
+    title: "Previsões",
+    href: "/dashboard/previsoes",
+    icon: TrendingUp,
   },
   {
     title: "Caixa",
