@@ -13,6 +13,11 @@ const permissions = [
   "dre.import",
   "cash.view",
   "cash.manage",
+  "operational.view",
+  "operational.finance.manage",
+  "operational.stock.import",
+  "operational.risk.import",
+  "operational.dimension.import",
   "users.manage",
   "reports.export",
 ];

@@ -21,7 +21,7 @@
 
 | Task | Responsável | Branch | Início | Notas |
 |------|-------------|--------|--------|-------|
-| _(ninguém com task ativa)_ | — | — | — | — |
+| Módulo Operacional: Financeiro, Mesa de Operações, estoque, risco e DIM cedentes | Juan | `feat/modulo-operacional` | 2026-07-10 | Cria schema/migrations e telas de importação; João confirmou que não está mexendo no schema. |
 
 ---
 
