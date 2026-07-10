@@ -64,6 +64,7 @@ export default async function FinanceiroPage({ searchParams }: FinanceiroPagePro
         {canImportStock ? (
           <OperationalImportPanel
             description="Importa a posição analítica de recebíveis do fundo e guarda uma nova versão histórica."
+            detectStockMetadata
             endpoint="/api/operacional/estoque/import"
             submitLabel="Importar estoque"
             title="Upload de estoque"
