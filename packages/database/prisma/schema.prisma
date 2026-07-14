@@ -67,6 +67,9 @@ enum ImportModule {
   CASH
   POSITIONS
   USERS
+  RECEIVABLE_STOCK
+  RISK_LIMITS
+  CEDENT_DIMENSION
 }
 
 enum ImportStatus {
@@ -77,17 +80,18 @@ enum ImportStatus {
 }
 
 model User {
-  id            String           @id @default(cuid())
-  name          String
-  email         String           @unique
-  passwordHash  String
-  status        UserStatus       @default(ACTIVE)
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-  auditLogs     AuditLog[]
-  fundAccesses  UserFundAccess[]
-  importBatches ImportBatch[]
-  roles         UserRole[]
+  id                 String                    @id @default(cuid())
+  name               String
+  email              String                    @unique
+  passwordHash       String
+  status             UserStatus                @default(ACTIVE)
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  auditLogs          AuditLog[]
+  dimensionSnapshots CedentDimensionSnapshot[]
+  fundAccesses       UserFundAccess[]
+  importBatches      ImportBatch[]
+  roles              UserRole[]
 
   @@map("users")
 }
@@ -132,21 +136,23 @@ model RolePermission {
 }
 
 model Fund {
-  id                 String              @id @default(cuid())
-  name               String
-  shortName          String
-  cnpj               String              @unique
-  fundType           FundType
-  status             FundStatus          @default(ACTIVE)
-  startDate          DateTime            @db.Date
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  dreEntries         DreEntry[]
-  fundCashFlows      FundCashFlow[]
-  financialPositions FinancialPosition[]
-  quotes             FundQuote[]
-  userAccesses       UserFundAccess[]
-  cashDailyBalances  CompanyCashDailyBalance[]
+  id                  String                    @id @default(cuid())
+  name                String
+  shortName           String
+  cnpj                String                    @unique
+  fundType            FundType
+  status              FundStatus                @default(ACTIVE)
+  startDate           DateTime                  @db.Date
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  dreEntries          DreEntry[]
+  fundCashFlows       FundCashFlow[]
+  financialPositions  FinancialPosition[]
+  importBatches       ImportBatch[]
+  quotes              FundQuote[]
+  receivablePositions ReceivableStockPosition[]
+  userAccesses        UserFundAccess[]
+  cashDailyBalances   CompanyCashDailyBalance[]
 
   @@map("funds")
 }
@@ -263,23 +269,23 @@ model FundCashFlow {
 }
 
 model CompanyCashDailyBalance {
-  id                    String   @id @default(cuid())
-  fundId                String
-  referenceDate         DateTime @db.Date
+  id            String   @id @default(cuid())
+  fundId        String
+  referenceDate DateTime @db.Date
 
-  receivingBalance      Decimal  @default(0) @db.Decimal(18, 2)
-  reconciliationBalance Decimal  @default(0) @db.Decimal(18, 2)
-  reserveBalance        Decimal  @default(0) @db.Decimal(18, 2)
-  paymentBalance        Decimal  @default(0) @db.Decimal(18, 2)
-  usedAmount            Decimal  @default(0) @db.Decimal(18, 2)
+  receivingBalance      Decimal @default(0) @db.Decimal(18, 2)
+  reconciliationBalance Decimal @default(0) @db.Decimal(18, 2)
+  reserveBalance        Decimal @default(0) @db.Decimal(18, 2)
+  paymentBalance        Decimal @default(0) @db.Decimal(18, 2)
+  usedAmount            Decimal @default(0) @db.Decimal(18, 2)
 
-  note                  String?
-  createdById           String?
-  updatedById           String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  note        String?
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  fund                  Fund     @relation(fields: [fundId], references: [id])
+  fund Fund @relation(fields: [fundId], references: [id])
 
   @@unique([fundId, referenceDate])
   @@index([referenceDate])
@@ -325,18 +331,136 @@ model CaixaSingulare {
 }
 
 model ImportBatch {
-  id               String       @id @default(cuid())
-  importedByUserId String
-  module           ImportModule
-  fileName         String
-  status           ImportStatus @default(PENDING)
-  totalRows        Int          @default(0)
-  importedRows     Int          @default(0)
-  errorRows        Int          @default(0)
-  createdAt        DateTime     @default(now())
-  importedByUser   User         @relation(fields: [importedByUserId], references: [id], onDelete: Restrict)
+  id                  String                    @id @default(cuid())
+  importedByUserId    String
+  module              ImportModule
+  fileName            String
+  fileHash            String?
+  source              String?
+  storageKey          String?
+  referenceDate       DateTime?                 @db.Date
+  fundId              String?
+  status              ImportStatus              @default(PENDING)
+  totalRows           Int                       @default(0)
+  importedRows        Int                       @default(0)
+  errorRows           Int                       @default(0)
+  errorMessage        String?
+  createdAt           DateTime                  @default(now())
+  completedAt         DateTime?
+  dimensionSnapshot   CedentDimensionSnapshot?
+  fund                Fund?                     @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  importedByUser      User                      @relation(fields: [importedByUserId], references: [id], onDelete: Restrict)
+  receivablePositions ReceivableStockPosition[]
+  riskLimitPositions  RiskLimitPosition[]
 
+  @@index([module, referenceDate])
+  @@index([fundId, referenceDate])
   @@map("import_batches")
+}
+
+model CedentDimensionSnapshot {
+  id               String                 @id @default(cuid())
+  batchId          String                 @unique
+  referenceDate    DateTime?              @db.Date
+  rowCount         Int                    @default(0)
+  importedByUserId String?
+  createdAt        DateTime               @default(now())
+  batch            ImportBatch            @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  importedByUser   User?                  @relation(fields: [importedByUserId], references: [id], onDelete: SetNull)
+  entries          CedentDimensionEntry[]
+
+  @@index([referenceDate, createdAt])
+  @@map("cedent_dimension_snapshots")
+}
+
+model CedentDimensionEntry {
+  id            String                  @id @default(cuid())
+  snapshotId    String
+  code          String
+  commercial    String?
+  groupName     String?                 @map("group_name")
+  cedentName    String
+  createdAt     DateTime                @default(now())
+  snapshot      CedentDimensionSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  riskPositions RiskLimitPosition[]
+
+  @@unique([snapshotId, code])
+  @@index([code])
+  @@map("cedent_dimension_entries")
+}
+
+model ReceivableStockPosition {
+  id                  String      @id @default(cuid())
+  batchId             String
+  fundId              String
+  fundName            String      @map("fund_name")
+  fundDocument        String      @map("fund_document")
+  fundDate            DateTime?   @map("fund_date") @db.Date
+  originatorName      String?     @map("originator_name")
+  originatorDocument  String?     @map("originator_document")
+  cedentName          String      @map("cedent_name")
+  cedentDocument      String      @map("cedent_document")
+  debtorName          String      @map("debtor_name")
+  debtorDocument      String      @map("debtor_document")
+  yourNumber          String?     @map("your_number")
+  documentKey         String?     @map("document_key")
+  status              String?
+  documentNumber      String?     @map("document_number")
+  receivableType      String?     @map("receivable_type")
+  nominalValue        Decimal     @default(0) @map("nominal_value") @db.Decimal(24, 10)
+  presentValue        Decimal     @default(0) @map("present_value") @db.Decimal(24, 10)
+  acquisitionValue    Decimal     @default(0) @map("acquisition_value") @db.Decimal(24, 10)
+  pddValue            Decimal     @default(0) @map("pdd_value") @db.Decimal(24, 10)
+  pddRange            String?     @map("pdd_range")
+  referenceDate       DateTime    @map("reference_date") @db.Date
+  originalDueDate     DateTime?   @map("original_due_date") @db.Date
+  adjustedDueDate     DateTime?   @map("adjusted_due_date") @db.Date
+  issuedAt            DateTime?   @map("issued_at") @db.Date
+  acquiredAt          DateTime?   @map("acquired_at") @db.Date
+  term                Int?
+  currentTerm         Int?        @map("current_term")
+  receivableSituation String?     @map("receivable_situation")
+  assignmentRate      Decimal?    @map("assignment_rate") @db.Decimal(18, 10)
+  receivableRate      Decimal?    @map("receivable_rate") @db.Decimal(18, 10)
+  coobligation        String?
+  createdAt           DateTime    @default(now()) @map("created_at")
+  batch               ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  fund                Fund        @relation(fields: [fundId], references: [id], onDelete: Restrict)
+
+  @@index([batchId])
+  @@index([fundId, referenceDate])
+  @@index([referenceDate, cedentDocument])
+  @@index([referenceDate, debtorDocument])
+  @@map("receivable_stock_positions")
+}
+
+model RiskLimitPosition {
+  id                     String                @id @default(cuid())
+  batchId                String
+  referenceDate          DateTime              @map("reference_date") @db.Date
+  cedentDimensionEntryId String?               @map("cedent_dimension_entry_id")
+  code                   String?
+  cedentName             String                @map("cedent_name")
+  limitGlobal            Decimal               @default(0) @map("limit_global") @db.Decimal(24, 10)
+  limitUsed              Decimal               @default(0) @map("limit_used") @db.Decimal(24, 10)
+  limitAvailable         Decimal               @default(0) @map("limit_available") @db.Decimal(24, 10)
+  overdueAmount          Decimal               @default(0) @map("overdue_amount") @db.Decimal(24, 10)
+  pendingFinancialAmount Decimal               @default(0) @map("pending_financial_amount") @db.Decimal(24, 10)
+  checkProblemAmount     Decimal               @default(0) @map("check_problem_amount") @db.Decimal(24, 10)
+  checkToConfirmAmount   Decimal               @default(0) @map("check_to_confirm_amount") @db.Decimal(24, 10)
+  proofOkAmount          Decimal               @default(0) @map("proof_ok_amount") @db.Decimal(24, 10)
+  trancheTotal           Decimal               @default(0) @map("tranche_total") @db.Decimal(24, 10)
+  trancheUsed            Decimal               @default(0) @map("tranche_used") @db.Decimal(24, 10)
+  trancheAvailable       Decimal               @default(0) @map("tranche_available") @db.Decimal(24, 10)
+  createdAt              DateTime              @default(now()) @map("created_at")
+  batch                  ImportBatch           @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  cedentDimensionEntry   CedentDimensionEntry? @relation(fields: [cedentDimensionEntryId], references: [id], onDelete: SetNull)
+
+  @@index([batchId])
+  @@index([referenceDate])
+  @@index([code])
+  @@index([cedentDimensionEntryId])
+  @@map("risk_limit_positions")
 }
 
 model AuditLog {

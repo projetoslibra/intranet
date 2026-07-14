@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
   BarChart3,
+  BriefcaseBusiness,
   Building2,
   FileBarChart,
   LayoutDashboard,
@@ -49,6 +50,11 @@ const navigation = [
     title: "Caixa",
     href: "/dashboard/caixa",
     icon: Wallet,
+  },
+  {
+    title: "Operacional",
+    href: "/dashboard/operacional",
+    icon: BriefcaseBusiness,
   },
   {
     title: "Relatórios",
