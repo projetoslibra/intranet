@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 
 type DashboardShellProps = {
   children: React.ReactNode;
+  permissions: string[];
   user: {
     name: string;
     email: string;
@@ -29,41 +30,49 @@ const navigation = [
   {
     title: "Dashboard",
     href: "/dashboard",
+    permissionKey: "dashboard.view",
     icon: LayoutDashboard,
   },
   {
     title: "Fundos",
     href: "/dashboard/fundos",
+    permissionKey: "funds.view",
     icon: Building2,
   },
   {
     title: "DRE",
     href: "/dashboard/dre",
+    permissionKey: "dre.view",
     icon: BarChart3,
   },
   {
-    title: "Previsões",
+    title: "Previsoes",
     href: "/dashboard/previsoes",
+    permissionKey: "forecasts.view",
     icon: TrendingUp,
   },
   {
     title: "Caixa",
     href: "/dashboard/caixa",
+    permissionKey: "cash.view",
     icon: Wallet,
   },
   {
     title: "Operacional",
     href: "/dashboard/operacional",
+    permissionKey: "operational.view",
     icon: BriefcaseBusiness,
   },
   {
-    title: "Relatórios",
+    title: "Relatorios",
     href: "/dashboard/relatorios",
+    permissionKey: "reports.view",
     icon: FileBarChart,
   },
   {
-    title: "Usuários",
+    title: "Usuarios",
     href: "/dashboard/usuarios",
+    permissionKey: "users.manage",
     icon: Users,
   },
 ];
@@ -94,10 +103,14 @@ function getInitials(name: string) {
     .join("");
 }
 
-export function DashboardShell({ children, user }: DashboardShellProps) {
+export function DashboardShell({ children, permissions, user }: DashboardShellProps) {
   const pathname = usePathname();
   const pageTitle = getPageTitle(pathname);
   const today = todayFormatter.format(new Date());
+  const permissionSet = new Set(permissions);
+  const visibleNavigation = navigation.filter((item) =>
+    permissionSet.has(item.permissionKey)
+  );
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-950">
@@ -115,7 +128,7 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
         </div>
 
         <nav className="flex-1 space-y-1 px-3 py-5">
-          {navigation.map((item) => {
+          {visibleNavigation.map((item) => {
             const Icon = item.icon;
             const isActive =
               pathname === item.href || pathname.startsWith(`${item.href}/`);

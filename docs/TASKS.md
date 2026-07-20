@@ -21,14 +21,13 @@
 
 | Task | Responsável | Branch | Início | Notas |
 |------|-------------|--------|--------|-------|
-| Módulo Operacional: Financeiro, Mesa de Operações, estoque, risco e DIM cedentes | Juan | `feat/modulo-operacional` | 2026-07-10 | Cria schema/migrations e telas de importação; João confirmou que não está mexendo no schema. |
+| Módulo Usuários (`/dashboard/usuarios`) | João | `feat/modulo-usuarios` | 2026-07-20 | CRUD de usuários, status e atribuição de roles. |
 
 ---
 
 ## 🟡 Próximas (backlog priorizado)
 > Pegue de cima para baixo. Se for começar, mova para "Em andamento".
 
-- [ ] **Módulo Usuários** (`/dashboard/usuarios`) — CRUD + atribuição de roles (placeholder)
 - [ ] **Enforcement de permissões** — hoje o middleware só checa login, não as permissões `*.view`/`*.manage`
 - [ ] **Unificar formatters** — Dashboard e DRE redefinem formatters em vez de usar `lib/formatters.ts`
 - [ ] **Módulo Relatórios** (`/dashboard/relatorios`) — exportações (placeholder; deixar para o final)
@@ -36,6 +35,7 @@
 ---
 
 ## 🟢 Concluídas (recentes)
+- [x] **[2026-07-20]** Módulo Operacional: Financeiro, Mesa de Operações, estoque, risco e DIM cedentes — _Juan_ · branch `feat/modulo-operacional`.
 - [x] **[2026-07-20]** Corrigir sinais e rentabilidades da aba Previsões: PDD positiva reduz PL, reversão negativa aumenta PL, rentabilidades diária/mensal/anual recalculam com o PL projetado e tooltip documenta os sinais — _João_ · branch `fix/previsoes-pdd-rentabilidade`.
 - [x] **[2026-07-06]** PREVISÕES DE COTA DRE: nova aba Previsões abaixo da DRE, histórico real da `CARTEIRAS`, projeção diária por data futura, PDD como variável manual e receita média de Direitos Creditórios baseada na DRE/Variação — _João_ · branch `feat/previsoes-cota-dre`.
 - [x] **[2026-07-01]** Botão "Exportar Excel" da DRE: exporta a tabela filtrada atual da DRE em `.xls` e remove o fundo de teste FIDC Alpha Senior da seed, telas e banco — _João_ · branch `feat/exportar-dre-excel`.

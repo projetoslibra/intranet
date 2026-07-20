@@ -11,6 +11,7 @@ const permissions = [
   "quotes.import",
   "dre.view",
   "dre.import",
+  "forecasts.view",
   "cash.view",
   "cash.manage",
   "operational.view",
@@ -19,6 +20,7 @@ const permissions = [
   "operational.risk.import",
   "operational.dimension.import",
   "users.manage",
+  "reports.view",
   "reports.export",
 ];
 

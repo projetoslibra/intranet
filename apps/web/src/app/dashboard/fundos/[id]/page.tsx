@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { Banknote, LineChart, Percent, Wallet } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/formatters";
+import { hasPermission } from "@/lib/permissions";
 
 type FundDetailPageProps = {
   params: {
@@ -26,6 +27,19 @@ const typeLabels: Record<string, string> = {
 };
 
 export default async function FundDetailPage({ params }: FundDetailPageProps) {
+  const canView = await hasPermission("funds.view");
+
+  if (!canView) {
+    return (
+      <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
+        <h2 className="text-lg font-semibold text-slate-950">Fundos</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Voce nao tem permissao para visualizar fundos.
+        </p>
+      </section>
+    );
+  }
+
   const fund = await prisma.fund.findUnique({
     where: {
       id: params.id,

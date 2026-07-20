@@ -1,4 +1,5 @@
 import { QuotaForecastPlanner } from "@/features/forecasts/components/QuotaForecastPlanner";
+import { hasPermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
 type ForecastsPageProps = {
@@ -111,6 +112,19 @@ function addToMap(map: Map<string, number>, key: string, value: number) {
 }
 
 export default async function ForecastsPage({ searchParams }: ForecastsPageProps) {
+  const canView = await hasPermission("forecasts.view");
+
+  if (!canView) {
+    return (
+      <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
+        <h2 className="text-lg font-semibold text-slate-950">Previsoes</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Voce nao tem permissao para visualizar previsoes.
+        </p>
+      </section>
+    );
+  }
+
   const funds = await prisma.fund.findMany({
     where: {
       status: "ACTIVE",
