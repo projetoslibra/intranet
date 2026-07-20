@@ -165,27 +165,28 @@ export function QuotaForecastPlanner({
     let previousCreditRights = lastCreditRights;
     let previousPdd = lastPdd;
     const quantity = shareQuantity > 0 ? shareQuantity : 0;
-    let previousQuota =
-      quantity > 0 ? lastPatrimonio / quantity : 0;
-    const baseQuota = previousQuota;
+    let previousReturnBase =
+      quantity > 0 ? lastPatrimonio / quantity : lastPatrimonio;
+    const baseReturnValue = previousReturnBase;
     const baseMonthReturn = lastMonthlyReturn / 100;
     const baseYearReturn = lastYearlyReturn / 100;
 
     return futureDates.map((date) => {
       const input = inputs[date] ?? { pddDelta: 0 };
       previousCreditRights += averageCreditRightsRevenue;
-      previousPdd += input.pddDelta;
+      previousPdd -= input.pddDelta;
       previousPl = previousPl + averageCreditRightsRevenue - input.pddDelta;
       const quotaValue = quantity > 0 ? previousPl / quantity : 0;
+      const returnBase = quantity > 0 ? quotaValue : previousPl;
       const dailyReturn =
-        previousQuota > 0 ? ((quotaValue / previousQuota) - 1) * 100 : 0;
+        previousReturnBase > 0 ? ((returnBase / previousReturnBase) - 1) * 100 : 0;
       const returnFromBase =
-        baseQuota > 0 ? (quotaValue / baseQuota) - 1 : 0;
+        baseReturnValue > 0 ? (returnBase / baseReturnValue) - 1 : 0;
       const monthlyReturn =
         ((1 + baseMonthReturn) * (1 + returnFromBase) - 1) * 100;
       const yearlyReturn =
         ((1 + baseYearReturn) * (1 + returnFromBase) - 1) * 100;
-      previousQuota = quotaValue;
+      previousReturnBase = returnBase;
 
       return {
         date,
@@ -399,7 +400,15 @@ export function QuotaForecastPlanner({
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
                   <th className="px-4 py-3 text-left font-semibold">Data</th>
-                  <th className="px-4 py-3 text-right font-semibold">Variação PDD</th>
+                  <th className="px-4 py-3 text-right font-semibold">
+                    <span
+                      className="inline-flex items-center justify-end gap-1"
+                      title="Valor positivo aumenta a PDD/provisão, deixa a PDD projetada mais negativa e reduz o PL. Valor negativo representa reversão de PDD, deixa a PDD menos negativa e aumenta o PL."
+                    >
+                      Variação PDD
+                      <Info className="h-3.5 w-3.5 text-slate-400" />
+                    </span>
+                  </th>
                   <th className="px-4 py-3 text-right font-semibold">
                     <span
                       className="inline-flex items-center justify-end gap-1"
