@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { hasPermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
 export type CreateFundState = {
@@ -25,6 +26,12 @@ export async function createFundAction(
   _previousState: CreateFundState,
   formData: FormData
 ): Promise<CreateFundState> {
+  if (!(await hasPermission("funds.manage"))) {
+    return {
+      message: "Voce nao tem permissao para cadastrar fundos.",
+    };
+  }
+
   const parsed = createFundSchema.safeParse({
     name: formData.get("name"),
     shortName: formData.get("shortName"),

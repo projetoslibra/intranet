@@ -62,11 +62,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
+        const roleNames = user.roles.map((userRole) => userRole.role.name);
+        const displayRole = roleNames.includes("ADMIN") ? "ADMIN" : "USUARIO";
+
         return {
           id: user.id,
           email: user.email,
           name: user.name,
-          role: user.roles[0]?.role.name ?? "LEITURA",
+          role: displayRole,
         };
       },
     }),

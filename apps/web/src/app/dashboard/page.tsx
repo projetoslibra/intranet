@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { hasPermission } from "@/lib/permissions";
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -112,6 +113,19 @@ function returnClassName(value: number) {
 }
 
 export default async function DashboardPage() {
+  const canView = await hasPermission("dashboard.view");
+
+  if (!canView) {
+    return (
+      <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
+        <h2 className="text-lg font-semibold text-slate-950">Dashboard</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Voce nao tem permissao para visualizar o dashboard.
+        </p>
+      </section>
+    );
+  }
+
   const activeFunds = await prisma.fund.findMany({
     where: {
       status: "ACTIVE",

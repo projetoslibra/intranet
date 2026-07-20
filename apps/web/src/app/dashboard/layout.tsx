@@ -1,5 +1,6 @@
 import { DashboardShell } from "@/components/dashboard-shell";
 import { auth } from "@/lib/auth";
+import { getCurrentUserPermissions } from "@/lib/permissions";
 import { redirect } from "next/navigation";
 
 export default async function DashboardLayout({
@@ -13,10 +14,13 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
+  const permissions = await getCurrentUserPermissions();
+
   return (
     <DashboardShell
+      permissions={Array.from(permissions)}
       user={{
-        name: session.user.name ?? "Usuário OSHER",
+        name: session.user.name ?? "Usuario OSHER",
         email: session.user.email ?? "",
         role: session.user.role ?? "LEITURA",
       }}

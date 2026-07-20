@@ -22,6 +22,7 @@ type FundRow = {
 };
 
 type FundsTableProps = {
+  canManage: boolean;
   funds: FundRow[];
 };
 
@@ -57,7 +58,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-export function FundsTable({ funds }: FundsTableProps) {
+export function FundsTable({ canManage, funds }: FundsTableProps) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [typeFilter, setTypeFilter] = useState("ALL");
@@ -139,13 +140,15 @@ export function FundsTable({ funds }: FundsTableProps) {
             Cadastro e consulta dos fundos da OSHER.
           </p>
         </div>
-        <Link
-          className="inline-flex h-10 items-center justify-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
-          href="/dashboard/fundos/novo"
-        >
-          <Plus className="h-4 w-4" />
-          Novo Fundo
-        </Link>
+        {canManage ? (
+          <Link
+            className="inline-flex h-10 items-center justify-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
+            href="/dashboard/fundos/novo"
+          >
+            <Plus className="h-4 w-4" />
+            Novo Fundo
+          </Link>
+        ) : null}
       </div>
 
       <div className="grid gap-3 border-b border-slate-200 px-5 py-4 md:grid-cols-[1fr_180px_180px]">

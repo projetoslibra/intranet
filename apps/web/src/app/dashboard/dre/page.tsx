@@ -1,5 +1,6 @@
 import { Download } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { hasPermission } from "@/lib/permissions";
 import { CarteiraImportPanel } from "@/features/carteiras/components/CarteiraImportPanel";
 import {
   getMostRecentBusinessDate,
@@ -558,6 +559,19 @@ function valueClassName(row: DreRow, value: number | undefined) {
 }
 
 export default async function DrePage({ searchParams }: DrePageProps) {
+  const canView = await hasPermission("dre.view");
+
+  if (!canView) {
+    return (
+      <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
+        <h2 className="text-lg font-semibold text-slate-950">DRE</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Voce nao tem permissao para visualizar a DRE.
+        </p>
+      </section>
+    );
+  }
+
   const { period, startDate, endDate } = getPeriodRange(searchParams);
   const selectedView = searchParams?.view === "variacao" ? "variacao" : "carteira";
   const defaultImportDate = toDateKey(getMostRecentBusinessDate());
