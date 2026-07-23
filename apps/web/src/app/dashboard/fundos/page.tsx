@@ -1,6 +1,7 @@
 import { FundsTable } from "@/components/funds-table";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/formatters";
+import { sortFundsByDisplayPriority } from "@/lib/fund-order";
 import { hasPermission } from "@/lib/permissions";
 
 export default async function FundsPage() {
@@ -43,7 +44,7 @@ export default async function FundsPage() {
   return (
     <FundsTable
       canManage={canManage}
-      funds={funds.map((fund) => ({
+      funds={sortFundsByDisplayPriority(funds).map((fund) => ({
         ...fund,
         startDate: formatDate(fund.startDate),
       }))}
