@@ -434,6 +434,47 @@ model ReceivableStockPosition {
   @@map("receivable_stock_positions")
 }
 
+model FidcEstoque {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nomeFundo              String
+  docFundo               String?
+  dataFundo              DateTime? @db.Date
+  nomeGestor             String?
+  docGestor              String?
+  nomeOriginador         String?
+  docOriginador          String?
+  nomeCedente            String
+  docCedente             String?
+  nomeSacado             String
+  docSacado              String?
+  seuNumero              String?
+  numeroDocumento        String
+  tipoRecebivel          String?
+  valorNominal           Decimal   @default(0) @db.Decimal(24, 10)
+  valorPresente          Decimal   @default(0) @db.Decimal(24, 10)
+  valorAquisicao         Decimal   @default(0) @db.Decimal(24, 10)
+  valorPdd               Decimal   @default(0) @db.Decimal(24, 10)
+  faixaPdd               String?
+  dataReferencia         DateTime  @db.Date
+  dataVencimentoOriginal DateTime  @db.Date
+  dataVencimentoAjustada DateTime? @db.Date
+  dataEmissao            DateTime? @db.Date
+  dataAquisicao          DateTime? @db.Date
+  prazo                  Int?
+  prazoAnual             Int?
+  situacaoRecebivel      String?
+  taxaCessao             Decimal?  @db.Decimal(18, 10)
+  taxaRecebivel          Decimal?  @db.Decimal(18, 10)
+  coobrigacao            String?
+  createdAt              DateTime  @default(now())
+
+  @@unique([nomeFundo, dataReferencia, nomeCedente, dataVencimentoOriginal, valorPresente, numeroDocumento, nomeSacado], name: "fidc_estoques_logical_unique")
+  @@index([dataReferencia, nomeFundo])
+  @@index([dataReferencia, nomeCedente])
+  @@index([numeroDocumento])
+  @@map("FIDC_ESTOQUES")
+}
+
 model RiskLimitPosition {
   id                     String                @id @default(cuid())
   batchId                String
