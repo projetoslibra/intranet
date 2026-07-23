@@ -1,4 +1,5 @@
 import { QuotaForecastPlanner } from "@/features/forecasts/components/QuotaForecastPlanner";
+import { findDefaultFund, sortFundsByDisplayPriority } from "@/lib/fund-order";
 import { hasPermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
@@ -125,7 +126,7 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
     );
   }
 
-  const funds = await prisma.fund.findMany({
+  const funds = sortFundsByDisplayPriority(await prisma.fund.findMany({
     where: {
       status: "ACTIVE",
       cnpj: {
@@ -140,10 +141,9 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
       name: true,
       shortName: true,
     },
-  });
+  }));
 
-  const selectedFund =
-    funds.find((fund) => fund.id === searchParams?.fundId) ?? funds[0] ?? null;
+  const selectedFund = findDefaultFund(funds, searchParams?.fundId);
   const carteiraFundo = selectedFund ? resolveCarteiraFundo(selectedFund) : null;
 
   const [carteiras, caixas, latestQuote] = selectedFund

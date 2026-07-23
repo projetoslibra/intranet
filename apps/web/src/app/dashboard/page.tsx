@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { sortFundsByDisplayPriority } from "@/lib/fund-order";
 import { hasPermission } from "@/lib/permissions";
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
@@ -453,7 +454,7 @@ export default async function DashboardPage() {
     );
   }
 
-  const activeFunds = await prisma.fund.findMany({
+  const activeFunds = sortFundsByDisplayPriority(await prisma.fund.findMany({
     where: {
       status: "ACTIVE",
       cnpj: {
@@ -469,7 +470,7 @@ export default async function DashboardPage() {
       cnpj: true,
       shortName: true,
     },
-  });
+  }));
 
   const fundsData = await Promise.all(
     activeFunds.map(async (fund) => {

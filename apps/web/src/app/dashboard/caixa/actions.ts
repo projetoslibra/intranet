@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
+import { sortFundsByDisplayPriority } from "@/lib/fund-order";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
@@ -92,7 +93,7 @@ export async function getActiveCashFunds(): Promise<CashFund[]> {
     return [];
   }
 
-  return prisma.fund.findMany({
+  return sortFundsByDisplayPriority(await prisma.fund.findMany({
     where: {
       status: "ACTIVE",
       cnpj: {
@@ -101,7 +102,7 @@ export async function getActiveCashFunds(): Promise<CashFund[]> {
     },
     orderBy: { name: "asc" },
     select: { id: true, name: true, shortName: true },
-  });
+  }));
 }
 
 export async function getAvailableCashDates(): Promise<string[]> {

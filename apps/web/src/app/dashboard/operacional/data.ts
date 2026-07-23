@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { fundDisplayPriority } from "@/lib/fund-order";
 import type { CashDailyBalance } from "@/features/cash/types/cash";
 
 export type OperationalImportSummary = {
@@ -364,7 +365,17 @@ async function getStockSummaries(referenceDate: Date): Promise<StockComplianceSu
 
   return summaries
     .filter((summary): summary is StockComplianceSummary => summary !== null)
-    .sort((a, b) => a.fundName.localeCompare(b.fundName));
+    .sort((a, b) => {
+      const priorityDifference =
+        fundDisplayPriority({ name: a.fundName }) -
+        fundDisplayPriority({ name: b.fundName });
+
+      if (priorityDifference !== 0) {
+        return priorityDifference;
+      }
+
+      return a.fundName.localeCompare(b.fundName, "pt-BR");
+    });
 }
 
 async function getRisk(referenceDate: Date): Promise<OperationDeskData["risk"]> {

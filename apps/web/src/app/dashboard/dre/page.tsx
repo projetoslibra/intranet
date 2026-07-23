@@ -1,5 +1,6 @@
 import { Download } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { findDefaultFund, sortFundsByDisplayPriority } from "@/lib/fund-order";
 import { hasPermission } from "@/lib/permissions";
 import { CarteiraImportPanel } from "@/features/carteiras/components/CarteiraImportPanel";
 import {
@@ -575,7 +576,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
   const { period, startDate, endDate } = getPeriodRange(searchParams);
   const selectedView = searchParams?.view === "variacao" ? "variacao" : "carteira";
   const defaultImportDate = toDateKey(getMostRecentBusinessDate());
-  const funds = await prisma.fund.findMany({
+  const funds = sortFundsByDisplayPriority(await prisma.fund.findMany({
     where: {
       status: "ACTIVE",
       cnpj: {
@@ -590,10 +591,9 @@ export default async function DrePage({ searchParams }: DrePageProps) {
       name: true,
       shortName: true,
     },
-  });
+  }));
 
-  const selectedFund =
-    funds.find((fund) => fund.id === searchParams?.fundId) ?? funds[0];
+  const selectedFund = findDefaultFund(funds, searchParams?.fundId);
 
   if (!selectedFund) {
     return (
