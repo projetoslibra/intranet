@@ -19,6 +19,34 @@ type HistoricalAccumulator = {
   variacaoAnual: number;
 };
 
+type ForecastStockTitle = {
+  id: string;
+  cedentName: string;
+  cedentDocument: string | null;
+  debtorName: string;
+  debtorDocument: string | null;
+  documentNumber: string;
+  originalDueDate: string;
+  nominalValue: number;
+  presentValue: number;
+  pddValue: number;
+  pddRange: string | null;
+  situation: string | null;
+};
+
+type ForecastStockData = {
+  fundName: string;
+  latestDate: string;
+  cedents: Array<{
+    name: string;
+    document: string | null;
+    titleCount: number;
+    nominalValue: number;
+    pddValue: number;
+  }>;
+  titles: ForecastStockTitle[];
+} | null;
+
 function dateKey(value: Date) {
   return value.toISOString().slice(0, 10);
 }
@@ -192,6 +220,108 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
         }),
       ])
     : [[], [], null];
+  const latestStock =
+    carteiraFundo
+      ? await prisma.fidcEstoque.findFirst({
+          where: {
+            nomeFundo: {
+              contains: carteiraFundo,
+              mode: "insensitive",
+            },
+          },
+          orderBy: {
+            dataReferencia: "desc",
+          },
+          select: {
+            nomeFundo: true,
+            dataReferencia: true,
+          },
+        })
+      : null;
+  const stockRows = latestStock
+    ? await prisma.fidcEstoque.findMany({
+        where: {
+          nomeFundo: latestStock.nomeFundo,
+          dataReferencia: latestStock.dataReferencia,
+        },
+        orderBy: [
+          {
+            nomeCedente: "asc",
+          },
+          {
+            dataVencimentoOriginal: "asc",
+          },
+          {
+            numeroDocumento: "asc",
+          },
+        ],
+        select: {
+          id: true,
+          nomeFundo: true,
+          dataReferencia: true,
+          nomeCedente: true,
+          docCedente: true,
+          nomeSacado: true,
+          docSacado: true,
+          numeroDocumento: true,
+          dataVencimentoOriginal: true,
+          valorNominal: true,
+          valorPresente: true,
+          valorPdd: true,
+          faixaPdd: true,
+          situacaoRecebivel: true,
+        },
+      })
+    : [];
+  const stockCedents = new Map<
+    string,
+    {
+      name: string;
+      document: string | null;
+      titleCount: number;
+      nominalValue: number;
+      pddValue: number;
+    }
+  >();
+
+  for (const row of stockRows) {
+    const current = stockCedents.get(row.nomeCedente) ?? {
+      name: row.nomeCedente,
+      document: row.docCedente,
+      titleCount: 0,
+      nominalValue: 0,
+      pddValue: 0,
+    };
+    current.titleCount += 1;
+    current.nominalValue += Number(row.valorNominal);
+    current.pddValue += Math.max(0, Number(row.valorPdd));
+    stockCedents.set(row.nomeCedente, current);
+  }
+
+  const stockData: ForecastStockData =
+    latestStock && stockRows.length > 0
+      ? {
+          fundName: latestStock.nomeFundo,
+          latestDate: dateKey(latestStock.dataReferencia),
+          cedents: Array.from(stockCedents.values()).sort((left, right) =>
+            left.name.localeCompare(right.name, "pt-BR")
+          ),
+          titles: stockRows.map((row) => ({
+            id: row.id,
+            cedentName: row.nomeCedente,
+            cedentDocument: row.docCedente,
+            debtorName: row.nomeSacado,
+            debtorDocument: row.docSacado,
+            documentNumber: row.numeroDocumento,
+            originalDueDate: dateKey(row.dataVencimentoOriginal),
+            nominalValue: Number(row.valorNominal),
+            presentValue: Number(row.valorPresente),
+            pddValue: Math.max(0, Number(row.valorPdd)),
+            pddRange: row.faixaPdd,
+            situation: row.situacaoRecebivel,
+          })),
+        }
+      : null;
 
   const historicalByDate = new Map<string, HistoricalAccumulator>();
   const creditRightsPurchasesByDate = new Map<string, number>();
@@ -279,6 +409,7 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
       funds={funds}
       historicalRows={historicalRows}
       selectedFundId={selectedFund?.id ?? ""}
+      stockData={stockData}
     />
   );
 }
