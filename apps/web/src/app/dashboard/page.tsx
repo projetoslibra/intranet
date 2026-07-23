@@ -23,6 +23,11 @@ type FundDashboardData = {
   name: string;
   cnpj: string;
   dataLabel: string;
+  averageMonthlyRevenue: number;
+  averageMonthlyCost: number;
+  monthlyRevenueTotal: number;
+  monthlyCostTotal: number;
+  monthlyPeriods: number;
   seniorValue: number;
   mezzanineValue: number;
   juniorValue: number;
@@ -73,6 +78,10 @@ function classifyCarteiraAtivo(value: string) {
     return "variacao_anual";
   }
 
+  if (ativo.includes("PDD")) {
+    return "pdd";
+  }
+
   if (ativo === "SRP" || ativo.includes("SENIOR")) {
     return "senior";
   }
@@ -81,7 +90,296 @@ function classifyCarteiraAtivo(value: string) {
     return "mezzanine";
   }
 
+  if (
+    ativo.includes("A VENCER") ||
+    ativo.includes("VENCIDOS") ||
+    ativo === "DIR"
+  ) {
+    return "creditRights";
+  }
+
+  if (
+    ativo.includes("NTN") ||
+    ativo.includes("LFT") ||
+    ativo.includes("SELIC")
+  ) {
+    return "ntnb";
+  }
+
+  if (
+    ativo.includes("TAXA") ||
+    ativo.includes("DESPESA") ||
+    ativo.includes("DIFERIMENTO") ||
+    ativo.includes("AUDITORIA") ||
+    ativo.includes("CETIP") ||
+    ativo.includes("CUSTO") ||
+    ativo.includes("CONSULTORIA") ||
+    ativo.includes("RATING")
+  ) {
+    return "expense";
+  }
+
   return "outros";
+}
+
+function dateKey(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+function monthStart(value: Date) {
+  return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), 1));
+}
+
+function addToMap(map: Map<string, number>, key: string, value: number) {
+  map.set(key, (map.get(key) ?? 0) + value);
+}
+
+function sumMapValuesForDates(map: Map<string, number>, dates: string[]) {
+  return dates.reduce((total, key) => total + (map.get(key) ?? 0), 0);
+}
+
+function sumNegativeMapValuesForDates(map: Map<string, number>, dates: string[]) {
+  return dates.reduce((total, key) => {
+    const value = map.get(key) ?? 0;
+
+    return value < 0 ? total + value : total;
+  }, 0);
+}
+
+function sumMaps(dates: string[], maps: Array<Map<string, number>>) {
+  const result = new Map<string, number>();
+
+  for (const key of dates) {
+    result.set(
+      key,
+      maps.reduce((total, map) => total + (map.get(key) ?? 0), 0)
+    );
+  }
+
+  return result;
+}
+
+function deltaMap(dates: string[], values: Map<string, number>) {
+  const result = new Map<string, number>();
+
+  for (let index = 1; index < dates.length; index += 1) {
+    const key = dates[index];
+    const previousKey = dates[index - 1];
+    result.set(key, (values.get(key) ?? 0) - (values.get(previousKey) ?? 0));
+  }
+
+  return result;
+}
+
+function assetDeltaMap(
+  dates: string[],
+  values: Map<string, number>,
+  applications: Map<string, number>,
+  redemptions: Map<string, number>
+) {
+  const result = new Map<string, number>();
+
+  for (let index = 1; index < dates.length; index += 1) {
+    const key = dates[index];
+    const previousKey = dates[index - 1];
+    result.set(
+      key,
+      (values.get(key) ?? 0) -
+        (values.get(previousKey) ?? 0) -
+        (applications.get(key) ?? 0) +
+        (redemptions.get(key) ?? 0)
+    );
+  }
+
+  return result;
+}
+
+function creditRightsDeltaMap(
+  dates: string[],
+  values: Map<string, number>,
+  purchases: Map<string, number>,
+  liquidations: Map<string, number>
+) {
+  const result = new Map<string, number>();
+
+  for (let index = 1; index < dates.length; index += 1) {
+    const key = dates[index];
+    const previousKey = dates[index - 1];
+    result.set(
+      key,
+      (values.get(key) ?? 0) -
+        (values.get(previousKey) ?? 0) -
+        (purchases.get(key) ?? 0) +
+        (liquidations.get(key) ?? 0)
+    );
+  }
+
+  return result;
+}
+
+function caixaFlowType(value: string) {
+  const descricao = normalizeCarteiraAtivo(value);
+
+  if (descricao.startsWith("APLICACAO NO FUNDO")) {
+    return "aplicacao";
+  }
+
+  if (descricao.startsWith("RESGATE DO FUNDO")) {
+    return "resgate";
+  }
+
+  return null;
+}
+
+function classifyCaixaAssetClass(
+  descricao: string,
+  historicoTraduzido: string | null,
+  clienteId: string
+) {
+  const text = normalizeCarteiraAtivo(
+    `${descricao} ${historicoTraduzido ?? ""} ${clienteId}`
+  );
+
+  if (text.includes("MZ") || text.includes("MEZ") || text.includes("MEZAN")) {
+    return "mezzanine";
+  }
+
+  if (text.includes("SRP") || text.includes("SENIOR")) {
+    return "senior";
+  }
+
+  if (
+    text.includes("BRISVENC") ||
+    text.includes("BRISAVE") ||
+    text.includes("DIREITO")
+  ) {
+    return "creditRights";
+  }
+
+  if (text.includes("NTN") || text.includes("LFT") || text.includes("SELIC")) {
+    return "ntnb";
+  }
+
+  return "otherFunds";
+}
+
+function calculateMonthlyAverages(params: {
+  carteiras: Array<{
+    ativo: string;
+    valor: unknown;
+    dataAnalise: Date;
+  }>;
+  caixas: Array<{
+    dataAnalise: Date;
+    descricao: string;
+    historicoTraduzido: string | null;
+    clienteId: string;
+    entradas: unknown;
+    saidas: unknown;
+  }>;
+}) {
+  const dateSet = new Set<string>();
+  const creditRights = new Map<string, number>();
+  const otherFunds = new Map<string, number>();
+  const ntnb = new Map<string, number>();
+  const expenses = new Map<string, number>();
+  const applicationsByAssetClass = new Map<string, Map<string, number>>();
+  const redemptionsByAssetClass = new Map<string, Map<string, number>>();
+
+  for (const carteira of params.carteiras) {
+    const key = dateKey(carteira.dataAnalise);
+    const value = Number(carteira.valor);
+    const category = classifyCarteiraAtivo(carteira.ativo);
+    dateSet.add(key);
+
+    if (category === "creditRights") {
+      addToMap(creditRights, key, value);
+    } else if (category === "outros") {
+      addToMap(otherFunds, key, value);
+    } else if (category === "ntnb") {
+      addToMap(ntnb, key, value);
+    } else if (category === "expense") {
+      addToMap(expenses, key, value);
+    }
+  }
+
+  for (const caixa of params.caixas) {
+    const flowType = caixaFlowType(caixa.descricao);
+
+    if (!flowType) {
+      continue;
+    }
+
+    const key = dateKey(caixa.dataAnalise);
+    const assetClass = classifyCaixaAssetClass(
+      caixa.descricao,
+      caixa.historicoTraduzido,
+      caixa.clienteId
+    );
+    const amount =
+      flowType === "aplicacao"
+        ? Math.abs(Number(caixa.saidas))
+        : Math.abs(Number(caixa.entradas));
+
+    if (amount === 0) {
+      continue;
+    }
+
+    dateSet.add(key);
+    const target =
+      flowType === "resgate" ? redemptionsByAssetClass : applicationsByAssetClass;
+    const map = target.get(assetClass) ?? new Map<string, number>();
+    addToMap(map, key, amount);
+    target.set(assetClass, map);
+  }
+
+  const dates = Array.from(dateSet).sort();
+  const calculationDates = dates.slice(1, -1);
+  const periods = calculationDates.length;
+
+  if (periods === 0) {
+    return {
+      averageMonthlyRevenue: 0,
+      averageMonthlyCost: 0,
+      monthlyRevenueTotal: 0,
+      monthlyCostTotal: 0,
+      monthlyPeriods: 0,
+    };
+  }
+
+  const applications = (assetClass: string) =>
+    applicationsByAssetClass.get(assetClass) ?? new Map<string, number>();
+  const redemptions = (assetClass: string) =>
+    redemptionsByAssetClass.get(assetClass) ?? new Map<string, number>();
+  const revenueByDate = sumMaps(dates, [
+    creditRightsDeltaMap(
+      dates,
+      creditRights,
+      applications("creditRights"),
+      redemptions("creditRights")
+    ),
+    assetDeltaMap(
+      dates,
+      otherFunds,
+      applications("otherFunds"),
+      redemptions("otherFunds")
+    ),
+    assetDeltaMap(dates, ntnb, applications("ntnb"), redemptions("ntnb")),
+  ]);
+  const costsByDate = deltaMap(dates, expenses);
+  const monthlyRevenueTotal = sumMapValuesForDates(revenueByDate, calculationDates);
+  const monthlyCostTotal = -sumNegativeMapValuesForDates(
+    costsByDate,
+    calculationDates
+  );
+
+  return {
+    averageMonthlyRevenue: monthlyRevenueTotal / periods,
+    averageMonthlyCost: monthlyCostTotal / periods,
+    monthlyRevenueTotal,
+    monthlyCostTotal,
+    monthlyPeriods: periods,
+  };
 }
 
 function formatCurrency(value: number) {
@@ -167,6 +465,50 @@ export default async function DashboardPage() {
               },
             })
           : [];
+      const monthlyStart = latestCarteira ? monthStart(latestCarteira.dataAnalise) : null;
+      const [monthlyCarteiras, monthlyCaixas] =
+        carteiraFundo && latestCarteira && monthlyStart
+          ? await Promise.all([
+              prisma.carteira.findMany({
+                where: {
+                  fundo: carteiraFundo,
+                  dataAnalise: {
+                    gte: monthlyStart,
+                    lte: latestCarteira.dataAnalise,
+                  },
+                },
+                select: {
+                  ativo: true,
+                  valor: true,
+                  dataAnalise: true,
+                },
+              }),
+              prisma.caixaSingulare.findMany({
+                where: {
+                  dataAnalise: {
+                    gte: monthlyStart,
+                    lte: latestCarteira.dataAnalise,
+                  },
+                  OR: [
+                    { clienteId: { contains: carteiraFundo, mode: "insensitive" } },
+                    { clienteNome: { contains: carteiraFundo, mode: "insensitive" } },
+                  ],
+                },
+                select: {
+                  dataAnalise: true,
+                  descricao: true,
+                  historicoTraduzido: true,
+                  clienteId: true,
+                  entradas: true,
+                  saidas: true,
+                },
+              }),
+            ])
+          : [[], []];
+      const monthlyAverages = calculateMonthlyAverages({
+        carteiras: monthlyCarteiras,
+        caixas: monthlyCaixas,
+      });
 
       let seniorValue = 0;
       let mezzanineValue = 0;
@@ -203,6 +545,7 @@ export default async function DashboardPage() {
         dataLabel: latestCarteira
           ? `Dados de ${dateFormatter.format(latestCarteira.dataAnalise)}`
           : "Sem dados na CARTEIRAS",
+        ...monthlyAverages,
         seniorValue,
         mezzanineValue,
         juniorValue,
@@ -320,6 +663,33 @@ export default async function DashboardPage() {
                     className={`mt-2 text-sm font-semibold ${returnClassName(Number(value))}`}
                   >
                     {formatReturn(Number(value))}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-6 grid gap-3 border-t border-slate-200 pt-4 md:grid-cols-2">
+              {[
+                [
+                  "Receita media do mes",
+                  fund.averageMonthlyRevenue,
+                  fund.monthlyRevenueTotal,
+                ],
+                [
+                  "Custo medio do mes",
+                  fund.averageMonthlyCost,
+                  fund.monthlyCostTotal,
+                ],
+              ].map(([label, average, total]) => (
+                <div className="rounded border border-slate-200 p-4" key={label}>
+                  <p className="text-xs font-semibold uppercase text-slate-500">
+                    {label}
+                  </p>
+                  <p className="mt-2 text-lg font-semibold tracking-normal text-slate-950">
+                    {formatCurrency(Number(average))}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Total {formatCurrency(Number(total))} / {fund.monthlyPeriods} periodos
                   </p>
                 </div>
               ))}
