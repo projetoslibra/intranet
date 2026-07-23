@@ -138,6 +138,14 @@ function sumMapValuesForDates(map: Map<string, number>, dates: string[]) {
   return dates.reduce((total, key) => total + (map.get(key) ?? 0), 0);
 }
 
+function sumPositiveMapValuesForDates(map: Map<string, number>, dates: string[]) {
+  return dates.reduce((total, key) => {
+    const value = map.get(key) ?? 0;
+
+    return value > 0 ? total + value : total;
+  }, 0);
+}
+
 function sumNegativeMapValuesForDates(map: Map<string, number>, dates: string[]) {
   return dates.reduce((total, key) => {
     const value = map.get(key) ?? 0;
@@ -240,18 +248,26 @@ function classifyCaixaAssetClass(
     `${descricao} ${historicoTraduzido ?? ""} ${clienteId}`
   );
 
-  if (text.includes("MZ") || text.includes("MEZ") || text.includes("MEZAN")) {
+  if (
+    text.includes("MZ") ||
+    text.includes("MEZ") ||
+    text.includes("MEZAN") ||
+    text.includes("MEZANINO")
+  ) {
     return "mezzanine";
   }
 
-  if (text.includes("SRP") || text.includes("SENIOR")) {
+  if (text.includes(" SR") || text.includes("SRP") || text.includes("SENIOR")) {
     return "senior";
   }
 
   if (
+    text.includes("A VENCER") ||
+    text.includes("VENCIDOS") ||
     text.includes("BRISVENC") ||
     text.includes("BRISAVE") ||
-    text.includes("DIREITO")
+    text.includes("APULBAV") ||
+    text.includes("APULBVE")
   ) {
     return "creditRights";
   }
@@ -280,8 +296,8 @@ function calculateMonthlyAverages(params: {
 }) {
   const dateSet = new Set<string>();
   const creditRights = new Map<string, number>();
-  const otherFunds = new Map<string, number>();
-  const ntnb = new Map<string, number>();
+  const senior = new Map<string, number>();
+  const mezzanine = new Map<string, number>();
   const expenses = new Map<string, number>();
   const applicationsByAssetClass = new Map<string, Map<string, number>>();
   const redemptionsByAssetClass = new Map<string, Map<string, number>>();
@@ -294,10 +310,10 @@ function calculateMonthlyAverages(params: {
 
     if (category === "creditRights") {
       addToMap(creditRights, key, value);
-    } else if (category === "outros") {
-      addToMap(otherFunds, key, value);
-    } else if (category === "ntnb") {
-      addToMap(ntnb, key, value);
+    } else if (category === "senior") {
+      addToMap(senior, key, value);
+    } else if (category === "mezzanine") {
+      addToMap(mezzanine, key, value);
     } else if (category === "expense") {
       addToMap(expenses, key, value);
     }
@@ -358,20 +374,33 @@ function calculateMonthlyAverages(params: {
       applications("creditRights"),
       redemptions("creditRights")
     ),
-    assetDeltaMap(
-      dates,
-      otherFunds,
-      applications("otherFunds"),
-      redemptions("otherFunds")
-    ),
-    assetDeltaMap(dates, ntnb, applications("ntnb"), redemptions("ntnb")),
   ]);
-  const costsByDate = deltaMap(dates, expenses);
-  const monthlyRevenueTotal = sumMapValuesForDates(revenueByDate, calculationDates);
-  const monthlyCostTotal = -sumNegativeMapValuesForDates(
-    costsByDate,
+  const seniorDelta = assetDeltaMap(
+    dates,
+    senior,
+    applications("senior"),
+    redemptions("senior")
+  );
+  const mezzanineDelta = assetDeltaMap(
+    dates,
+    mezzanine,
+    applications("mezzanine"),
+    redemptions("mezzanine")
+  );
+  const expensesDelta = deltaMap(dates, expenses);
+  const monthlyRevenueTotal = sumPositiveMapValuesForDates(
+    revenueByDate,
     calculationDates
   );
+  const monthlySuperiorTotal = sumMapValuesForDates(
+    sumMaps(dates, [seniorDelta, mezzanineDelta]),
+    calculationDates
+  );
+  const monthlyExpenseTotal = sumNegativeMapValuesForDates(
+    expensesDelta,
+    calculationDates
+  );
+  const monthlyCostTotal = -(monthlySuperiorTotal + monthlyExpenseTotal);
 
   return {
     averageMonthlyRevenue: monthlyRevenueTotal / periods,
