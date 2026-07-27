@@ -10,6 +10,8 @@ type MesaPageProps = {
   searchParams?: {
     date?: string;
     tab?: string;
+    cedent?: string;
+    debtor?: string;
   };
 };
 
@@ -35,6 +37,22 @@ function statusBadge(current: number, limit: number) {
       {ok ? "Enquadrado" : "Fora do limite"}
     </span>
   );
+}
+
+function buildMesaHref(input: {
+  date: string;
+  tab: string;
+  cedent?: string;
+  debtor?: string;
+}) {
+  const params = new URLSearchParams({ date: input.date, tab: input.tab });
+  if (input.cedent) {
+    params.set("cedent", input.cedent);
+  }
+  if (input.debtor) {
+    params.set("debtor", input.debtor);
+  }
+  return `/dashboard/operacional/mesa?${params.toString()}`;
 }
 
 function ConcentrationTable({ rows }: { rows: ConcentrationRow[] }) {
@@ -85,7 +103,10 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
   }
 
   const [data, canImportRisk] = await Promise.all([
-    getOperationDeskData(searchParams?.date),
+    getOperationDeskData(searchParams?.date, {
+      cedent: searchParams?.cedent,
+      debtor: searchParams?.debtor,
+    }),
     hasPermission("operational.risk.import"),
   ]);
   const selectedTab = searchParams?.tab ?? "caixa";
@@ -126,6 +147,12 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
               </select>
             </label>
             <input name="tab" type="hidden" value={selectedTab} />
+            {searchParams?.cedent ? (
+              <input name="cedent" type="hidden" value={searchParams.cedent} />
+            ) : null}
+            {searchParams?.debtor ? (
+              <input name="debtor" type="hidden" value={searchParams.debtor} />
+            ) : null}
             <button
               className="h-10 rounded border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
               type="submit"
@@ -143,7 +170,12 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
                   ? "bg-primary text-primary-foreground"
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               }`}
-              href={`/dashboard/operacional/mesa?date=${data.selectedDate}&tab=${key}`}
+              href={buildMesaHref({
+                date: data.selectedDate,
+                tab: key,
+                cedent: searchParams?.cedent,
+                debtor: searchParams?.debtor,
+              })}
               key={key}
             >
               {label}
@@ -166,6 +198,45 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
 
       {selectedTab === "enquadramento" ? (
         <div className="space-y-5">
+          <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
+            <form className="flex flex-wrap items-end gap-3">
+              <input name="date" type="hidden" value={data.selectedDate} />
+              <input name="tab" type="hidden" value="enquadramento" />
+              <label className="min-w-[240px] flex-1 space-y-2 text-sm font-medium text-slate-700">
+                <span>Filtrar cedente</span>
+                <input
+                  className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  defaultValue={searchParams?.cedent ?? ""}
+                  name="cedent"
+                  placeholder="Nome ou documento do cedente"
+                  type="search"
+                />
+              </label>
+              <label className="min-w-[240px] flex-1 space-y-2 text-sm font-medium text-slate-700">
+                <span>Filtrar sacado</span>
+                <input
+                  className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  defaultValue={searchParams?.debtor ?? ""}
+                  name="debtor"
+                  placeholder="Nome ou documento do sacado"
+                  type="search"
+                />
+              </label>
+              <button
+                className="h-10 rounded bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
+                type="submit"
+              >
+                Filtrar
+              </button>
+              <Link
+                className="inline-flex h-10 items-center rounded border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                href={buildMesaHref({ date: data.selectedDate, tab: "enquadramento" })}
+              >
+                Limpar
+              </Link>
+            </form>
+          </section>
+
           {data.stockSummaries.length ? (
             data.stockSummaries.map((fund) => (
               <section
@@ -242,7 +313,7 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
             ))
           ) : (
             <section className="rounded border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-executive">
-              Nenhum estoque importado para esta data.
+              Nenhum estoque disponível no banco para esta data.
             </section>
           )}
         </div>

@@ -68,6 +68,11 @@ export type OperationDeskData = {
   };
 };
 
+export type StockComplianceFilters = {
+  cedent?: string;
+  debtor?: string;
+};
+
 const LIMITS: Record<
   string,
   {
@@ -93,6 +98,15 @@ const LIMITS: Record<
     topDebtorsCount: 5,
   },
 };
+
+const SPECIAL_CEDENTS = new Set(
+  [
+    "UY3 SOCIEDADE DE CREDITO DIRETO S/ A",
+    "MONEY PLUS SOCIEDADE DE CREDITO AO MICROEMPREENDED",
+    "MONEY PLUS SOCIEDADE DE CREDITO AO MICRO",
+    "BMP MONEY PLUS SOCIEDADE DE CRÉDITO DIRETO SA",
+  ].map(normalizeAtivo)
+);
 
 function dateKey(value: Date): string {
   return value.toISOString().slice(0, 10);
@@ -190,6 +204,19 @@ function addConcentration(
   }
 }
 
+function concentrationKey(document: string | null, name: string) {
+  return document?.trim() || normalizeAtivo(name);
+}
+
+function matchesConcentrationFilter(row: ConcentrationRow, filter?: string) {
+  const normalizedFilter = normalizeAtivo(filter ?? "");
+  if (!normalizedFilter) {
+    return true;
+  }
+
+  return normalizeAtivo(`${row.name} ${row.document}`).includes(normalizedFilter);
+}
+
 function toRows(
   map: Map<string, { name: string; document: string; value: number }>,
   pl: number
@@ -233,17 +260,22 @@ async function getPlForFund(
 }
 
 async function getAvailableDates(): Promise<string[]> {
-  const [cashDates, batchDates] = await Promise.all([
+  const [cashDates, stockDates, riskDates] = await Promise.all([
     prisma.companyCashDailyBalance.findMany({
       distinct: ["referenceDate"],
       orderBy: { referenceDate: "desc" },
       select: { referenceDate: true },
     }),
+    prisma.fidcEstoque.findMany({
+      distinct: ["dataReferencia"],
+      orderBy: { dataReferencia: "desc" },
+      select: { dataReferencia: true },
+    }),
     prisma.importBatch.findMany({
       distinct: ["referenceDate"],
       where: {
         referenceDate: { not: null },
-        module: { in: ["RECEIVABLE_STOCK", "RISK_LIMITS"] },
+        module: "RISK_LIMITS",
         status: "COMPLETED",
       },
       orderBy: { referenceDate: "desc" },
@@ -254,7 +286,8 @@ async function getAvailableDates(): Promise<string[]> {
   return Array.from(
     new Set([
       ...cashDates.map((row) => dateKey(row.referenceDate)),
-      ...batchDates.flatMap((row) => (row.referenceDate ? [dateKey(row.referenceDate)] : [])),
+      ...stockDates.map((row) => dateKey(row.dataReferencia)),
+      ...riskDates.flatMap((row) => (row.referenceDate ? [dateKey(row.referenceDate)] : [])),
     ])
   ).sort((a, b) => b.localeCompare(a));
 }
@@ -280,72 +313,77 @@ async function getLatestImports(): Promise<OperationalImportSummary[]> {
   }));
 }
 
-async function getStockSummaries(referenceDate: Date): Promise<StockComplianceSummary[]> {
-  const batches = await prisma.importBatch.findMany({
-    where: {
-      module: "RECEIVABLE_STOCK",
-      status: "COMPLETED",
-      referenceDate: { lte: referenceDate },
-      fundId: { not: null },
-    },
-    orderBy: [{ referenceDate: "desc" }, { completedAt: "desc" }],
-    include: { fund: { select: { id: true, name: true, shortName: true } } },
+async function getStockSummaries(
+  referenceDate: Date,
+  filters: StockComplianceFilters = {}
+): Promise<StockComplianceSummary[]> {
+  const latestDatesByFund = await prisma.fidcEstoque.groupBy({
+    by: ["nomeFundo"],
+    where: { dataReferencia: { lte: referenceDate } },
+    _max: { dataReferencia: true },
   });
 
-  const latestByFund = new Map<string, (typeof batches)[number]>();
-  for (const batch of batches) {
-    if (batch.fundId && !latestByFund.has(batch.fundId)) {
-      latestByFund.set(batch.fundId, batch);
-    }
-  }
-
   const summaries = await Promise.all(
-    Array.from(latestByFund.values()).map(async (batch) => {
-      if (!batch.fund) {
+    latestDatesByFund.map(async (snapshot) => {
+      const stockDate = snapshot._max.dataReferencia;
+      if (!stockDate) {
         return null;
       }
 
-      const positions = await prisma.receivableStockPosition.findMany({
-        where: { batchId: batch.id },
+      const positions = await prisma.fidcEstoque.findMany({
+        where: {
+          nomeFundo: snapshot.nomeFundo,
+          dataReferencia: stockDate,
+        },
         select: {
-          cedentName: true,
-          cedentDocument: true,
-          debtorName: true,
-          debtorDocument: true,
-          nominalValue: true,
+          nomeCedente: true,
+          docCedente: true,
+          nomeSacado: true,
+          docSacado: true,
+          valorNominal: true,
         },
       });
 
-      const { pl, plDate } = await getPlForFund(batch.fund, batch.referenceDate ?? referenceDate);
+      const fundKey =
+        resolveCarteiraFundo({ name: snapshot.nomeFundo, shortName: snapshot.nomeFundo }) ??
+        snapshot.nomeFundo;
+      const fund = {
+        name: snapshot.nomeFundo,
+        shortName: fundKey,
+      };
+      const { pl, plDate } = await getPlForFund(fund, stockDate);
       const cedents = new Map<string, { name: string; document: string; value: number }>();
       const debtors = new Map<string, { name: string; document: string; value: number }>();
 
       for (const position of positions) {
+        const replaceCedent = SPECIAL_CEDENTS.has(normalizeAtivo(position.nomeCedente));
+        const cedentName = replaceCedent ? position.nomeSacado : position.nomeCedente;
+        const cedentDocument = replaceCedent ? position.docSacado : position.docCedente;
+
         addConcentration(
           cedents,
-          position.cedentDocument,
-          position.cedentName,
-          position.cedentDocument,
-          toNumber(position.nominalValue)
+          concentrationKey(cedentDocument, cedentName),
+          cedentName,
+          cedentDocument ?? "",
+          toNumber(position.valorNominal)
         );
         addConcentration(
           debtors,
-          position.debtorDocument,
-          position.debtorName,
-          position.debtorDocument,
-          toNumber(position.nominalValue)
+          concentrationKey(position.docSacado, position.nomeSacado),
+          position.nomeSacado,
+          position.docSacado ?? "",
+          toNumber(position.valorNominal)
         );
       }
 
-      const fundKey = resolveCarteiraFundo(batch.fund) ?? batch.fund.shortName.toUpperCase();
       const limits = LIMITS[fundKey] ?? LIMITS.APUAMA;
       const cedentRows = toRows(cedents, pl);
       const debtorRows = toRows(debtors, pl);
 
       const summary: StockComplianceSummary = {
-        fundId: batch.fund.id,
-        fundName: batch.fund.shortName || batch.fund.name,
-        referenceDate: batch.referenceDate ? dateKey(batch.referenceDate) : dateKey(referenceDate),
+        fundId: `fidc:${normalizeAtivo(snapshot.nomeFundo)}`,
+        fundName: fundKey,
+        referenceDate: dateKey(stockDate),
         pl,
         plDate,
         limits,
@@ -355,8 +393,8 @@ async function getStockSummaries(referenceDate: Date): Promise<StockComplianceSu
         topDebtorsShare: debtorRows
           .slice(0, limits.topDebtorsCount)
           .reduce((sum, row) => sum + row.share, 0),
-        cedents: cedentRows.slice(0, 10),
-        debtors: debtorRows.slice(0, 10),
+        cedents: cedentRows.filter((row) => matchesConcentrationFilter(row, filters.cedent)).slice(0, 10),
+        debtors: debtorRows.filter((row) => matchesConcentrationFilter(row, filters.debtor)).slice(0, 10),
       };
 
       return summary;
@@ -419,7 +457,10 @@ async function getRisk(referenceDate: Date): Promise<OperationDeskData["risk"]> 
   };
 }
 
-export async function getOperationDeskData(date?: string): Promise<OperationDeskData> {
+export async function getOperationDeskData(
+  date?: string,
+  stockFilters: StockComplianceFilters = {}
+): Promise<OperationDeskData> {
   const availableDates = await getAvailableDates();
   const selectedDate = date ?? availableDates[0] ?? new Date().toISOString().slice(0, 10);
   const referenceDate = parseDateKey(selectedDate);
@@ -431,7 +472,7 @@ export async function getOperationDeskData(date?: string): Promise<OperationDesk
       orderBy: { fund: { name: "asc" } },
     }),
     getLatestImports(),
-    getStockSummaries(referenceDate),
+    getStockSummaries(referenceDate, stockFilters),
     getRisk(referenceDate),
   ]);
 

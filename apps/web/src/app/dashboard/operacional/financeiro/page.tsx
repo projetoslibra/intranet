@@ -31,10 +31,9 @@ export default async function FinanceiroPage({ searchParams }: FinanceiroPagePro
     );
   }
 
-  const [canManageCash, canImportStock, canImportDimension, availableDates, funds] =
+  const [canManageCash, canImportDimension, availableDates, funds] =
     await Promise.all([
       hasPermission("cash.manage"),
-      hasPermission("operational.stock.import"),
       hasPermission("operational.dimension.import"),
       getAvailableCashDates(),
       getActiveCashFunds(),
@@ -60,17 +59,7 @@ export default async function FinanceiroPage({ searchParams }: FinanceiroPagePro
         selectedDate={selectedDate}
       />
 
-      <div className="grid gap-5 xl:grid-cols-2">
-        {canImportStock ? (
-          <OperationalImportPanel
-            description="Importa a posição analítica de recebíveis do fundo e guarda uma nova versão histórica."
-            detectStockMetadata
-            endpoint="/api/operacional/estoque/import"
-            submitLabel="Importar estoque"
-            title="Upload de estoque"
-          />
-        ) : null}
-
+      <div className="grid gap-5">
         {canImportDimension ? (
           <OperationalImportPanel
             dateField={{
