@@ -32,6 +32,18 @@ export const osherAccessItems: readonly OsherAccessItem[] = [
     ],
   },
   {
+    id: "credit-registration",
+    title: "Crédito&Cadastro",
+    levels: [
+      noAccess,
+      {
+        value: "VIEWER",
+        label: "Visualizador",
+        permissionKeys: ["credit-registration.view"],
+      },
+    ],
+  },
+  {
     id: "funds",
     title: "Fundos",
     levels: [
