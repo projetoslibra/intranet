@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import {
@@ -9,11 +9,18 @@ import {
   updateUserAction,
   type UserFormState,
 } from "@/app/dashboard/usuarios/actions";
+import {
+  osherAccessFieldName,
+  type OsherAccessLevel,
+} from "@/lib/osher-access";
 
 export type AccessOption = {
   id: string;
   title: string;
-  permissionKey: string;
+  levels: {
+    value: OsherAccessLevel;
+    label: string;
+  }[];
 };
 
 export type UserRow = {
@@ -23,7 +30,7 @@ export type UserRow = {
   status: string;
   createdAt: string;
   updatedAt: string;
-  accessPermissionIds: string[];
+  accessLevels: Record<string, OsherAccessLevel>;
 };
 
 type UsersAdminPanelProps = {
@@ -101,27 +108,39 @@ function StateMessage({ state }: { state: UserFormState }) {
 
 function AccessChecks({
   accessOptions,
-  selectedPermissionIds,
+  idPrefix,
+  selectedAccessLevels,
 }: {
   accessOptions: AccessOption[];
-  selectedPermissionIds: string[];
+  idPrefix: string;
+  selectedAccessLevels: Record<string, OsherAccessLevel>;
 }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
       {accessOptions.map((access) => (
-        <label
-          className="flex min-h-10 items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+        <div
+          className="space-y-2 rounded border border-slate-200 bg-white p-3"
           key={access.id}
         >
-          <input
-            className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
-            defaultChecked={selectedPermissionIds.includes(access.id)}
-            name="permissionIds"
-            type="checkbox"
-            value={access.id}
-          />
-          <span className="font-medium">{access.title}</span>
-        </label>
+          <label
+            className="text-sm font-medium text-slate-700"
+            htmlFor={`${idPrefix}-${osherAccessFieldName(access.id)}`}
+          >
+            {access.title}
+          </label>
+          <select
+            className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+            defaultValue={selectedAccessLevels[access.id] ?? "NONE"}
+            id={`${idPrefix}-${osherAccessFieldName(access.id)}`}
+            name={osherAccessFieldName(access.id)}
+          >
+            {access.levels.map((level) => (
+              <option key={level.value} value={level.value}>
+                {level.label}
+              </option>
+            ))}
+          </select>
+        </div>
       ))}
     </div>
   );
@@ -198,10 +217,17 @@ function CreateUserForm({ accessOptions }: { accessOptions: AccessOption[] }) {
 
         <div className="space-y-2">
           <span className="text-sm font-medium text-slate-700">
-            Abas do OSHER
+            Nível de acesso por aba
           </span>
-          <AccessChecks accessOptions={accessOptions} selectedPermissionIds={[]} />
-          <FieldError message={state.fieldErrors?.permissionIds?.[0]} />
+          <p className="text-xs text-slate-500">
+            Visualizadores consultam os dados; operadores também podem editar.
+          </p>
+          <AccessChecks
+            accessOptions={accessOptions}
+            idPrefix="create"
+            selectedAccessLevels={{}}
+          />
+          <FieldError message={state.fieldErrors?.permissionKeys?.[0]} />
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -251,10 +277,12 @@ function UserCard({
   user: UserRow;
 }) {
   const [state, formAction] = useFormState(updateUserAction, initialState);
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = `user-details-${user.id}`;
 
   return (
     <article className="rounded border border-slate-200 bg-white p-5 shadow-executive">
-      <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-semibold text-slate-950">{user.name}</h3>
@@ -268,101 +296,121 @@ function UserCard({
           </div>
           <p className="mt-1 text-sm text-slate-500">{user.email}</p>
         </div>
-        <div className="text-xs text-slate-500 lg:text-right">
-          <p>Criado em {user.createdAt}</p>
-          <p>Atualizado em {user.updatedAt}</p>
-        </div>
-      </div>
-
-      <form action={formAction} className="space-y-4">
-        <input name="id" type="hidden" value={user.id} />
-
-        <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700" htmlFor={`name-${user.id}`}>
-              Nome
-            </label>
-            <input
-              className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-              defaultValue={user.name}
-              id={`name-${user.id}`}
-              name="name"
-              type="text"
-            />
-            <FieldError message={state.fieldErrors?.name?.[0]} />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700" htmlFor={`email-${user.id}`}>
-              E-mail
-            </label>
-            <input
-              className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-              defaultValue={user.email}
-              id={`email-${user.id}`}
-              name="email"
-              type="email"
-            />
-            <FieldError message={state.fieldErrors?.email?.[0]} />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700" htmlFor={`status-${user.id}`}>
-              Status
-            </label>
-            <select
-              className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-              defaultValue={user.status}
-              id={`status-${user.id}`}
-              name="status"
-            >
-              <option value="ACTIVE">Ativo</option>
-              <option value="INACTIVE">Inativo</option>
-              <option value="BLOCKED">Bloqueado</option>
-            </select>
-            <FieldError message={state.fieldErrors?.status?.[0]} />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700" htmlFor={`password-${user.id}`}>
-              Nova senha
-            </label>
-            <input
-              autoComplete="new-password"
-              className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-              id={`password-${user.id}`}
-              name="password"
-              placeholder="Manter atual"
-              type="password"
-            />
-            <FieldError message={state.fieldErrors?.password?.[0]} />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <span className="text-sm font-medium text-slate-700">
-            Abas do OSHER
-          </span>
-          <AccessChecks
-            accessOptions={accessOptions}
-            selectedPermissionIds={user.accessPermissionIds}
-          />
-          <FieldError message={state.fieldErrors?.permissionIds?.[0]} />
-        </div>
-
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <SubmitButton
-            icon={<Save className="h-4 w-4" />}
-            idleLabel="Salvar"
-            pendingLabel="Salvando..."
-          />
-          <StateMessage state={state} />
+          <div className="text-xs text-slate-500 sm:text-right">
+            <p>Criado em {user.createdAt}</p>
+            <p>Atualizado em {user.updatedAt}</p>
+          </div>
+          <button
+            aria-controls={detailsId}
+            aria-expanded={expanded}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            onClick={() => setExpanded((current) => !current)}
+            type="button"
+          >
+            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            {expanded ? "Ocultar detalhes" : "Ver detalhes"}
+          </button>
         </div>
-      </form>
-
-      <div className="mt-4 border-t border-slate-100 pt-4">
-        <DeleteUserForm userId={user.id} userName={user.name} />
       </div>
+
+      {expanded ? (
+        <div className="mt-5 border-t border-slate-100 pt-5" id={detailsId}>
+          <form action={formAction} className="space-y-4">
+            <input name="id" type="hidden" value={user.id} />
+
+            <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700" htmlFor={`name-${user.id}`}>
+                  Nome
+                </label>
+                <input
+                  className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  defaultValue={user.name}
+                  id={`name-${user.id}`}
+                  name="name"
+                  type="text"
+                />
+                <FieldError message={state.fieldErrors?.name?.[0]} />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700" htmlFor={`email-${user.id}`}>
+                  E-mail
+                </label>
+                <input
+                  className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  defaultValue={user.email}
+                  id={`email-${user.id}`}
+                  name="email"
+                  type="email"
+                />
+                <FieldError message={state.fieldErrors?.email?.[0]} />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700" htmlFor={`status-${user.id}`}>
+                  Status
+                </label>
+                <select
+                  className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  defaultValue={user.status}
+                  id={`status-${user.id}`}
+                  name="status"
+                >
+                  <option value="ACTIVE">Ativo</option>
+                  <option value="INACTIVE">Inativo</option>
+                  <option value="BLOCKED">Bloqueado</option>
+                </select>
+                <FieldError message={state.fieldErrors?.status?.[0]} />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700" htmlFor={`password-${user.id}`}>
+                  Nova senha
+                </label>
+                <input
+                  autoComplete="new-password"
+                  className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  id={`password-${user.id}`}
+                  name="password"
+                  placeholder="Manter atual"
+                  type="password"
+                />
+                <FieldError message={state.fieldErrors?.password?.[0]} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-sm font-medium text-slate-700">
+                Nível de acesso por aba
+              </span>
+              <p className="text-xs text-slate-500">
+                Visualizadores consultam os dados; operadores também podem editar.
+              </p>
+              <AccessChecks
+                accessOptions={accessOptions}
+                idPrefix={user.id}
+                selectedAccessLevels={user.accessLevels}
+              />
+              <FieldError message={state.fieldErrors?.permissionKeys?.[0]} />
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <SubmitButton
+                icon={<Save className="h-4 w-4" />}
+                idleLabel="Salvar"
+                pendingLabel="Salvando..."
+              />
+              <StateMessage state={state} />
+            </div>
+          </form>
+
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <DeleteUserForm userId={user.id} userName={user.name} />
+          </div>
+        </div>
+      ) : null}
     </article>
   );
 }
