@@ -35,7 +35,7 @@
 ---
 
 ## 🟢 Concluídas (recentes)
-- [x] **[2026-07-27]** Enquadramento via `FIDC_ESTOQUES`, remoção do upload manual e filtros por cedente/sacado — _Juan_ · branch `feat/enquadramento-estoque-api`.
+- [x] **[2026-07-27]** Enquadramento via `FIDC_ESTOQUES`, filtros por cedente/sacado e remoção dos controles manuais de estoque/DIM — _Juan_ · branch `feat/enquadramento-estoque-api`.
 - [x] **[2026-07-20]** Módulo Operacional: Financeiro, Mesa de Operações, estoque, risco e DIM cedentes — _Juan_ · branch `feat/modulo-operacional`.
 - [x] **[2026-07-20]** Corrigir sinais e rentabilidades da aba Previsões: PDD positiva reduz PL, reversão negativa aumenta PL, rentabilidades diária/mensal/anual recalculam com o PL projetado e tooltip documenta os sinais — _João_ · branch `fix/previsoes-pdd-rentabilidade`.
 - [x] **[2026-07-06]** PREVISÕES DE COTA DRE: nova aba Previsões abaixo da DRE, histórico real da `CARTEIRAS`, projeção diária por data futura, PDD como variável manual e receita média de Direitos Creditórios baseada na DRE/Variação — _João_ · branch `feat/previsoes-cota-dre`.
