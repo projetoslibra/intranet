@@ -7,6 +7,7 @@ import {
   BarChart3,
   BriefcaseBusiness,
   Building2,
+  ClipboardCheck,
   FileBarChart,
   LayoutDashboard,
   LogOut,
@@ -62,6 +63,12 @@ const navigation = [
     href: "/dashboard/operacional",
     permissionKey: "operational.view",
     icon: BriefcaseBusiness,
+  },
+  {
+    title: "Crédito&Cadastro",
+    href: "/dashboard/credito-cadastro",
+    permissionKey: "credit-registration.view",
+    icon: ClipboardCheck,
   },
   {
     title: "Relatorios",
