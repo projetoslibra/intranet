@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { osherAccessFieldName, osherAccessItems } from "@/lib/osher-access";
 import { hasPermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
@@ -23,7 +24,7 @@ const baseUserSchema = z.object({
     .email("Informe um e-mail valido.")
     .transform((email) => email.toLowerCase()),
   status: z.enum(statusValues),
-  permissionIds: z
+  permissionKeys: z
     .array(z.string().min(1))
     .min(1, "Selecione ao menos uma aba."),
 });
@@ -51,10 +52,25 @@ const deleteUserSchema = z.object({
   id: z.string().min(1, "Usuario invalido."),
 });
 
-function readPermissionIds(formData: FormData) {
-  return Array.from(
-    new Set(formData.getAll("permissionIds").map(String).filter(Boolean))
-  );
+function readPermissionKeys(formData: FormData): string[] | null {
+  const permissionKeys = new Set<string>();
+
+  for (const item of osherAccessItems) {
+    const selectedLevel = String(
+      formData.get(osherAccessFieldName(item.id)) ?? "NONE"
+    );
+    const level = item.levels.find((option) => option.value === selectedLevel);
+
+    if (!level) {
+      return null;
+    }
+
+    level.permissionKeys.forEach((permissionKey) => {
+      permissionKeys.add(permissionKey);
+    });
+  }
+
+  return Array.from(permissionKeys);
 }
 
 function accessRoleName(userId: string) {
@@ -85,16 +101,21 @@ async function assertNotSelf(userId: string): Promise<UserFormState | null> {
   };
 }
 
-async function validatePermissions(permissionIds: string[]): Promise<boolean> {
-  const permissionsCount = await prisma.permission.count({
+async function resolvePermissionIds(
+  permissionKeys: string[]
+): Promise<string[] | null> {
+  const permissions = await prisma.permission.findMany({
     where: {
-      id: {
-        in: permissionIds,
+      key: {
+        in: permissionKeys,
       },
     },
+    select: { id: true },
   });
 
-  return permissionsCount === permissionIds.length;
+  return permissions.length === permissionKeys.length
+    ? permissions.map((permission) => permission.id)
+    : null;
 }
 
 async function syncUserAccessRole(userId: string, permissionIds: string[]) {
@@ -159,12 +180,20 @@ export async function createUserAction(
     return permissionError;
   }
 
+  const permissionKeys = readPermissionKeys(formData);
+  if (!permissionKeys) {
+    return {
+      ok: false,
+      message: "Um dos níveis de acesso selecionados é inválido.",
+    };
+  }
+
   const parsed = createUserSchema.safeParse({
     name: formData.get("name"),
     email: formData.get("email"),
     password: formData.get("password"),
     status: formData.get("status"),
-    permissionIds: readPermissionIds(formData),
+    permissionKeys,
   });
 
   if (!parsed.success) {
@@ -175,10 +204,11 @@ export async function createUserAction(
     };
   }
 
-  if (!(await validatePermissions(parsed.data.permissionIds))) {
+  const permissionIds = await resolvePermissionIds(parsed.data.permissionKeys);
+  if (!permissionIds) {
     return {
       ok: false,
-      message: "Uma das abas selecionadas nao existe mais.",
+      message: "Uma das permissões selecionadas não existe mais.",
     };
   }
 
@@ -197,7 +227,7 @@ export async function createUserAction(
       },
     });
 
-    await syncUserAccessRole(user.id, parsed.data.permissionIds);
+    await syncUserAccessRole(user.id, permissionIds);
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       return {
@@ -231,13 +261,21 @@ export async function updateUserAction(
   }
 
   const password = String(formData.get("password") ?? "").trim();
+  const permissionKeys = readPermissionKeys(formData);
+  if (!permissionKeys) {
+    return {
+      ok: false,
+      message: "Um dos níveis de acesso selecionados é inválido.",
+    };
+  }
+
   const parsed = updateUserSchema.safeParse({
     id: formData.get("id"),
     name: formData.get("name"),
     email: formData.get("email"),
     password: password || undefined,
     status: formData.get("status"),
-    permissionIds: readPermissionIds(formData),
+    permissionKeys,
   });
 
   if (!parsed.success) {
@@ -254,10 +292,11 @@ export async function updateUserAction(
     return selfError;
   }
 
-  if (!(await validatePermissions(parsed.data.permissionIds))) {
+  const permissionIds = await resolvePermissionIds(parsed.data.permissionKeys);
+  if (!permissionIds) {
     return {
       ok: false,
-      message: "Uma das abas selecionadas nao existe mais.",
+      message: "Uma das permissões selecionadas não existe mais.",
     };
   }
 
@@ -282,7 +321,7 @@ export async function updateUserAction(
       data,
     });
 
-    await syncUserAccessRole(parsed.data.id, parsed.data.permissionIds);
+    await syncUserAccessRole(parsed.data.id, permissionIds);
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       return {

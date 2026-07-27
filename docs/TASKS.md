@@ -21,7 +21,6 @@
 
 | Task | Responsável | Branch | Início | Notas |
 |------|-------------|--------|--------|-------|
-| Módulo Usuários (`/dashboard/usuarios`) | João | `feat/modulo-usuarios` | 2026-07-20 | CRUD de usuários, status e atribuição de roles. |
 
 ---
 
@@ -35,6 +34,8 @@
 ---
 
 ## 🟢 Concluídas (recentes)
+- [x] **[2026-07-27]** Níveis de acesso por aba: sem acesso, visualizador, operador e administrador — _Juan_ · branch `feat/niveis-acesso-usuarios`.
+- [x] **[2026-07-20]** Módulo Usuários (`/dashboard/usuarios`): CRUD, status e atribuição de acessos — _João_ · branch `feat/modulo-usuarios`.
 - [x] **[2026-07-20]** Módulo Operacional: Financeiro, Mesa de Operações, estoque, risco e DIM cedentes — _Juan_ · branch `feat/modulo-operacional`.
 - [x] **[2026-07-20]** Corrigir sinais e rentabilidades da aba Previsões: PDD positiva reduz PL, reversão negativa aumenta PL, rentabilidades diária/mensal/anual recalculam com o PL projetado e tooltip documenta os sinais — _João_ · branch `fix/previsoes-pdd-rentabilidade`.
 - [x] **[2026-07-06]** PREVISÕES DE COTA DRE: nova aba Previsões abaixo da DRE, histórico real da `CARTEIRAS`, projeção diária por data futura, PDD como variável manual e receita média de Direitos Creditórios baseada na DRE/Variação — _João_ · branch `feat/previsoes-cota-dre`.

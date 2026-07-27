@@ -9,11 +9,18 @@ import {
   updateUserAction,
   type UserFormState,
 } from "@/app/dashboard/usuarios/actions";
+import {
+  osherAccessFieldName,
+  type OsherAccessLevel,
+} from "@/lib/osher-access";
 
 export type AccessOption = {
   id: string;
   title: string;
-  permissionKey: string;
+  levels: {
+    value: OsherAccessLevel;
+    label: string;
+  }[];
 };
 
 export type UserRow = {
@@ -23,7 +30,7 @@ export type UserRow = {
   status: string;
   createdAt: string;
   updatedAt: string;
-  accessPermissionIds: string[];
+  accessLevels: Record<string, OsherAccessLevel>;
 };
 
 type UsersAdminPanelProps = {
@@ -101,27 +108,39 @@ function StateMessage({ state }: { state: UserFormState }) {
 
 function AccessChecks({
   accessOptions,
-  selectedPermissionIds,
+  idPrefix,
+  selectedAccessLevels,
 }: {
   accessOptions: AccessOption[];
-  selectedPermissionIds: string[];
+  idPrefix: string;
+  selectedAccessLevels: Record<string, OsherAccessLevel>;
 }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
       {accessOptions.map((access) => (
-        <label
-          className="flex min-h-10 items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+        <div
+          className="space-y-2 rounded border border-slate-200 bg-white p-3"
           key={access.id}
         >
-          <input
-            className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
-            defaultChecked={selectedPermissionIds.includes(access.id)}
-            name="permissionIds"
-            type="checkbox"
-            value={access.id}
-          />
-          <span className="font-medium">{access.title}</span>
-        </label>
+          <label
+            className="text-sm font-medium text-slate-700"
+            htmlFor={`${idPrefix}-${osherAccessFieldName(access.id)}`}
+          >
+            {access.title}
+          </label>
+          <select
+            className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+            defaultValue={selectedAccessLevels[access.id] ?? "NONE"}
+            id={`${idPrefix}-${osherAccessFieldName(access.id)}`}
+            name={osherAccessFieldName(access.id)}
+          >
+            {access.levels.map((level) => (
+              <option key={level.value} value={level.value}>
+                {level.label}
+              </option>
+            ))}
+          </select>
+        </div>
       ))}
     </div>
   );
@@ -198,10 +217,17 @@ function CreateUserForm({ accessOptions }: { accessOptions: AccessOption[] }) {
 
         <div className="space-y-2">
           <span className="text-sm font-medium text-slate-700">
-            Abas do OSHER
+            Nível de acesso por aba
           </span>
-          <AccessChecks accessOptions={accessOptions} selectedPermissionIds={[]} />
-          <FieldError message={state.fieldErrors?.permissionIds?.[0]} />
+          <p className="text-xs text-slate-500">
+            Visualizadores consultam os dados; operadores também podem editar.
+          </p>
+          <AccessChecks
+            accessOptions={accessOptions}
+            idPrefix="create"
+            selectedAccessLevels={{}}
+          />
+          <FieldError message={state.fieldErrors?.permissionKeys?.[0]} />
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -341,13 +367,17 @@ function UserCard({
 
         <div className="space-y-2">
           <span className="text-sm font-medium text-slate-700">
-            Abas do OSHER
+            Nível de acesso por aba
           </span>
+          <p className="text-xs text-slate-500">
+            Visualizadores consultam os dados; operadores também podem editar.
+          </p>
           <AccessChecks
             accessOptions={accessOptions}
-            selectedPermissionIds={user.accessPermissionIds}
+            idPrefix={user.id}
+            selectedAccessLevels={user.accessLevels}
           />
-          <FieldError message={state.fieldErrors?.permissionIds?.[0]} />
+          <FieldError message={state.fieldErrors?.permissionKeys?.[0]} />
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">

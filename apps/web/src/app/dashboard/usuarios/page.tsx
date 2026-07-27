@@ -1,6 +1,10 @@
 import { UsersAdminPanel } from "@/features/users/components/UsersAdminPanel";
 import { formatDate } from "@/lib/formatters";
-import { osherAccessItems, osherAccessPermissionKeys } from "@/lib/osher-access";
+import {
+  getOsherAccessLevel,
+  osherAccessItems,
+  osherAccessPermissionKeys,
+} from "@/lib/osher-access";
 import { hasPermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
@@ -36,7 +40,6 @@ export default async function UsersPage() {
                   select: {
                     permission: {
                       select: {
-                        id: true,
                         key: true,
                       },
                     },
@@ -55,41 +58,41 @@ export default async function UsersPage() {
         },
       },
       select: {
-        id: true,
         key: true,
       },
     }),
   ]);
 
-  const permissionByKey = new Map(
-    permissions.map((permission) => [permission.key, permission])
+  const availablePermissionKeys = new Set(
+    permissions.map((permission) => permission.key)
   );
-  const accessOptions = osherAccessItems.flatMap((item) => {
-    const permission = permissionByKey.get(item.permissionKey);
-
-    if (!permission) {
-      return [];
-    }
-
-    return [
-      {
-        id: permission.id,
-        title: item.title,
-        permissionKey: item.permissionKey,
-      },
-    ];
-  });
+  const accessOptions = osherAccessItems
+    .map((item) => ({
+      id: item.id,
+      title: item.title,
+      levels: item.levels
+        .filter((level) =>
+          level.permissionKeys.every((permissionKey) =>
+            availablePermissionKeys.has(permissionKey)
+          )
+        )
+        .map((level) => ({
+          value: level.value,
+          label: level.label,
+        })),
+    }))
+    .filter((item) => item.levels.length > 1);
 
   return (
     <UsersAdminPanel
       accessOptions={accessOptions}
       users={users.map((user) => {
-        const accessPermissionIds = new Set<string>();
+        const userPermissionKeys = new Set<string>();
 
         user.roles.forEach((userRole) => {
           userRole.role.permissions.forEach((rolePermission) => {
-            if (permissionByKey.has(rolePermission.permission.key)) {
-              accessPermissionIds.add(rolePermission.permission.id);
+            if (availablePermissionKeys.has(rolePermission.permission.key)) {
+              userPermissionKeys.add(rolePermission.permission.key);
             }
           });
         });
@@ -101,7 +104,12 @@ export default async function UsersPage() {
           status: user.status,
           createdAt: formatDate(user.createdAt),
           updatedAt: formatDate(user.updatedAt),
-          accessPermissionIds: Array.from(accessPermissionIds),
+          accessLevels: Object.fromEntries(
+            osherAccessItems.map((item) => [
+              item.id,
+              getOsherAccessLevel(item, userPermissionKeys),
+            ])
+          ),
         };
       })}
     />

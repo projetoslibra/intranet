@@ -1,46 +1,177 @@
-export const osherAccessItems = [
+export type OsherAccessLevel = "NONE" | "VIEWER" | "OPERATOR" | "ADMIN";
+
+export type OsherAccessLevelOption = {
+  value: OsherAccessLevel;
+  label: string;
+  permissionKeys: readonly string[];
+};
+
+export type OsherAccessItem = {
+  id: string;
+  title: string;
+  levels: readonly OsherAccessLevelOption[];
+};
+
+const noAccess: OsherAccessLevelOption = {
+  value: "NONE",
+  label: "Sem acesso",
+  permissionKeys: [],
+};
+
+export const osherAccessItems: readonly OsherAccessItem[] = [
   {
     id: "dashboard",
     title: "Dashboard",
-    permissionKey: "dashboard.view",
+    levels: [
+      noAccess,
+      {
+        value: "VIEWER",
+        label: "Visualizador",
+        permissionKeys: ["dashboard.view"],
+      },
+    ],
   },
   {
     id: "funds",
     title: "Fundos",
-    permissionKey: "funds.view",
+    levels: [
+      noAccess,
+      {
+        value: "VIEWER",
+        label: "Visualizador",
+        permissionKeys: ["funds.view"],
+      },
+      {
+        value: "OPERATOR",
+        label: "Operador",
+        permissionKeys: ["funds.view", "funds.manage"],
+      },
+    ],
   },
   {
     id: "dre",
     title: "DRE",
-    permissionKey: "dre.view",
+    levels: [
+      noAccess,
+      {
+        value: "VIEWER",
+        label: "Visualizador",
+        permissionKeys: ["dre.view"],
+      },
+      {
+        value: "OPERATOR",
+        label: "Operador",
+        permissionKeys: ["dre.view", "dre.import"],
+      },
+    ],
   },
   {
     id: "forecasts",
-    title: "Previsoes",
-    permissionKey: "forecasts.view",
+    title: "Previsões",
+    levels: [
+      noAccess,
+      {
+        value: "VIEWER",
+        label: "Visualizador",
+        permissionKeys: ["forecasts.view"],
+      },
+    ],
   },
   {
     id: "cash",
     title: "Caixa",
-    permissionKey: "cash.view",
+    levels: [
+      noAccess,
+      {
+        value: "VIEWER",
+        label: "Visualizador",
+        permissionKeys: ["cash.view"],
+      },
+      {
+        value: "OPERATOR",
+        label: "Operador",
+        permissionKeys: ["cash.view", "cash.manage"],
+      },
+    ],
   },
   {
     id: "operational",
     title: "Operacional",
-    permissionKey: "operational.view",
+    levels: [
+      noAccess,
+      {
+        value: "VIEWER",
+        label: "Visualizador",
+        permissionKeys: ["operational.view"],
+      },
+      {
+        value: "OPERATOR",
+        label: "Operador",
+        permissionKeys: [
+          "operational.view",
+          "operational.finance.manage",
+          "operational.stock.import",
+          "operational.risk.import",
+          "operational.dimension.import",
+          "cash.manage",
+        ],
+      },
+    ],
   },
   {
     id: "reports",
-    title: "Relatorios",
-    permissionKey: "reports.view",
+    title: "Relatórios",
+    levels: [
+      noAccess,
+      {
+        value: "VIEWER",
+        label: "Visualizador",
+        permissionKeys: ["reports.view"],
+      },
+      {
+        value: "OPERATOR",
+        label: "Operador",
+        permissionKeys: ["reports.view", "reports.export"],
+      },
+    ],
   },
   {
     id: "users",
-    title: "Usuarios",
-    permissionKey: "users.manage",
+    title: "Usuários",
+    levels: [
+      noAccess,
+      {
+        value: "ADMIN",
+        label: "Administrador",
+        permissionKeys: ["users.manage"],
+      },
+    ],
   },
-] as const;
+];
 
-export const osherAccessPermissionKeys = osherAccessItems.map(
-  (item) => item.permissionKey
+export const osherAccessPermissionKeys = Array.from(
+  new Set(
+    osherAccessItems.flatMap((item) =>
+      item.levels.flatMap((level) => level.permissionKeys)
+    )
+  )
 );
+
+export function osherAccessFieldName(itemId: string) {
+  return `accessLevel.${itemId}`;
+}
+
+export function getOsherAccessLevel(
+  item: OsherAccessItem,
+  permissionKeys: ReadonlySet<string>
+): OsherAccessLevel {
+  const matchingLevels = [...item.levels]
+    .reverse()
+    .find(
+      (level) =>
+        level.permissionKeys.length > 0 &&
+        level.permissionKeys.every((permissionKey) => permissionKeys.has(permissionKey))
+    );
+
+  return matchingLevels?.value ?? "NONE";
+}
