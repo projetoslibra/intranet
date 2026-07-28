@@ -2,6 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Calculator, Info } from "lucide-react";
+import {
+  calculatePddReversalSimulation,
+  pddDebtorKey,
+  type LogicaPddTitle,
+} from "@/lib/logica-pdd";
 
 type FundOption = {
   id: string;
@@ -14,6 +19,7 @@ type HistoricalRow = {
   patrimonio: number;
   creditRights: number;
   creditRightsVariation: number;
+  costVariation: number;
   pdd: number;
   variacaoMensal: number;
   variacaoAnual: number;
@@ -23,17 +29,11 @@ type ForecastInput = {
   pddDelta: number;
 };
 
-type ForecastStockTitle = {
-  id: string;
+type ForecastStockTitle = LogicaPddTitle & {
   cedentName: string;
   cedentDocument: string | null;
-  debtorName: string;
-  debtorDocument: string | null;
   documentNumber: string;
-  originalDueDate: string;
   nominalValue: number;
-  presentValue: number;
-  pddValue: number;
   pddRange: string | null;
   situation: string | null;
 };
@@ -156,62 +156,12 @@ function formatInputNumber(value: number | undefined) {
   return String(value).replace(".", ",");
 }
 
-function debtorKey(title: Pick<ForecastStockTitle, "debtorDocument" | "debtorName">) {
-  return title.debtorDocument || title.debtorName;
-}
-
-function pddRateForDelay(daysLate: number) {
-  if (daysLate <= 5) {
-    return 0;
-  }
-
-  if (daysLate <= 30) {
-    return 0.0118;
-  }
-
-  if (daysLate <= 60) {
-    return 0.1455;
-  }
-
-  if (daysLate <= 90) {
-    return 0.3475;
-  }
-
-  if (daysLate <= 120) {
-    return 0.6654;
-  }
-
-  return 1;
-}
-
-function daysLate(referenceDate: string, dueDate: string) {
-  const millisecondsPerDay = 24 * 60 * 60 * 1000;
-  const diff =
-    parseDateKey(referenceDate).getTime() - parseDateKey(dueDate).getTime();
-
-  return Math.max(0, Math.floor(diff / millisecondsPerDay));
-}
-
-function calculateDebtorPddAfterReduction(
-  referenceDate: string,
-  titles: ForecastStockTitle[],
-  selectedTitleIds: Set<string>
-) {
-  const remainingTitles = titles.filter((title) => !selectedTitleIds.has(title.id));
-
-  if (remainingTitles.length === 0) {
-    return 0;
-  }
-
-  const maxDelay = Math.max(
-    ...remainingTitles.map((title) => daysLate(referenceDate, title.originalDueDate))
-  );
-  const rate = pddRateForDelay(maxDelay);
-
-  return remainingTitles.reduce(
-    (total, title) => total + title.presentValue * rate,
-    0
-  );
+function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
 }
 
 function calculateAverageCreditRightsRevenue(rows: HistoricalRow[]) {
@@ -227,6 +177,20 @@ function calculateAverageCreditRightsRevenue(rows: HistoricalRow[]) {
   return lastDeltas.reduce((total, value) => total + value, 0) / lastDeltas.length;
 }
 
+function calculateAverageFundCost(rows: HistoricalRow[]) {
+  const lastCosts = rows
+    .slice(1)
+    .map((row) => row.costVariation)
+    .filter((value) => value > 0)
+    .slice(-15);
+
+  if (lastCosts.length === 0) {
+    return 0;
+  }
+
+  return lastCosts.reduce((total, value) => total + value, 0) / lastCosts.length;
+}
+
 type StockReductionPanelProps = {
   stockData: ForecastStockData;
   futureDates: string[];
@@ -238,10 +202,13 @@ function StockReductionPanel({
   onApplyReduction,
   stockData,
 }: StockReductionPanelProps) {
-  const defaultCedent = stockData?.cedents[0]?.name ?? "";
   const defaultDate = futureDates[0] ?? "";
-  const [selectedCedent, setSelectedCedent] = useState(defaultCedent);
-  const [cedentSearch, setCedentSearch] = useState(defaultCedent);
+  const [selectedCedent, setSelectedCedent] = useState("");
+  const [selectedDebtorKey, setSelectedDebtorKey] = useState("");
+  const [cedentSearch, setCedentSearch] = useState("");
+  const [debtorSearch, setDebtorSearch] = useState("");
+  const [isCedentMenuOpen, setIsCedentMenuOpen] = useState(false);
+  const [isDebtorMenuOpen, setIsDebtorMenuOpen] = useState(false);
   const [reductionDate, setReductionDate] = useState(defaultDate);
   const [selectedTitleIds, setSelectedTitleIds] = useState<Set<string>>(
     () => new Set()
@@ -252,9 +219,14 @@ function StockReductionPanel({
       return;
     }
 
-    if (!stockData.cedents.some((cedent) => cedent.name === selectedCedent)) {
-      setSelectedCedent(stockData.cedents[0]?.name ?? "");
-      setCedentSearch(stockData.cedents[0]?.name ?? "");
+    if (
+      selectedCedent &&
+      !stockData.cedents.some((cedent) => cedent.name === selectedCedent)
+    ) {
+      setSelectedCedent("");
+      setCedentSearch("");
+      setSelectedDebtorKey("");
+      setDebtorSearch("");
       setSelectedTitleIds(new Set());
     }
   }, [selectedCedent, stockData]);
@@ -270,35 +242,90 @@ function StockReductionPanel({
       return [];
     }
 
-    const normalizedSearch = cedentSearch
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .trim()
-      .toUpperCase();
+    const normalizedSearch = normalizeSearchText(cedentSearch);
 
     if (!normalizedSearch) {
       return stockData.cedents;
     }
 
     return stockData.cedents.filter((cedent) => {
-      const text = `${cedent.name} ${cedent.document ?? ""}`
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toUpperCase();
+      const text = normalizeSearchText(`${cedent.name} ${cedent.document ?? ""}`);
 
       return text.includes(normalizedSearch);
     });
   }, [cedentSearch, stockData]);
-  const selectedCedentMatchesFilter = filteredCedents.some(
-    (cedent) => cedent.name === selectedCedent
-  );
   const cedentTitles = useMemo(() => {
-    if (!stockData || !selectedCedent || !selectedCedentMatchesFilter) {
+    if (!stockData) {
       return [];
     }
 
-    return stockData.titles.filter((title) => title.cedentName === selectedCedent);
-  }, [selectedCedent, selectedCedentMatchesFilter, stockData]);
+    if (!selectedCedent && !selectedDebtorKey) {
+      return [];
+    }
+
+    const titles = selectedCedent
+      ? stockData.titles.filter((title) => title.cedentName === selectedCedent)
+      : stockData.titles;
+
+    if (!selectedDebtorKey) {
+      return titles;
+    }
+
+    return titles.filter((title) => pddDebtorKey(title) === selectedDebtorKey);
+  }, [selectedCedent, selectedDebtorKey, stockData]);
+  const debtorOptions = useMemo(() => {
+    if (!stockData) {
+      return [];
+    }
+
+    const normalizedSearch = normalizeSearchText(debtorSearch);
+    const titles = selectedCedent
+      ? stockData.titles.filter((title) => title.cedentName === selectedCedent)
+      : stockData.titles;
+    const debtors = new Map<
+      string,
+      {
+        key: string;
+        name: string;
+        document: string | null;
+        titleCount: number;
+        nominalValue: number;
+        pddValue: number;
+      }
+    >();
+
+    for (const title of titles) {
+      const key = pddDebtorKey(title);
+      const current = debtors.get(key) ?? {
+        key,
+        name: title.debtorName,
+        document: title.debtorDocument,
+        titleCount: 0,
+        nominalValue: 0,
+        pddValue: 0,
+      };
+      current.titleCount += 1;
+      current.nominalValue += title.nominalValue;
+      current.pddValue += title.pddValue;
+      debtors.set(key, current);
+    }
+
+    const values = Array.from(debtors.values()).sort((left, right) =>
+      left.name.localeCompare(right.name, "pt-BR")
+    );
+
+    if (!normalizedSearch) {
+      return values;
+    }
+
+    return values.filter((debtor) => {
+      const text = normalizeSearchText(
+        `${debtor.name} ${debtor.document ?? ""} ${debtor.key}`
+      );
+
+      return text.includes(normalizedSearch);
+    });
+  }, [debtorSearch, selectedCedent, stockData]);
   const selectedTitles = useMemo(
     () => cedentTitles.filter((title) => selectedTitleIds.has(title.id)),
     [cedentTitles, selectedTitleIds]
@@ -308,7 +335,7 @@ function StockReductionPanel({
     0
   );
   const reductionSimulation = useMemo(() => {
-    if (!stockData || selectedTitles.length === 0) {
+    if (!stockData) {
       return {
         currentPdd: 0,
         newPdd: 0,
@@ -317,31 +344,12 @@ function StockReductionPanel({
       };
     }
 
-    const affectedDebtorKeys = new Set(selectedTitles.map(debtorKey));
-    let currentPdd = 0;
-    let newPdd = 0;
-
-    affectedDebtorKeys.forEach((key) => {
-      const debtorTitles = stockData.titles.filter(
-        (title) => debtorKey(title) === key
-      );
-      currentPdd += debtorTitles.reduce(
-        (total, title) => total + title.pddValue,
-        0
-      );
-      newPdd += calculateDebtorPddAfterReduction(
-        stockData.latestDate,
-        debtorTitles,
-        selectedTitleIds
-      );
-    });
-
-    return {
-      currentPdd,
-      newPdd,
-      reversalValue: Math.max(0, currentPdd - newPdd),
-      affectedDebtors: affectedDebtorKeys.size,
-    };
+    return calculatePddReversalSimulation(
+      stockData.latestDate,
+      stockData.titles,
+      selectedTitles,
+      selectedTitleIds
+    );
   }, [selectedTitleIds, selectedTitles, stockData]);
 
   function toggleTitle(titleId: string) {
@@ -422,55 +430,130 @@ function StockReductionPanel({
       </div>
 
       <div className="space-y-4 p-5">
-        <div className="grid gap-4 lg:grid-cols-[minmax(240px,1fr)_minmax(260px,1.2fr)_180px_auto_auto] lg:items-end">
-          <div className="space-y-2">
+        <div className="grid gap-4 lg:grid-cols-[minmax(260px,1fr)_minmax(260px,1fr)_180px_auto_auto] lg:items-start">
+          <div className="relative space-y-2">
             <label className="text-sm font-medium text-slate-700" htmlFor="cedentSearch">
               Buscar cedente
             </label>
             <input
               className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
               id="cedentSearch"
+              onBlur={() => setTimeout(() => setIsCedentMenuOpen(false), 120)}
               onChange={(event) => {
                 setCedentSearch(event.target.value);
+                setSelectedCedent("");
+                setSelectedDebtorKey("");
+                setDebtorSearch("");
+                setIsCedentMenuOpen(true);
                 setSelectedTitleIds(new Set());
               }}
+              onFocus={() => setIsCedentMenuOpen(true)}
               placeholder="Digite nome ou CNPJ"
               type="search"
               value={cedentSearch}
             />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700" htmlFor="cedentName">
-              Cedente
-            </label>
-            <select
-              className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-              id="cedentName"
-              onChange={(event) => {
-                setSelectedCedent(event.target.value);
-                setCedentSearch(event.target.value);
-                setSelectedTitleIds(new Set());
-              }}
-              value={selectedCedentMatchesFilter ? selectedCedent : ""}
-            >
-              <option disabled value="">
-                Selecione um cedente
-              </option>
-              {filteredCedents.map((cedent) => (
-                <option key={cedent.name} value={cedent.name}>
-                  {cedent.name} ({cedent.titleCount})
-                </option>
-              ))}
-            </select>
-            {filteredCedents.length === 0 ? (
+            {isCedentMenuOpen && filteredCedents.length === 0 ? (
               <p className="text-xs font-medium text-destructive">
                 Nenhum cedente encontrado.
               </p>
             ) : null}
+            <div
+              className={
+                isCedentMenuOpen
+                  ? "absolute z-20 max-h-72 w-full overflow-y-auto rounded border border-slate-200 bg-white shadow-lg"
+                  : "hidden"
+              }
+            >
+              {filteredCedents.slice(0, 40).map((cedent) => {
+                const isSelected = cedent.name === selectedCedent;
+
+                return (
+                  <button
+                    className={
+                      isSelected
+                        ? "block w-full border-b border-slate-100 bg-emerald-50 px-3 py-2 text-left text-sm text-emerald-800 last:border-0"
+                        : "block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-50 last:border-0"
+                    }
+                    key={cedent.name}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      setSelectedCedent(cedent.name);
+                      setCedentSearch(cedent.name);
+                      setSelectedDebtorKey("");
+                      setDebtorSearch("");
+                      setSelectedTitleIds(new Set());
+                      setIsCedentMenuOpen(false);
+                    }}
+                    type="button"
+                  >
+                    <span className="block font-semibold">{cedent.name}</span>
+                    <span className="text-xs text-slate-500">
+                      {cedent.titleCount} titulos · PDD{" "}
+                      {currencyFormatter.format(cedent.pddValue)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {isCedentMenuOpen && filteredCedents.length > 40 ? (
+              <p className="text-xs text-slate-500">
+                Mostrando 40 cedentes. Refine a busca para encontrar outros.
+              </p>
+            ) : null}
           </div>
 
-          <div className="space-y-2">
+          <div className="relative space-y-2">
+            <label className="text-sm font-medium text-slate-700" htmlFor="debtorSearch">
+              Buscar sacado
+            </label>
+            <input
+              className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              id="debtorSearch"
+              onBlur={() => setTimeout(() => setIsDebtorMenuOpen(false), 120)}
+              onChange={(event) => {
+                setDebtorSearch(event.target.value);
+                setSelectedDebtorKey("");
+                setIsDebtorMenuOpen(true);
+                setSelectedTitleIds(new Set());
+              }}
+              onFocus={() => setIsDebtorMenuOpen(true)}
+              placeholder="Digite sacado, CNPJ ou documento"
+              type="search"
+              value={debtorSearch}
+            />
+            {isDebtorMenuOpen ? (
+              <div className="absolute z-20 max-h-72 w-full overflow-y-auto rounded border border-slate-200 bg-white shadow-lg">
+                {debtorOptions.length > 0 ? (
+                  debtorOptions.slice(0, 40).map((debtor) => (
+                    <button
+                      className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-50 last:border-0"
+                      key={debtor.key}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        setSelectedDebtorKey(debtor.key);
+                        setDebtorSearch(debtor.name);
+                        setSelectedTitleIds(new Set());
+                        setIsDebtorMenuOpen(false);
+                      }}
+                      type="button"
+                    >
+                      <span className="block font-semibold">{debtor.name}</span>
+                      <span className="text-xs text-slate-500">
+                        {debtor.titleCount} titulos · PDD{" "}
+                        {currencyFormatter.format(debtor.pddValue)}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <p className="px-3 py-3 text-sm text-slate-500">
+                    Nenhum sacado encontrado.
+                  </p>
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="space-y-2 lg:self-end">
             <label className="text-sm font-medium text-slate-700" htmlFor="reductionDate">
               Data da baixa
             </label>
@@ -490,7 +573,7 @@ function StockReductionPanel({
           </div>
 
           <button
-            className="h-10 rounded border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            className="h-10 rounded border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 lg:self-end"
             onClick={selectAllVisibleTitles}
             type="button"
           >
@@ -498,9 +581,9 @@ function StockReductionPanel({
           </button>
 
           <button
-            className="h-10 rounded border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
             onClick={clearSelectedTitles}
             type="button"
+            className="h-10 rounded border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 lg:self-end"
           >
             Limpar
           </button>
@@ -613,6 +696,10 @@ export function QuotaForecastPlanner({
     () => calculateAverageCreditRightsRevenue(historicalRows),
     [historicalRows]
   );
+  const averageFundCost = useMemo(
+    () => calculateAverageFundCost(historicalRows),
+    [historicalRows]
+  );
   const lastPatrimonio = lastHistorical?.patrimonio ?? 0;
   const lastCreditRights = lastHistorical?.creditRights ?? 0;
   const lastPdd = lastHistorical?.pdd ?? 0;
@@ -639,7 +726,8 @@ export function QuotaForecastPlanner({
       const input = inputs[date] ?? { pddDelta: 0 };
       previousCreditRights += averageCreditRightsRevenue;
       previousPdd -= input.pddDelta;
-      previousPl = previousPl + averageCreditRightsRevenue - input.pddDelta;
+      previousPl =
+        previousPl + averageCreditRightsRevenue - averageFundCost - input.pddDelta;
       const quotaValue = quantity > 0 ? previousPl / quantity : 0;
       const returnBase = quantity > 0 ? quotaValue : previousPl;
       const dailyReturn =
@@ -656,6 +744,7 @@ export function QuotaForecastPlanner({
         date,
         creditRights: previousCreditRights,
         creditRightsRevenue: averageCreditRightsRevenue,
+        fundCost: averageFundCost,
         pdd: previousPdd,
         patrimonio: previousPl,
         quotaValue,
@@ -667,6 +756,7 @@ export function QuotaForecastPlanner({
     });
   }, [
     averageCreditRightsRevenue,
+    averageFundCost,
     futureDates,
     inputs,
     lastCreditRights,
@@ -769,11 +859,12 @@ export function QuotaForecastPlanner({
         </form>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {[
           ["PL base", currencyFormatter.format(lastHistorical?.patrimonio ?? 0)],
           ["Cota base", decimalFormatter.format(baseQuota)],
           ["Receita média DC", formatSignedCurrency(averageCreditRightsRevenue)],
+          ["Custo medio", formatSignedCurrency(-averageFundCost)],
           ["PL projetado", currencyFormatter.format(finalProjection?.patrimonio ?? lastHistorical?.patrimonio ?? 0)],
           ["Cota projetada", decimalFormatter.format(projectedQuota)],
           ["Rent. diária", `${percentFormatter.format(projectedDailyReturn)}%`],
@@ -879,7 +970,7 @@ export function QuotaForecastPlanner({
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-[1320px] border-collapse text-sm">
+            <table className="min-w-[1440px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
                   <th className="px-4 py-3 text-left font-semibold">Data</th>
@@ -898,6 +989,15 @@ export function QuotaForecastPlanner({
                       title="Média aritmética dos últimos 15 valores de Direitos Creditórios da DRE/Variação: DC de hoje menos DC de ontem, menos compras e mais liquidações. Esse valor é replicado em cada data futura da projeção."
                     >
                       Receita média DC
+                      <Info className="h-3.5 w-3.5 text-slate-400" />
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-right font-semibold">
+                    <span
+                      className="inline-flex items-center justify-end gap-1"
+                      title="Media dos ultimos 15 custos positivos calculados pela DRE/Variacao: Total Superiores mais Total Despesas, ignorando despesas positivas. Esse custo e descontado do PL em cada data futura."
+                    >
+                      Custo medio
                       <Info className="h-3.5 w-3.5 text-slate-400" />
                     </span>
                   </th>
@@ -929,6 +1029,9 @@ export function QuotaForecastPlanner({
                     </td>
                     <td className="px-4 py-3 text-right text-emerald-700">
                       {formatSignedCurrency(row.creditRightsRevenue)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-red-700">
+                      {formatSignedCurrency(-row.fundCost)}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-700">
                       {currencyFormatter.format(row.creditRights)}
@@ -968,6 +1071,11 @@ export function QuotaForecastPlanner({
                         (total, row) => total + row.creditRightsRevenue,
                         0
                       )
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {formatSignedCurrency(
+                      -projections.reduce((total, row) => total + row.fundCost, 0)
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">

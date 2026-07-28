@@ -9,7 +9,12 @@ import {
   useReactTable,
   type ColumnDef,
 } from "@tanstack/react-table";
-import { Plus } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
+import { useFormState, useFormStatus } from "react-dom";
+import {
+  deleteFundAction,
+  type DeleteFundState,
+} from "@/app/dashboard/fundos/actions";
 
 type FundRow = {
   id: string;
@@ -42,6 +47,11 @@ const typeLabels: Record<string, string> = {
   OUTRO: "Outro",
 };
 
+const initialDeleteState: DeleteFundState = {
+  ok: false,
+  message: "",
+};
+
 function StatusBadge({ status }: { status: string }) {
   const isActive = status === "ACTIVE";
 
@@ -58,9 +68,58 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function DeleteFundButton() {
+  const { pending } = useFormStatus();
+
+  return (
+    <button
+      className="inline-flex h-9 items-center justify-center gap-2 rounded border border-red-200 px-3 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+      disabled={pending}
+      type="submit"
+    >
+      {pending ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <Trash2 className="h-4 w-4" />
+      )}
+      {pending ? "Excluindo..." : "Excluir"}
+    </button>
+  );
+}
+
+function DeleteFundForm({ fund }: { fund: FundRow }) {
+  const [state, formAction] = useFormState(deleteFundAction, initialDeleteState);
+
+  return (
+    <form
+      action={formAction}
+      className="flex flex-col items-start gap-1"
+      onSubmit={(event) => {
+        if (!window.confirm(`Excluir ${fund.name} das telas operacionais?`)) {
+          event.preventDefault();
+        }
+      }}
+    >
+      <input name="id" type="hidden" value={fund.id} />
+      <DeleteFundButton />
+      {state.message ? (
+        <span
+          className={
+            state.ok
+              ? "text-xs font-medium text-emerald-700"
+              : "text-xs font-medium text-red-700"
+          }
+        >
+          {state.message}
+        </span>
+      ) : null}
+    </form>
+  );
+}
+
 export function FundsTable({ canManage, funds }: FundsTableProps) {
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [statusFilter, setStatusFilter] = useState("ACTIVE");
   const [typeFilter, setTypeFilter] = useState("ALL");
 
   const filteredFunds = useMemo(() => {
@@ -120,8 +179,17 @@ export function FundsTable({ canManage, funds }: FundsTableProps) {
         accessorKey: "startDate",
         header: "Data de Início",
       },
+      ...(canManage
+        ? [
+            {
+              id: "actions",
+              header: "Acoes",
+              cell: ({ row }) => <DeleteFundForm fund={row.original} />,
+            } satisfies ColumnDef<FundRow>,
+          ]
+        : []),
     ],
-    []
+    [canManage]
   );
 
   const table = useReactTable({
@@ -167,6 +235,7 @@ export function FundsTable({ canManage, funds }: FundsTableProps) {
           <option value="ALL">Todos os status</option>
           <option value="ACTIVE">Ativo</option>
           <option value="INACTIVE">Inativo</option>
+          <option value="CLOSED">Encerrado</option>
         </select>
         <select
           className="h-10 rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
