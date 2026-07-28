@@ -859,37 +859,6 @@ export function QuotaForecastPlanner({
         </form>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {[
-          ["PL base", currencyFormatter.format(lastHistorical?.patrimonio ?? 0)],
-          ["Cota base", decimalFormatter.format(baseQuota)],
-          ["Receita média DC", formatSignedCurrency(averageCreditRightsRevenue)],
-          ["Custo medio", formatSignedCurrency(-averageFundCost)],
-          ["PL projetado", currencyFormatter.format(finalProjection?.patrimonio ?? lastHistorical?.patrimonio ?? 0)],
-          ["Cota projetada", decimalFormatter.format(projectedQuota)],
-          ["Rent. diária", `${percentFormatter.format(projectedDailyReturn)}%`],
-          ["Rent. mensal acum.", `${percentFormatter.format(projectedMonthlyReturn)}%`],
-          ["Rent. anual acum.", `${percentFormatter.format(projectedYearlyReturn)}%`],
-        ].map(([label, value]) => (
-          <article
-            className="rounded-lg p-5"
-            key={label}
-            style={{ background: "var(--color-background-secondary, #f8fafc)" }}
-          >
-            <p className="text-sm font-medium text-slate-500">{label}</p>
-            <p className="mt-3 text-xl font-semibold tracking-normal text-slate-950">
-              {value}
-            </p>
-          </article>
-        ))}
-      </section>
-
-      <StockReductionPanel
-        futureDates={futureDates}
-        onApplyReduction={applyStockReduction}
-        stockData={stockData}
-      />
-
       <section className="rounded border border-slate-200 bg-white shadow-executive">
         <div className="border-b border-slate-200 px-5 py-4">
           <h2 className="text-base font-semibold text-slate-950">
@@ -1111,6 +1080,12 @@ export function QuotaForecastPlanner({
           </div>
         )}
       </section>
+
+      <StockReductionPanel
+        futureDates={futureDates}
+        onApplyReduction={applyStockReduction}
+        stockData={stockData}
+      />
     </div>
   );
 }
