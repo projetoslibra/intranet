@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, UploadCloud } from "lucide-react";
+import { AlertTriangle, CheckCircle2, RefreshCw, UploadCloud } from "lucide-react";
 import { hasPermission } from "@/lib/permissions";
 import { formatCurrency, formatPercent } from "@/lib/formatters";
 import { CashMatrix } from "@/features/cash/components/CashMatrix";
@@ -12,6 +12,7 @@ type MesaPageProps = {
     tab?: string;
     cedent?: string;
     debtor?: string;
+    latest?: string;
   };
 };
 
@@ -21,6 +22,14 @@ function formatDateKey(value: string | null) {
   }
   const [year, month, day] = value.split("-");
   return `${day}/${month}/${year}`;
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "medium",
+    timeZone: "America/Sao_Paulo",
+  }).format(new Date(value));
 }
 
 function statusBadge(current: number, limit: number) {
@@ -44,6 +53,7 @@ function buildMesaHref(input: {
   tab: string;
   cedent?: string;
   debtor?: string;
+  latest?: boolean;
 }) {
   const params = new URLSearchParams({ date: input.date, tab: input.tab });
   if (input.cedent) {
@@ -51,6 +61,9 @@ function buildMesaHref(input: {
   }
   if (input.debtor) {
     params.set("debtor", input.debtor);
+  }
+  if (input.latest) {
+    params.set("latest", "1");
   }
   return `/dashboard/operacional/mesa?${params.toString()}`;
 }
@@ -102,14 +115,20 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
     );
   }
 
+  const selectedTab = searchParams?.tab ?? "caixa";
+  const useLatestStockAndPl =
+    selectedTab === "enquadramento" && searchParams?.latest === "1";
   const [data, canImportRisk] = await Promise.all([
-    getOperationDeskData(searchParams?.date, {
-      cedent: searchParams?.cedent,
-      debtor: searchParams?.debtor,
-    }),
+    getOperationDeskData(
+      searchParams?.date,
+      {
+        cedent: searchParams?.cedent,
+        debtor: searchParams?.debtor,
+      },
+      useLatestStockAndPl
+    ),
     hasPermission("operational.risk.import"),
   ]);
-  const selectedTab = searchParams?.tab ?? "caixa";
   const tabs = [
     ["caixa", "Caixa"],
     ["enquadramento", "Enquadramento"],
@@ -127,39 +146,62 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
             </p>
           </div>
 
-          <form className="flex items-end gap-3">
-            <label className="space-y-2 text-sm font-medium text-slate-700">
-              <span>Data</span>
-              <select
-                className="h-10 rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-                defaultValue={data.selectedDate}
-                name="date"
+          <div className="flex flex-wrap items-end gap-3">
+            <form className="flex items-end gap-3">
+              <label className="space-y-2 text-sm font-medium text-slate-700">
+                <span>Data histórica</span>
+                <select
+                  className="h-10 rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  defaultValue={data.selectedDate}
+                  name="date"
+                >
+                  {data.availableDates.length ? (
+                    data.availableDates.map((date) => (
+                      <option key={date} value={date}>
+                        {formatDateKey(date)}
+                      </option>
+                    ))
+                  ) : (
+                    <option value={data.selectedDate}>{formatDateKey(data.selectedDate)}</option>
+                  )}
+                </select>
+              </label>
+              <input name="tab" type="hidden" value={selectedTab} />
+              {searchParams?.cedent ? (
+                <input name="cedent" type="hidden" value={searchParams.cedent} />
+              ) : null}
+              {searchParams?.debtor ? (
+                <input name="debtor" type="hidden" value={searchParams.debtor} />
+              ) : null}
+              <button
+                className="h-10 rounded border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                type="submit"
               >
-                {data.availableDates.length ? (
-                  data.availableDates.map((date) => (
-                    <option key={date} value={date}>
-                      {formatDateKey(date)}
-                    </option>
-                  ))
-                ) : (
-                  <option value={data.selectedDate}>{formatDateKey(data.selectedDate)}</option>
-                )}
-              </select>
-            </label>
-            <input name="tab" type="hidden" value={selectedTab} />
-            {searchParams?.cedent ? (
-              <input name="cedent" type="hidden" value={searchParams.cedent} />
+                Consultar data
+              </button>
+            </form>
+
+            {selectedTab === "enquadramento" ? (
+              <form>
+                <input name="tab" type="hidden" value="enquadramento" />
+                <input name="latest" type="hidden" value="1" />
+                <input name="_refresh" type="hidden" value={data.refreshedAt} />
+                {searchParams?.cedent ? (
+                  <input name="cedent" type="hidden" value={searchParams.cedent} />
+                ) : null}
+                {searchParams?.debtor ? (
+                  <input name="debtor" type="hidden" value={searchParams.debtor} />
+                ) : null}
+                <button
+                  className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
+                  type="submit"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Atualizar dados
+                </button>
+              </form>
             ) : null}
-            {searchParams?.debtor ? (
-              <input name="debtor" type="hidden" value={searchParams.debtor} />
-            ) : null}
-            <button
-              className="h-10 rounded border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              type="submit"
-            >
-              Atualizar
-            </button>
-          </form>
+          </div>
         </div>
 
         <div className="mt-5 flex flex-wrap gap-2">
@@ -175,6 +217,7 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
                 tab: key,
                 cedent: searchParams?.cedent,
                 debtor: searchParams?.debtor,
+                latest: key === "enquadramento" && data.usingLatestStockAndPl,
               })}
               key={key}
             >
@@ -199,9 +242,28 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
       {selectedTab === "enquadramento" ? (
         <div className="space-y-5">
           <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <span
+                className={`rounded px-2.5 py-1 text-xs font-semibold ${
+                  data.usingLatestStockAndPl
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "bg-slate-100 text-slate-600"
+                }`}
+              >
+                {data.usingLatestStockAndPl
+                  ? "Bases mais recentes de cada fundo"
+                  : `Posição histórica até ${formatDateKey(data.selectedDate)}`}
+              </span>
+              <span className="text-xs text-slate-500">
+                Consulta ao banco: {formatDateTime(data.refreshedAt)}
+              </span>
+            </div>
             <form className="flex flex-wrap items-end gap-3">
               <input name="date" type="hidden" value={data.selectedDate} />
               <input name="tab" type="hidden" value="enquadramento" />
+              {data.usingLatestStockAndPl ? (
+                <input name="latest" type="hidden" value="1" />
+              ) : null}
               <label className="min-w-[240px] flex-1 space-y-2 text-sm font-medium text-slate-700">
                 <span>Filtrar cedente</span>
                 <input
@@ -230,7 +292,11 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
               </button>
               <Link
                 className="inline-flex h-10 items-center rounded border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                href={buildMesaHref({ date: data.selectedDate, tab: "enquadramento" })}
+                href={buildMesaHref({
+                  date: data.selectedDate,
+                  tab: "enquadramento",
+                  latest: data.usingLatestStockAndPl,
+                })}
               >
                 Limpar
               </Link>

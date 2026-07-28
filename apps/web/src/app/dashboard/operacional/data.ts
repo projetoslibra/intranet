@@ -58,6 +58,8 @@ export type RiskRow = {
 export type OperationDeskData = {
   selectedDate: string;
   availableDates: string[];
+  refreshedAt: string;
+  usingLatestStockAndPl: boolean;
   cashBalances: CashDailyBalance[];
   imports: OperationalImportSummary[];
   stockSummaries: StockComplianceSummary[];
@@ -231,7 +233,7 @@ function toRows(
 
 async function getPlForFund(
   fund: { name: string; shortName: string },
-  referenceDate: Date
+  referenceDate?: Date
 ): Promise<{ pl: number; plDate: string | null }> {
   const carteiraFundo = resolveCarteiraFundo(fund);
   if (!carteiraFundo) {
@@ -239,7 +241,10 @@ async function getPlForFund(
   }
 
   const latest = await prisma.carteira.findFirst({
-    where: { fundo: carteiraFundo, dataAnalise: { lte: referenceDate } },
+    where: {
+      fundo: carteiraFundo,
+      ...(referenceDate ? { dataAnalise: { lte: referenceDate } } : {}),
+    },
     orderBy: { dataAnalise: "desc" },
     select: { dataAnalise: true },
   });
@@ -260,7 +265,7 @@ async function getPlForFund(
 }
 
 async function getAvailableDates(): Promise<string[]> {
-  const [cashDates, stockDates, riskDates] = await Promise.all([
+  const [cashDates, stockDates, portfolioDates, riskDates] = await Promise.all([
     prisma.companyCashDailyBalance.findMany({
       distinct: ["referenceDate"],
       orderBy: { referenceDate: "desc" },
@@ -270,6 +275,11 @@ async function getAvailableDates(): Promise<string[]> {
       distinct: ["dataReferencia"],
       orderBy: { dataReferencia: "desc" },
       select: { dataReferencia: true },
+    }),
+    prisma.carteira.findMany({
+      distinct: ["dataAnalise"],
+      orderBy: { dataAnalise: "desc" },
+      select: { dataAnalise: true },
     }),
     prisma.importBatch.findMany({
       distinct: ["referenceDate"],
@@ -287,6 +297,7 @@ async function getAvailableDates(): Promise<string[]> {
     new Set([
       ...cashDates.map((row) => dateKey(row.referenceDate)),
       ...stockDates.map((row) => dateKey(row.dataReferencia)),
+      ...portfolioDates.map((row) => dateKey(row.dataAnalise)),
       ...riskDates.flatMap((row) => (row.referenceDate ? [dateKey(row.referenceDate)] : [])),
     ])
   ).sort((a, b) => b.localeCompare(a));
@@ -315,11 +326,14 @@ async function getLatestImports(): Promise<OperationalImportSummary[]> {
 
 async function getStockSummaries(
   referenceDate: Date,
-  filters: StockComplianceFilters = {}
+  filters: StockComplianceFilters = {},
+  useLatestStockAndPl = false
 ): Promise<StockComplianceSummary[]> {
   const latestDatesByFund = await prisma.fidcEstoque.groupBy({
     by: ["nomeFundo"],
-    where: { dataReferencia: { lte: referenceDate } },
+    where: useLatestStockAndPl
+      ? undefined
+      : { dataReferencia: { lte: referenceDate } },
     _max: { dataReferencia: true },
   });
 
@@ -351,7 +365,10 @@ async function getStockSummaries(
         name: snapshot.nomeFundo,
         shortName: fundKey,
       };
-      const { pl, plDate } = await getPlForFund(fund, stockDate);
+      const { pl, plDate } = await getPlForFund(
+        fund,
+        useLatestStockAndPl ? undefined : referenceDate
+      );
       const cedents = new Map<string, { name: string; document: string; value: number }>();
       const debtors = new Map<string, { name: string; document: string; value: number }>();
 
@@ -459,10 +476,14 @@ async function getRisk(referenceDate: Date): Promise<OperationDeskData["risk"]> 
 
 export async function getOperationDeskData(
   date?: string,
-  stockFilters: StockComplianceFilters = {}
+  stockFilters: StockComplianceFilters = {},
+  useLatestStockAndPl = false
 ): Promise<OperationDeskData> {
   const availableDates = await getAvailableDates();
-  const selectedDate = date ?? availableDates[0] ?? new Date().toISOString().slice(0, 10);
+  const selectedDate =
+    (date && availableDates.includes(date) ? date : null) ??
+    availableDates[0] ??
+    new Date().toISOString().slice(0, 10);
   const referenceDate = parseDateKey(selectedDate);
 
   const [cashRows, imports, stockSummaries, risk] = await Promise.all([
@@ -472,13 +493,15 @@ export async function getOperationDeskData(
       orderBy: { fund: { name: "asc" } },
     }),
     getLatestImports(),
-    getStockSummaries(referenceDate, stockFilters),
+    getStockSummaries(referenceDate, stockFilters, useLatestStockAndPl),
     getRisk(referenceDate),
   ]);
 
   return {
     selectedDate,
     availableDates,
+    refreshedAt: new Date().toISOString(),
+    usingLatestStockAndPl: useLatestStockAndPl,
     cashBalances: cashRows.map(serializeCash),
     imports,
     stockSummaries,
