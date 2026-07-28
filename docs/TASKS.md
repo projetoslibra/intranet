@@ -29,6 +29,7 @@
 
 - [ ] **Enforcement de permissões** — hoje o middleware só checa login, não as permissões `*.view`/`*.manage`
 - [ ] **Unificar formatters** — Dashboard e DRE redefinem formatters em vez de usar `lib/formatters.ts`
+- [ ] **Previsões: tooltip de composição da PDD** — ao passar o mouse sobre valores de PDD, mostrar cedentes e valores que formam aquele saldo
 - [ ] **Módulo Relatórios** (`/dashboard/relatorios`) — exportações (placeholder; deixar para o final)
 
 ---
