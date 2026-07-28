@@ -34,6 +34,7 @@
 ---
 
 ## 🟢 Concluídas (recentes)
+- [x] **[2026-07-28]** Enquadramento com botão de atualização das bases mais recentes por fundo e consulta histórica funcional — _Juan_ · branch `fix/atualizacao-enquadramento`.
 - [x] **[2026-07-27]** Níveis de acesso por aba e cartões de usuários recolhidos por padrão — _Juan_ · branch `feat/niveis-acesso-usuarios`.
 - [x] **[2026-07-27]** Enquadramento via `FIDC_ESTOQUES`, filtros por cedente/sacado e remoção dos controles manuais de estoque/DIM — _Juan_ · branch `feat/enquadramento-estoque-api`.
 - [x] **[2026-07-20]** Módulo Usuários (`/dashboard/usuarios`): CRUD, status e atribuição de acessos — _João_ · branch `feat/modulo-usuarios`.
