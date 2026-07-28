@@ -14,6 +14,10 @@ type HistoricalAccumulator = {
   patrimonio: number;
   creditRights: number;
   creditRightsVariation: number;
+  senior: number;
+  mezzanine: number;
+  expenses: number;
+  costVariation: number;
   pdd: number;
   variacaoMensal: number;
   variacaoAnual: number;
@@ -92,12 +96,33 @@ function classifyAtivo(value: string) {
     return "pdd";
   }
 
+  if (ativo === "SRP" || ativo.includes("SENIOR")) {
+    return "senior";
+  }
+
+  if (ativo === "MEZAN" || ativo.includes("MEZANINO")) {
+    return "mezzanine";
+  }
+
   if (
     ativo.includes("A VENCER") ||
     ativo.includes("VENCIDOS") ||
     ativo === "DIR"
   ) {
     return "creditRights";
+  }
+
+  if (
+    ativo.includes("TAXA") ||
+    ativo.includes("DESPESA") ||
+    ativo.includes("DIFERIMENTO") ||
+    ativo.includes("AUDITORIA") ||
+    ativo.includes("CETIP") ||
+    ativo.includes("CUSTO") ||
+    ativo.includes("CONSULTORIA") ||
+    ativo.includes("RATING")
+  ) {
+    return "expense";
   }
 
   return null;
@@ -134,6 +159,42 @@ function isCreditRightsCaixaFlow(
     text.includes("APULBAV") ||
     text.includes("APULBVE")
   );
+}
+
+function classifyCaixaAssetClass(
+  descricao: string,
+  historicoTraduzido: string | null,
+  clienteId: string
+) {
+  const text = normalizeAtivo(
+    `${descricao} ${historicoTraduzido ?? ""} ${clienteId}`
+  );
+
+  if (
+    text.includes("MZ") ||
+    text.includes("MEZ") ||
+    text.includes("MEZAN") ||
+    text.includes("MEZANINO")
+  ) {
+    return "mezzanine";
+  }
+
+  if (text.includes(" SR") || text.includes("SRP") || text.includes("SENIOR")) {
+    return "senior";
+  }
+
+  if (
+    text.includes("A VENCER") ||
+    text.includes("VENCIDOS") ||
+    text.includes("BRISAVE") ||
+    text.includes("BRISVENC") ||
+    text.includes("APULBAV") ||
+    text.includes("APULBVE")
+  ) {
+    return "creditRights";
+  }
+
+  return "otherFunds";
 }
 
 function addToMap(map: Map<string, number>, key: string, value: number) {
@@ -326,6 +387,8 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
   const historicalByDate = new Map<string, HistoricalAccumulator>();
   const creditRightsPurchasesByDate = new Map<string, number>();
   const creditRightsLiquidationsByDate = new Map<string, number>();
+  const applicationsByAssetClass = new Map<string, Map<string, number>>();
+  const redemptionsByAssetClass = new Map<string, Map<string, number>>();
 
   for (const carteira of carteiras) {
     const key = dateKey(carteira.dataAnalise);
@@ -334,6 +397,10 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
       patrimonio: 0,
       creditRights: 0,
       creditRightsVariation: 0,
+      senior: 0,
+      mezzanine: 0,
+      expenses: 0,
+      costVariation: 0,
       pdd: 0,
       variacaoMensal: 0,
       variacaoAnual: 0,
@@ -345,6 +412,12 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
       row.patrimonio = value;
     } else if (category === "creditRights") {
       row.creditRights += value;
+    } else if (category === "senior") {
+      row.senior += value;
+    } else if (category === "mezzanine") {
+      row.mezzanine += value;
+    } else if (category === "expense") {
+      row.expenses += value;
     } else if (category === "pdd") {
       row.pdd += value;
     } else if (category === "variacaoMensal") {
@@ -359,18 +432,16 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
   for (const caixa of caixas) {
     const flowType = caixaFlowType(caixa.descricao);
 
-    if (
-      !flowType ||
-      !isCreditRightsCaixaFlow(
-        caixa.descricao,
-        caixa.historicoTraduzido,
-        caixa.clienteId
-      )
-    ) {
+    if (!flowType) {
       continue;
     }
 
     const key = dateKey(caixa.dataAnalise);
+    const assetClass = classifyCaixaAssetClass(
+      caixa.descricao,
+      caixa.historicoTraduzido,
+      caixa.clienteId
+    );
     const amount =
       flowType === "aplicacao"
         ? Math.abs(Number(caixa.saidas))
@@ -380,13 +451,27 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
       continue;
     }
 
-    addToMap(
-      flowType === "aplicacao"
-        ? creditRightsPurchasesByDate
-        : creditRightsLiquidationsByDate,
-      key,
-      amount
-    );
+    if (
+      isCreditRightsCaixaFlow(
+        caixa.descricao,
+        caixa.historicoTraduzido,
+        caixa.clienteId
+      )
+    ) {
+      addToMap(
+        flowType === "aplicacao"
+          ? creditRightsPurchasesByDate
+          : creditRightsLiquidationsByDate,
+        key,
+        amount
+      );
+    }
+
+    const target =
+      flowType === "aplicacao" ? applicationsByAssetClass : redemptionsByAssetClass;
+    const map = target.get(assetClass) ?? new Map<string, number>();
+    addToMap(map, key, amount);
+    target.set(assetClass, map);
   }
 
   const historicalRows = Array.from(historicalByDate.values())
@@ -396,11 +481,29 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
   for (let index = 1; index < historicalRows.length; index += 1) {
     const row = historicalRows[index];
     const previousRow = historicalRows[index - 1];
+    const applications = (assetClass: string) =>
+      applicationsByAssetClass.get(assetClass)?.get(row.date) ?? 0;
+    const redemptions = (assetClass: string) =>
+      redemptionsByAssetClass.get(assetClass)?.get(row.date) ?? 0;
+    const seniorVariation =
+      row.senior -
+      previousRow.senior -
+      applications("senior") +
+      redemptions("senior");
+    const mezzanineVariation =
+      row.mezzanine -
+      previousRow.mezzanine -
+      applications("mezzanine") +
+      redemptions("mezzanine");
+    const expensesVariation = row.expenses - previousRow.expenses;
+
     row.creditRightsVariation =
       row.creditRights -
       previousRow.creditRights -
       (creditRightsPurchasesByDate.get(row.date) ?? 0) +
       (creditRightsLiquidationsByDate.get(row.date) ?? 0);
+    row.costVariation =
+      -(seniorVariation + mezzanineVariation + Math.min(expensesVariation, 0));
   }
 
   return (
