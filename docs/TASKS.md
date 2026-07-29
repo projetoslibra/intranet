@@ -29,12 +29,12 @@
 
 - [ ] **Enforcement de permissões** — hoje o middleware só checa login, não as permissões `*.view`/`*.manage`
 - [ ] **Unificar formatters** — Dashboard e DRE redefinem formatters em vez de usar `lib/formatters.ts`
-- [ ] **Previsões: tooltip de composição da PDD** — ao passar o mouse sobre valores de PDD, mostrar cedentes e valores que formam aquele saldo
 - [ ] **Módulo Relatórios** (`/dashboard/relatorios`) — exportações (placeholder; deixar para o final)
 
 ---
 
 ## 🟢 Concluídas (recentes)
+- [x] **[2026-07-29]** Previsões: tooltip de composição da PDD em saldos históricos, projeções, seleção de cedente/sacado, títulos do estoque e memória de baixas — _João_ · branch `feat/previsoes-tooltip-pdd`.
 - [x] **[2026-07-28]** Enquadramento com botão de atualização das bases mais recentes por fundo e consulta histórica funcional — _Juan_ · branch `fix/atualizacao-enquadramento`.
 - [x] **[2026-07-27]** Níveis de acesso por aba e cartões de usuários recolhidos por padrão — _Juan_ · branch `feat/niveis-acesso-usuarios`.
 - [x] **[2026-07-27]** Enquadramento via `FIDC_ESTOQUES`, filtros por cedente/sacado e remoção dos controles manuais de estoque/DIM — _Juan_ · branch `feat/enquadramento-estoque-api`.

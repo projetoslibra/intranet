@@ -51,6 +51,12 @@ type ForecastStockData = {
   titles: ForecastStockTitle[];
 } | null;
 
+type PddCompositionItem = {
+  label: string;
+  value: number;
+  detail?: string;
+};
+
 type QuotaForecastPlannerProps = {
   funds: FundOption[];
   selectedFundId: string;
@@ -164,6 +170,183 @@ function normalizeSearchText(value: string) {
     .toUpperCase();
 }
 
+function sortPddItems(items: PddCompositionItem[]) {
+  return [...items].sort(
+    (left, right) => Math.abs(right.value) - Math.abs(left.value)
+  );
+}
+
+function sumPddItems(items: PddCompositionItem[]) {
+  return items.reduce((total, item) => total + item.value, 0);
+}
+
+function mergePddItems(items: PddCompositionItem[]) {
+  const groups = new Map<string, PddCompositionItem>();
+
+  items.forEach((item) => {
+    const key = `${item.label}|${item.detail ?? ""}`;
+    const current = groups.get(key) ?? { ...item, value: 0 };
+
+    current.value += item.value;
+    groups.set(key, current);
+  });
+
+  return sortPddItems(Array.from(groups.values()));
+}
+
+function groupTitlesByCedent(
+  titles: ForecastStockTitle[],
+  sign: 1 | -1 = 1
+) {
+  const groups = new Map<string, PddCompositionItem>();
+
+  titles.forEach((title) => {
+    const current = groups.get(title.cedentName) ?? {
+      detail: "Cedente",
+      label: title.cedentName,
+      value: 0,
+    };
+
+    current.value += sign * title.pddValue;
+    groups.set(title.cedentName, current);
+  });
+
+  return sortPddItems(Array.from(groups.values()));
+}
+
+function groupTitlesByDebtor(titles: ForecastStockTitle[]) {
+  const groups = new Map<string, PddCompositionItem>();
+
+  titles.forEach((title) => {
+    const key = pddDebtorKey(title);
+    const current = groups.get(key) ?? {
+      detail: "Sacado",
+      label: title.debtorName,
+      value: 0,
+    };
+
+    current.value += title.pddValue;
+    groups.set(key, current);
+  });
+
+  return sortPddItems(Array.from(groups.values()));
+}
+
+function buildProjectedPddComposition(
+  stockData: ForecastStockData,
+  basePdd: number,
+  projectedPdd: number
+) {
+  if (!stockData) {
+    return [
+      {
+        detail: "Saldo",
+        label: "PDD da DRE",
+        value: projectedPdd,
+      },
+    ];
+  }
+
+  const sign: 1 | -1 = projectedPdd < 0 || basePdd < 0 ? -1 : 1;
+  const stockItems = groupTitlesByCedent(stockData.titles, sign);
+  const items = [...stockItems];
+  const stockTotal = sumPddItems(stockItems);
+  const baseDifference = basePdd - stockTotal;
+  const projectedAdjustment = projectedPdd - basePdd;
+
+  if (Math.abs(baseDifference) >= 0.005) {
+    items.push({
+      detail: "Conciliação",
+      label: "Diferença DRE/estoque",
+      value: baseDifference,
+    });
+  }
+
+  if (Math.abs(projectedAdjustment) >= 0.005) {
+    items.push({
+      detail: "Simulação",
+      label: "Ajustes/reversões projetados",
+      value: projectedAdjustment,
+    });
+  }
+
+  return sortPddItems(items);
+}
+
+function PddCompositionTooltip({
+  align = "right",
+  caption,
+  className = "",
+  items,
+  value,
+}: {
+  align?: "left" | "right";
+  caption?: string;
+  className?: string;
+  items: PddCompositionItem[];
+  value: number;
+}) {
+  const visibleItems = sortPddItems(items).slice(0, 8);
+  const hiddenCount = Math.max(0, items.length - visibleItems.length);
+  const tooltipAlignment = align === "left" ? "left-0" : "right-0";
+
+  return (
+    <span
+      className={`group relative inline-flex cursor-help items-center justify-end ${className}`}
+      tabIndex={0}
+    >
+      <span className="decoration-slate-400 decoration-dotted underline-offset-4 group-hover:underline group-focus:underline">
+        {currencyFormatter.format(value)}
+      </span>
+      <span
+        className={`pointer-events-none absolute top-full z-40 mt-2 hidden w-80 rounded border border-slate-200 bg-white p-3 text-left text-xs normal-case text-slate-600 shadow-lg group-hover:block group-focus:block ${tooltipAlignment}`}
+      >
+        <span className="block font-semibold text-slate-950">
+          Composição da PDD
+        </span>
+        {caption ? (
+          <span className="mt-1 block text-slate-500">{caption}</span>
+        ) : null}
+        <span className="mt-3 block space-y-2">
+          {visibleItems.length > 0 ? (
+            visibleItems.map((item) => (
+              <span
+                className="flex items-start justify-between gap-3"
+                key={`${item.label}-${item.detail ?? ""}`}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate font-medium text-slate-700">
+                    {item.label}
+                  </span>
+                  {item.detail ? (
+                    <span className="block text-[11px] text-slate-400">
+                      {item.detail}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="shrink-0 font-semibold text-slate-950">
+                  {currencyFormatter.format(item.value)}
+                </span>
+              </span>
+            ))
+          ) : (
+            <span className="block text-slate-500">Sem composição disponível.</span>
+          )}
+        </span>
+        {hiddenCount > 0 ? (
+          <span className="mt-2 block text-[11px] text-slate-400">
+            +{hiddenCount} componente(s) menor(es)
+          </span>
+        ) : null}
+        <span className="mt-3 flex justify-between border-t border-slate-100 pt-2 font-semibold text-slate-950">
+          <span>Total</span>
+          <span>{currencyFormatter.format(value)}</span>
+        </span>
+      </span>
+    </span>
+  );
+}
+
 function monthlyCalculationRows(rows: HistoricalRow[]) {
   const lastRow = rows.at(-1);
 
@@ -237,6 +420,7 @@ type ComputedAppliedReductionBatch = AppliedReductionBatch & {
   cedentNames: string[];
   debtorNames: string[];
   nominalValue: number;
+  pddItems: PddCompositionItem[];
   reversalValue: number;
   titleCount: number;
 };
@@ -263,6 +447,7 @@ function calculateAppliedReductionState(
       (title) => batchTitleIds.has(title.id) && !appliedTitleIds.has(title.id)
     );
     const affectedDebtorKeys = new Set(titles.map(pddDebtorKey));
+    const reversalByCedent = new Map<string, PddCompositionItem>();
     let currentPdd = 0;
     let newPdd = 0;
 
@@ -286,6 +471,29 @@ function calculateAppliedReductionState(
         debtorTitles,
         nextAppliedTitleIds
       );
+      const debtorReversal = Math.max(0, previousPdd - nextPdd);
+      const selectedDebtorTitles = titles.filter(
+        (title) => pddDebtorKey(title) === key
+      );
+      const selectedNominal = selectedDebtorTitles.reduce(
+        (total, title) => total + title.nominalValue,
+        0
+      );
+
+      selectedDebtorTitles.forEach((title) => {
+        const current = reversalByCedent.get(title.cedentName) ?? {
+          detail: "Cedente",
+          label: title.cedentName,
+          value: 0,
+        };
+        const weight =
+          selectedNominal > 0
+            ? title.nominalValue / selectedNominal
+            : 1 / selectedDebtorTitles.length;
+
+        current.value += debtorReversal * weight;
+        reversalByCedent.set(title.cedentName, current);
+      });
 
       currentPdd += previousPdd;
       newPdd += nextPdd;
@@ -303,6 +511,7 @@ function calculateAppliedReductionState(
       cedentNames,
       debtorNames,
       nominalValue: titles.reduce((total, title) => total + title.nominalValue, 0),
+      pddItems: sortPddItems(Array.from(reversalByCedent.values())),
       reversalValue: Math.max(0, currentPdd - newPdd),
       titleCount: titles.length,
     });
@@ -544,12 +753,14 @@ function StockReductionPanel({
       return {
         currentPdd: 0,
         newPdd: 0,
+        pddItems: [],
         reversalValue: 0,
         affectedDebtors: 0,
       };
     }
 
     const affectedDebtorKeys = new Set(selectedTitles.map(pddDebtorKey));
+    const reversalByCedent = new Map<string, PddCompositionItem>();
     let currentPdd = 0;
     let newPdd = 0;
 
@@ -573,6 +784,29 @@ function StockReductionPanel({
         debtorTitles,
         nextAppliedTitleIds
       );
+      const debtorReversal = Math.max(0, previousPdd - nextPdd);
+      const selectedDebtorTitles = selectedTitles.filter(
+        (title) => pddDebtorKey(title) === key
+      );
+      const selectedNominal = selectedDebtorTitles.reduce(
+        (total, title) => total + title.nominalValue,
+        0
+      );
+
+      selectedDebtorTitles.forEach((title) => {
+        const current = reversalByCedent.get(title.cedentName) ?? {
+          detail: "Cedente",
+          label: title.cedentName,
+          value: 0,
+        };
+        const weight =
+          selectedNominal > 0
+            ? title.nominalValue / selectedNominal
+            : 1 / selectedDebtorTitles.length;
+
+        current.value += debtorReversal * weight;
+        reversalByCedent.set(title.cedentName, current);
+      });
 
       currentPdd += previousPdd;
       newPdd += nextPdd;
@@ -581,6 +815,7 @@ function StockReductionPanel({
     return {
       currentPdd,
       newPdd,
+      pddItems: sortPddItems(Array.from(reversalByCedent.values())),
       reversalValue: Math.max(0, currentPdd - newPdd),
       affectedDebtors: affectedDebtorKeys.size,
     };
@@ -709,7 +944,11 @@ function StockReductionPanel({
             <div className="rounded border border-slate-200 px-3 py-2">
               <p className="text-xs uppercase text-slate-500">Reversão PDD</p>
               <p className="font-semibold text-emerald-700">
-                {currencyFormatter.format(reductionSimulation.reversalValue)}
+                <PddCompositionTooltip
+                  caption="Cedentes que formam a reversao estimada da selecao atual."
+                  items={reductionSimulation.pddItems}
+                  value={reductionSimulation.reversalValue}
+                />
               </p>
             </div>
           </div>
@@ -776,7 +1015,16 @@ function StockReductionPanel({
                     <span className="block font-semibold">{cedent.name}</span>
                     <span className="text-xs text-slate-500">
                       {cedent.titleCount} titulos · PDD{" "}
-                      {currencyFormatter.format(cedent.pddValue)}
+                      <PddCompositionTooltip
+                        align="left"
+                        caption="Sacados que formam a PDD deste cedente."
+                        items={groupTitlesByDebtor(
+                          stockData.titles.filter(
+                            (title) => title.cedentName === cedent.name
+                          )
+                        )}
+                        value={cedent.pddValue}
+                      />
                     </span>
                   </button>
                 );
@@ -827,7 +1075,19 @@ function StockReductionPanel({
                       <span className="block font-semibold">{debtor.name}</span>
                       <span className="text-xs text-slate-500">
                         {debtor.titleCount} titulos · PDD{" "}
-                        {currencyFormatter.format(debtor.pddValue)}
+                        <PddCompositionTooltip
+                          align="left"
+                          caption="Cedentes que formam a PDD deste sacado no filtro atual."
+                          items={groupTitlesByCedent(
+                            stockData.titles.filter(
+                              (title) =>
+                                pddDebtorKey(title) === debtor.key &&
+                                (!selectedCedent ||
+                                  title.cedentName === selectedCedent)
+                            )
+                          )}
+                          value={debtor.pddValue}
+                        />
                       </span>
                     </button>
                   ))
@@ -942,10 +1202,30 @@ function StockReductionPanel({
                     <td className="px-4 py-3 text-right text-slate-700">
                       {hasNoPddImpact ? (
                         <span className="line-through decoration-2">
-                          {currencyFormatter.format(title.pddValue)}
+                          <PddCompositionTooltip
+                            caption="PDD individual do titulo selecionado."
+                            items={[
+                              {
+                                detail: title.debtorName,
+                                label: title.cedentName,
+                                value: title.pddValue,
+                              },
+                            ]}
+                            value={title.pddValue}
+                          />
                         </span>
                       ) : (
-                        currencyFormatter.format(title.pddValue)
+                        <PddCompositionTooltip
+                          caption="PDD individual do titulo selecionado."
+                          items={[
+                            {
+                              detail: title.debtorName,
+                              label: title.cedentName,
+                              value: title.pddValue,
+                            },
+                          ]}
+                          value={title.pddValue}
+                        />
                       )}
                     </td>
                     <td className="px-4 py-3 text-slate-700">
@@ -1010,12 +1290,18 @@ function StockReductionPanel({
             </div>
             <p className="text-sm font-semibold text-emerald-700">
               Total PDD{" "}
-              {currencyFormatter.format(
-                computedAppliedReductionBatches.reduce(
+              <PddCompositionTooltip
+                caption="Cedentes que formam todas as reversoes aplicadas nesta simulacao."
+                items={mergePddItems(
+                  computedAppliedReductionBatches.flatMap(
+                    (batch) => batch.pddItems
+                  )
+                )}
+                value={computedAppliedReductionBatches.reduce(
                   (total, batch) => total + batch.reversalValue,
                   0
-                )
-              )}
+                )}
+              />
             </p>
           </div>
 
@@ -1052,7 +1338,11 @@ function StockReductionPanel({
                         {currencyFormatter.format(batch.nominalValue)}
                       </td>
                       <td className="px-4 py-3 text-right font-semibold text-emerald-700">
-                        {currencyFormatter.format(batch.reversalValue)}
+                        <PddCompositionTooltip
+                          caption="Cedentes que compõem esta reversao aplicada."
+                          items={batch.pddItems}
+                          value={batch.reversalValue}
+                        />
                       </td>
                       <td className="px-4 py-3 text-right">
                         <button
@@ -1307,7 +1597,15 @@ export function QuotaForecastPlanner({
                       {formatSignedCurrency(row.creditRightsVariation)}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-700">
-                      {currencyFormatter.format(row.pdd)}
+                      <PddCompositionTooltip
+                        caption="Composicao pelo ultimo estoque disponivel; eventuais diferencas aparecem em conciliacao."
+                        items={buildProjectedPddComposition(
+                          stockData,
+                          row.pdd,
+                          row.pdd
+                        )}
+                        value={row.pdd}
+                      />
                     </td>
                     <td className="px-4 py-3 text-right text-slate-700">
                       {percentFormatter.format(row.variacaoMensal)}%
@@ -1408,7 +1706,15 @@ export function QuotaForecastPlanner({
                       {currencyFormatter.format(row.creditRights)}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-700">
-                      {currencyFormatter.format(row.pdd)}
+                      <PddCompositionTooltip
+                        caption="PDD projetada por cedente, somando a base do estoque e os ajustes simulados ate esta data."
+                        items={buildProjectedPddComposition(
+                          stockData,
+                          lastPdd,
+                          row.pdd
+                        )}
+                        value={row.pdd}
+                      />
                     </td>
                     <td className="px-4 py-3 text-right font-medium text-slate-950">
                       {currencyFormatter.format(row.patrimonio)}
@@ -1457,7 +1763,15 @@ export function QuotaForecastPlanner({
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {currencyFormatter.format(finalProjection?.pdd ?? lastHistorical?.pdd ?? 0)}
+                    <PddCompositionTooltip
+                      caption="Composicao final da PDD projetada por cedente."
+                      items={buildProjectedPddComposition(
+                        stockData,
+                        lastPdd,
+                        finalProjection?.pdd ?? lastHistorical?.pdd ?? 0
+                      )}
+                      value={finalProjection?.pdd ?? lastHistorical?.pdd ?? 0}
+                    />
                   </td>
                   <td className="px-4 py-3 text-right">
                     {currencyFormatter.format(
