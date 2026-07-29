@@ -164,31 +164,55 @@ function normalizeSearchText(value: string) {
     .toUpperCase();
 }
 
-function calculateAverageCreditRightsRevenue(rows: HistoricalRow[]) {
-  const lastDeltas = rows
-    .slice(1)
-    .map((row) => row.creditRightsVariation)
-    .slice(-15);
+function monthlyCalculationRows(rows: HistoricalRow[]) {
+  const lastRow = rows.at(-1);
 
-  if (lastDeltas.length === 0) {
+  if (!lastRow) {
+    return [];
+  }
+
+  const lastDate = parseDateKey(lastRow.date);
+  const monthRows = rows.filter((row) => {
+    const date = parseDateKey(row.date);
+
+    return (
+      date.getUTCFullYear() === lastDate.getUTCFullYear() &&
+      date.getUTCMonth() === lastDate.getUTCMonth()
+    );
+  });
+
+  return monthRows.slice(1, -1);
+}
+
+function calculateAverageCreditRightsRevenue(rows: HistoricalRow[]) {
+  const calculationRows = monthlyCalculationRows(rows);
+
+  if (calculationRows.length === 0) {
     return 0;
   }
 
-  return lastDeltas.reduce((total, value) => total + value, 0) / lastDeltas.length;
+  const revenueTotal = calculationRows.reduce((total, row) => {
+    return row.creditRightsVariation > 0
+      ? total + row.creditRightsVariation
+      : total;
+  }, 0);
+
+  return revenueTotal / calculationRows.length;
 }
 
 function calculateAverageFundCost(rows: HistoricalRow[]) {
-  const lastCosts = rows
-    .slice(1)
-    .map((row) => row.costVariation)
-    .filter((value) => value > 0)
-    .slice(-15);
+  const calculationRows = monthlyCalculationRows(rows);
 
-  if (lastCosts.length === 0) {
+  if (calculationRows.length === 0) {
     return 0;
   }
 
-  return lastCosts.reduce((total, value) => total + value, 0) / lastCosts.length;
+  const costTotal = calculationRows.reduce(
+    (total, row) => total + row.costVariation,
+    0
+  );
+
+  return costTotal / calculationRows.length;
 }
 
 type StockReductionPanelProps = {
