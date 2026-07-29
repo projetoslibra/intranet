@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Calculator, Info } from "lucide-react";
+import { Calculator, Info, Trash2 } from "lucide-react";
 import {
-  calculatePddReversalSimulation,
+  calculateDebtorPddAfterReduction,
   pddDebtorKey,
   type LogicaPddTitle,
 } from "@/lib/logica-pdd";
@@ -221,6 +221,122 @@ type StockReductionPanelProps = {
   onApplyReduction: (date: string, reversalValue: number) => void;
 };
 
+type AppliedTitleReduction = {
+  debtorKey: string;
+  cedentName: string;
+  batchId: string;
+};
+
+type AppliedReductionBatch = {
+  id: string;
+  reductionDate: string;
+  titleIds: string[];
+};
+
+type ComputedAppliedReductionBatch = AppliedReductionBatch & {
+  cedentNames: string[];
+  debtorNames: string[];
+  nominalValue: number;
+  reversalValue: number;
+  titleCount: number;
+};
+
+function calculateAppliedReductionState(
+  stockData: ForecastStockData,
+  batches: AppliedReductionBatch[]
+) {
+  const appliedTitleIds = new Set<string>();
+  const titleReductions = new Map<string, AppliedTitleReduction>();
+  const computedBatches: ComputedAppliedReductionBatch[] = [];
+
+  if (!stockData) {
+    return {
+      appliedTitleIds,
+      computedBatches,
+      titleReductions,
+    };
+  }
+
+  for (const batch of batches) {
+    const batchTitleIds = new Set(batch.titleIds);
+    const titles = stockData.titles.filter(
+      (title) => batchTitleIds.has(title.id) && !appliedTitleIds.has(title.id)
+    );
+    const affectedDebtorKeys = new Set(titles.map(pddDebtorKey));
+    let currentPdd = 0;
+    let newPdd = 0;
+
+    affectedDebtorKeys.forEach((key) => {
+      const debtorTitles = stockData.titles.filter(
+        (title) => pddDebtorKey(title) === key
+      );
+      const previousPdd = calculateDebtorPddAfterReduction(
+        stockData.latestDate,
+        debtorTitles,
+        appliedTitleIds
+      );
+      const nextAppliedTitleIds = new Set(appliedTitleIds);
+
+      titles
+        .filter((title) => pddDebtorKey(title) === key)
+        .forEach((title) => nextAppliedTitleIds.add(title.id));
+
+      const nextPdd = calculateDebtorPddAfterReduction(
+        stockData.latestDate,
+        debtorTitles,
+        nextAppliedTitleIds
+      );
+
+      currentPdd += previousPdd;
+      newPdd += nextPdd;
+    });
+
+    const cedentNames = Array.from(
+      new Set(titles.map((title) => title.cedentName))
+    ).sort((left, right) => left.localeCompare(right, "pt-BR"));
+    const debtorNames = Array.from(
+      new Set(titles.map((title) => title.debtorName))
+    ).sort((left, right) => left.localeCompare(right, "pt-BR"));
+
+    computedBatches.push({
+      ...batch,
+      cedentNames,
+      debtorNames,
+      nominalValue: titles.reduce((total, title) => total + title.nominalValue, 0),
+      reversalValue: Math.max(0, currentPdd - newPdd),
+      titleCount: titles.length,
+    });
+
+    titles.forEach((title) => {
+      appliedTitleIds.add(title.id);
+      titleReductions.set(title.id, {
+        batchId: batch.id,
+        cedentName: title.cedentName,
+        debtorKey: pddDebtorKey(title),
+      });
+    });
+  }
+
+  return {
+    appliedTitleIds,
+    computedBatches,
+    titleReductions,
+  };
+}
+
+function sumReversalByDate(batches: ComputedAppliedReductionBatch[]) {
+  const result = new Map<string, number>();
+
+  batches.forEach((batch) => {
+    result.set(
+      batch.reductionDate,
+      (result.get(batch.reductionDate) ?? 0) + batch.reversalValue
+    );
+  });
+
+  return result;
+}
+
 function StockReductionPanel({
   futureDates,
   onApplyReduction,
@@ -237,6 +353,9 @@ function StockReductionPanel({
   const [selectedTitleIds, setSelectedTitleIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [appliedReductionBatches, setAppliedReductionBatches] = useState<
+    AppliedReductionBatch[]
+  >([]);
 
   useEffect(() => {
     if (!stockData) {
@@ -350,14 +469,76 @@ function StockReductionPanel({
       return text.includes(normalizedSearch);
     });
   }, [debtorSearch, selectedCedent, stockData]);
+  const appliedReductionState = useMemo(
+    () => calculateAppliedReductionState(stockData, appliedReductionBatches),
+    [appliedReductionBatches, stockData]
+  );
+  const appliedTitleReductions = appliedReductionState.titleReductions;
+  const appliedTitleIds = appliedReductionState.appliedTitleIds;
+  const computedAppliedReductionBatches =
+    appliedReductionState.computedBatches;
+  const appliedReversalByDate = useMemo(
+    () => sumReversalByDate(computedAppliedReductionBatches),
+    [computedAppliedReductionBatches]
+  );
   const selectedTitles = useMemo(
-    () => cedentTitles.filter((title) => selectedTitleIds.has(title.id)),
-    [cedentTitles, selectedTitleIds]
+    () =>
+      cedentTitles.filter(
+        (title) =>
+          selectedTitleIds.has(title.id) && !appliedTitleReductions.has(title.id)
+      ),
+    [appliedTitleReductions, cedentTitles, selectedTitleIds]
   );
   const selectedNominalValue = selectedTitles.reduce(
     (total, title) => total + title.nominalValue,
     0
   );
+  const appliedDebtorSourceByKey = useMemo(() => {
+    const result = new Map<string, string>();
+
+    appliedTitleReductions.forEach((reduction) => {
+      if (!result.has(reduction.debtorKey)) {
+        result.set(reduction.debtorKey, reduction.cedentName);
+      }
+    });
+
+    return result;
+  }, [appliedTitleReductions]);
+  const rowPddImpactByTitleId = useMemo(() => {
+    const result = new Map<string, number>();
+
+    if (!stockData) {
+      return result;
+    }
+
+    for (const title of cedentTitles) {
+      if (appliedTitleReductions.has(title.id)) {
+        result.set(title.id, 0);
+        continue;
+      }
+
+      const key = pddDebtorKey(title);
+      const debtorTitles = stockData.titles.filter(
+        (item) => pddDebtorKey(item) === key
+      );
+      const previousPdd = calculateDebtorPddAfterReduction(
+        stockData.latestDate,
+        debtorTitles,
+        appliedTitleIds
+      );
+      const nextAppliedTitleIds = new Set(appliedTitleIds);
+      nextAppliedTitleIds.add(title.id);
+      const nextPdd = calculateDebtorPddAfterReduction(
+        stockData.latestDate,
+        debtorTitles,
+        nextAppliedTitleIds
+      );
+
+      result.set(title.id, Math.max(0, previousPdd - nextPdd));
+    }
+
+    return result;
+  }, [appliedTitleIds, appliedTitleReductions, cedentTitles, stockData]);
   const reductionSimulation = useMemo(() => {
     if (!stockData) {
       return {
@@ -368,15 +549,50 @@ function StockReductionPanel({
       };
     }
 
-    return calculatePddReversalSimulation(
-      stockData.latestDate,
-      stockData.titles,
-      selectedTitles,
-      selectedTitleIds
-    );
-  }, [selectedTitleIds, selectedTitles, stockData]);
+    const affectedDebtorKeys = new Set(selectedTitles.map(pddDebtorKey));
+    let currentPdd = 0;
+    let newPdd = 0;
+
+    affectedDebtorKeys.forEach((key) => {
+      const debtorTitles = stockData.titles.filter(
+        (title) => pddDebtorKey(title) === key
+      );
+      const previousPdd = calculateDebtorPddAfterReduction(
+        stockData.latestDate,
+        debtorTitles,
+        appliedTitleIds
+      );
+      const nextAppliedTitleIds = new Set(appliedTitleIds);
+
+      selectedTitles
+        .filter((title) => pddDebtorKey(title) === key)
+        .forEach((title) => nextAppliedTitleIds.add(title.id));
+
+      const nextPdd = calculateDebtorPddAfterReduction(
+        stockData.latestDate,
+        debtorTitles,
+        nextAppliedTitleIds
+      );
+
+      currentPdd += previousPdd;
+      newPdd += nextPdd;
+    });
+
+    return {
+      currentPdd,
+      newPdd,
+      reversalValue: Math.max(0, currentPdd - newPdd),
+      affectedDebtors: affectedDebtorKeys.size,
+    };
+  }, [appliedTitleIds, selectedTitles, stockData]);
 
   function toggleTitle(titleId: string) {
+    const title = cedentTitles.find((item) => item.id === titleId);
+
+    if (!title || appliedTitleReductions.has(title.id)) {
+      return;
+    }
+
     setSelectedTitleIds((current) => {
       const next = new Set(current);
 
@@ -391,7 +607,13 @@ function StockReductionPanel({
   }
 
   function selectAllVisibleTitles() {
-    setSelectedTitleIds(new Set(cedentTitles.map((title) => title.id)));
+    setSelectedTitleIds(
+      new Set(
+        cedentTitles
+          .filter((title) => !appliedTitleReductions.has(title.id))
+          .map((title) => title.id)
+      )
+    );
   }
 
   function clearSelectedTitles() {
@@ -399,11 +621,52 @@ function StockReductionPanel({
   }
 
   function handleApply() {
-    if (!reductionDate || reductionSimulation.reversalValue <= 0) {
+    if (!reductionDate || selectedTitles.length === 0) {
       return;
     }
 
-    onApplyReduction(reductionDate, reductionSimulation.reversalValue);
+    if (reductionSimulation.reversalValue > 0) {
+      onApplyReduction(reductionDate, reductionSimulation.reversalValue);
+    }
+    setAppliedReductionBatches((current) => [
+      ...current,
+      {
+        id: `${Date.now()}-${selectedTitles.map((title) => title.id).join("-")}`,
+        reductionDate,
+        titleIds: selectedTitles.map((title) => title.id),
+      },
+    ]);
+    setSelectedTitleIds(new Set());
+  }
+
+  function removeAppliedReduction(batchId: string) {
+    if (!stockData) {
+      return;
+    }
+
+    const previousTotals = appliedReversalByDate;
+    const nextBatches = appliedReductionBatches.filter(
+      (batch) => batch.id !== batchId
+    );
+    const nextComputedBatches = calculateAppliedReductionState(
+      stockData,
+      nextBatches
+    ).computedBatches;
+    const nextTotals = sumReversalByDate(nextComputedBatches);
+    const affectedDates = new Set([
+      ...Array.from(previousTotals.keys()),
+      ...Array.from(nextTotals.keys()),
+    ]);
+
+    affectedDates.forEach((date) => {
+      const delta = (nextTotals.get(date) ?? 0) - (previousTotals.get(date) ?? 0);
+
+      if (Math.abs(delta) >= 0.005) {
+        onApplyReduction(date, delta);
+      }
+    });
+
+    setAppliedReductionBatches(nextBatches);
     setSelectedTitleIds(new Set());
   }
 
@@ -629,12 +892,32 @@ function StockReductionPanel({
             </thead>
             <tbody>
               {cedentTitles.length > 0 ? (
-                cedentTitles.map((title) => (
-                  <tr className="border-b border-slate-100 last:border-0" key={title.id}>
+                cedentTitles.map((title) => {
+                  const appliedTitleReduction = appliedTitleReductions.get(title.id);
+                  const debtorKey = pddDebtorKey(title);
+                  const appliedDebtorSource = appliedDebtorSourceByKey.get(debtorKey);
+                  const rowPddImpact = rowPddImpactByTitleId.get(title.id) ?? 0;
+                  const hasNoPddImpact =
+                    !appliedTitleReduction &&
+                    Boolean(appliedDebtorSource) &&
+                    rowPddImpact <= 0;
+
+                  return (
+                  <tr
+                    className={
+                      appliedTitleReduction || hasNoPddImpact
+                        ? "border-b border-slate-100 bg-slate-50 last:border-0"
+                        : "border-b border-slate-100 last:border-0"
+                    }
+                    key={title.id}
+                  >
                     <td className="px-4 py-3">
                       <input
-                        checked={selectedTitleIds.has(title.id)}
-                        className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                        checked={
+                          selectedTitleIds.has(title.id) && !appliedTitleReduction
+                        }
+                        className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={Boolean(appliedTitleReduction)}
                         onChange={() => toggleTitle(title.id)}
                         type="checkbox"
                       />
@@ -646,22 +929,40 @@ function StockReductionPanel({
                       {title.documentNumber}
                     </td>
                     <td className="px-4 py-3 text-slate-700">
-                      {title.debtorName}
+                      <span className="block">{title.debtorName}</span>
+                      {appliedTitleReduction ? (
+                        <span className="mt-1 block text-xs font-semibold text-amber-700">
+                          título já baixado no {appliedTitleReduction.cedentName}
+                        </span>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-right font-medium text-slate-950">
                       {currencyFormatter.format(title.nominalValue)}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-700">
-                      {currencyFormatter.format(title.pddValue)}
+                      {hasNoPddImpact ? (
+                        <span className="line-through decoration-2">
+                          {currencyFormatter.format(title.pddValue)}
+                        </span>
+                      ) : (
+                        currencyFormatter.format(title.pddValue)
+                      )}
                     </td>
                     <td className="px-4 py-3 text-slate-700">
                       {title.pddRange ?? "-"}
                     </td>
                     <td className="px-4 py-3 text-slate-700">
-                      {title.situation ?? "-"}
+                      <span className="block">{title.situation ?? "-"}</span>
+                      {hasNoPddImpact && appliedDebtorSource ? (
+                        <span className="mt-1 block text-xs font-semibold text-amber-700">
+                          sem interferência na PDD pois já foi resolvido pela baixa do{" "}
+                          {appliedDebtorSource}
+                        </span>
+                      ) : null}
                     </td>
                   </tr>
-                ))
+                  );
+                })
               ) : (
                 <tr>
                   <td className="px-4 py-8 text-center text-slate-500" colSpan={8}>
@@ -689,13 +990,90 @@ function StockReductionPanel({
           </p>
           <button
             className="inline-flex h-10 items-center justify-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={!reductionDate || reductionSimulation.reversalValue <= 0}
+            disabled={!reductionDate || selectedTitles.length === 0}
             onClick={handleApply}
             type="button"
           >
             <Calculator className="h-4 w-4" />
             Aplicar reversão
           </button>
+        </div>
+        <div className="border-t border-slate-200 pt-4">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-950">
+                Baixas aplicadas nesta simulacao
+              </h3>
+              <p className="text-xs text-slate-500">
+                Remova uma baixa para recalcular automaticamente as reversoes de PDD.
+              </p>
+            </div>
+            <p className="text-sm font-semibold text-emerald-700">
+              Total PDD{" "}
+              {currencyFormatter.format(
+                computedAppliedReductionBatches.reduce(
+                  (total, batch) => total + batch.reversalValue,
+                  0
+                )
+              )}
+            </p>
+          </div>
+
+          {computedAppliedReductionBatches.length > 0 ? (
+            <div className="mt-3 overflow-x-auto rounded border border-slate-200">
+              <table className="min-w-[980px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
+                    <th className="px-4 py-3 text-left font-semibold">Data</th>
+                    <th className="px-4 py-3 text-left font-semibold">Cedente</th>
+                    <th className="px-4 py-3 text-left font-semibold">Sacado</th>
+                    <th className="px-4 py-3 text-right font-semibold">Titulos</th>
+                    <th className="px-4 py-3 text-right font-semibold">Valor nominal</th>
+                    <th className="px-4 py-3 text-right font-semibold">Reversao PDD</th>
+                    <th className="px-4 py-3 text-right font-semibold">Acao</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {computedAppliedReductionBatches.map((batch) => (
+                    <tr className="border-b border-slate-100 last:border-0" key={batch.id}>
+                      <td className="px-4 py-3 text-slate-700">
+                        {formatDate(batch.reductionDate)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">
+                        {batch.cedentNames.join(", ") || "-"}
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">
+                        {batch.debtorNames.join(", ") || "-"}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-700">
+                        {batch.titleCount}
+                      </td>
+                      <td className="px-4 py-3 text-right text-slate-700">
+                        {currencyFormatter.format(batch.nominalValue)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold text-emerald-700">
+                        {currencyFormatter.format(batch.reversalValue)}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded border border-red-200 px-3 text-sm font-semibold text-red-700 transition hover:bg-red-50"
+                          onClick={() => removeAppliedReduction(batch.id)}
+                          type="button"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Tirar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="mt-3 rounded border border-dashed border-slate-200 px-4 py-5 text-sm text-slate-500">
+              Nenhuma baixa aplicada nesta simulacao.
+            </p>
+          )}
         </div>
       </div>
     </section>
