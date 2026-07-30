@@ -70,6 +70,7 @@ enum ImportModule {
   RECEIVABLE_STOCK
   RISK_LIMITS
   CEDENT_DIMENSION
+  FIDC_OPEN_MOVEMENT
 }
 
 enum ImportStatus {
@@ -352,6 +353,7 @@ model ImportBatch {
   importedByUser      User                      @relation(fields: [importedByUserId], references: [id], onDelete: Restrict)
   receivablePositions ReceivableStockPosition[]
   riskLimitPositions  RiskLimitPosition[]
+  fidcOpenMovements   FidcMovimentoAberto[]
 
   @@index([module, referenceDate])
   @@index([fundId, referenceDate])
@@ -473,6 +475,30 @@ model FidcEstoque {
   @@index([dataReferencia, nomeCedente])
   @@index([numeroDocumento])
   @@map("FIDC_ESTOQUES")
+}
+
+model FidcMovimentoAberto {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId           String?      @map("batch_id")
+  nomeFundo         String
+  docFundo          String?
+  dataMovimento     DateTime     @db.Date
+  seuNumero         String?
+  numeroDocumento   String
+  tipoMovimento     String
+  dataVencimento    DateTime     @db.Date
+  valorAquisicao    Decimal      @default(0) @db.Decimal(24, 10)
+  valorNominal      Decimal      @default(0) @db.Decimal(24, 10)
+  valorMovimentacao Decimal      @default(0) @db.Decimal(24, 10)
+  dataReferencia    DateTime     @db.Date
+  createdAt         DateTime     @default(now())
+  batch             ImportBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@unique([dataReferencia, nomeFundo, docFundo, dataMovimento, seuNumero, numeroDocumento, tipoMovimento, dataVencimento, valorAquisicao, valorNominal, valorMovimentacao], name: "fidc_movimentos_abertos_logical_unique")
+  @@index([dataReferencia, nomeFundo])
+  @@index([dataMovimento, nomeFundo])
+  @@index([numeroDocumento])
+  @@map("FIDC_MOVIMENTOS_ABERTOS")
 }
 
 model RiskLimitPosition {
