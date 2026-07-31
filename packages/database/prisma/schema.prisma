@@ -332,28 +332,29 @@ model CaixaSingulare {
 }
 
 model ImportBatch {
-  id                  String                    @id @default(cuid())
-  importedByUserId    String
-  module              ImportModule
-  fileName            String
-  fileHash            String?
-  source              String?
-  storageKey          String?
-  referenceDate       DateTime?                 @db.Date
-  fundId              String?
-  status              ImportStatus              @default(PENDING)
-  totalRows           Int                       @default(0)
-  importedRows        Int                       @default(0)
-  errorRows           Int                       @default(0)
-  errorMessage        String?
-  createdAt           DateTime                  @default(now())
-  completedAt         DateTime?
-  dimensionSnapshot   CedentDimensionSnapshot?
-  fund                Fund?                     @relation(fields: [fundId], references: [id], onDelete: Restrict)
-  importedByUser      User                      @relation(fields: [importedByUserId], references: [id], onDelete: Restrict)
-  receivablePositions ReceivableStockPosition[]
-  riskLimitPositions  RiskLimitPosition[]
-  fidcOpenMovements   FidcMovimentoAberto[]
+  id                     String                    @id @default(cuid())
+  importedByUserId       String
+  module                 ImportModule
+  fileName               String
+  fileHash               String?
+  source                 String?
+  storageKey             String?
+  referenceDate          DateTime?                 @db.Date
+  fundId                 String?
+  status                 ImportStatus              @default(PENDING)
+  totalRows              Int                       @default(0)
+  importedRows           Int                       @default(0)
+  errorRows              Int                       @default(0)
+  errorMessage           String?
+  createdAt              DateTime                  @default(now())
+  completedAt            DateTime?
+  dimensionSnapshot      CedentDimensionSnapshot?
+  fund                   Fund?                     @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  importedByUser         User                      @relation(fields: [importedByUserId], references: [id], onDelete: Restrict)
+  receivablePositions    ReceivableStockPosition[]
+  riskLimitPositions     RiskLimitPosition[]
+  fidcOpenMovements      FidcMovimentoAberto[]
+  fidcSettledReceivables FidcLiquidadoBaixado[]
 
   @@index([module, referenceDate])
   @@index([fundId, referenceDate])
@@ -499,6 +500,42 @@ model FidcMovimentoAberto {
   @@index([dataMovimento, nomeFundo])
   @@index([numeroDocumento])
   @@map("FIDC_MOVIMENTOS_ABERTOS")
+}
+
+model FidcLiquidadoBaixado {
+  id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId              String?      @map("batch_id")
+  fundoNome            String
+  fundoCnpj            String?
+  dataDaPosicao        DateTime     @db.Date
+  cedente              String
+  identificacaoCedente String?
+  sacado               String
+  identificacaoSacado  String?
+  txAquisicao          Decimal?     @db.Decimal(18, 10)
+  idRecebivel          String
+  valorAquisicao       Decimal      @default(0) @db.Decimal(24, 10)
+  valorVencimento      Decimal      @default(0) @db.Decimal(24, 10)
+  dataAquisicao        DateTime?    @db.Date
+  dataVencimento       DateTime     @db.Date
+  valorPago            Decimal      @default(0) @db.Decimal(24, 10)
+  stRecebivel          String?
+  ajuste               Decimal      @default(0) @db.Decimal(24, 10)
+  numeroCorrespondente String?
+  seuNumero            String?
+  documento            String
+  tipoRecebivel        String?
+  tipoMovimento        String
+  createdAt            DateTime     @default(now())
+  batch                ImportBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@unique([fundoNome, fundoCnpj, dataDaPosicao, cedente, identificacaoCedente, sacado, identificacaoSacado, txAquisicao, idRecebivel, valorAquisicao, valorVencimento, dataAquisicao, dataVencimento, valorPago, stRecebivel, ajuste, numeroCorrespondente, seuNumero, documento, tipoRecebivel, tipoMovimento], name: "fidc_liquidados_baixados_logical_unique")
+  @@index([dataDaPosicao, fundoNome])
+  @@index([dataVencimento, fundoNome])
+  @@index([idRecebivel])
+  @@index([documento])
+  @@index([seuNumero])
+  @@map("FIDC_LIQUIDADOS_BAIXADOS")
 }
 
 model RiskLimitPosition {
