@@ -492,10 +492,11 @@ model FidcMovimentoAberto {
   valorNominal      Decimal      @default(0) @db.Decimal(24, 10)
   valorMovimentacao Decimal      @default(0) @db.Decimal(24, 10)
   dataReferencia    DateTime     @db.Date
+  periodo           String       @default("MANHA")
   createdAt         DateTime     @default(now())
   batch             ImportBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
-  @@unique([dataReferencia, nomeFundo, docFundo, dataMovimento, seuNumero, numeroDocumento, tipoMovimento, dataVencimento, valorAquisicao, valorNominal, valorMovimentacao], name: "fidc_movimentos_abertos_logical_unique")
+  @@unique([dataReferencia, periodo, nomeFundo, docFundo, dataMovimento, seuNumero, numeroDocumento, tipoMovimento, dataVencimento, valorAquisicao, valorNominal, valorMovimentacao], name: "fidc_movimentos_abertos_logical_unique")
   @@index([dataReferencia, nomeFundo])
   @@index([dataMovimento, nomeFundo])
   @@index([numeroDocumento])
