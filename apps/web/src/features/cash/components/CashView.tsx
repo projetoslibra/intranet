@@ -6,6 +6,7 @@ import { Pencil } from "lucide-react";
 import type { CashDailyBalance, CashFund } from "@/features/cash/types/cash";
 import { CashDatePicker } from "./CashDatePicker";
 import { CashMatrix } from "./CashMatrix";
+import { CashSummary } from "./CashSummary";
 import { CashForm } from "./CashForm";
 
 type CashViewProps = {
@@ -54,6 +55,8 @@ export function CashView({
           ) : null}
         </div>
       </section>
+
+      {!editing ? <CashSummary balances={balances} /> : null}
 
       <section className="rounded border border-slate-200 bg-white shadow-executive">
         <div className="border-b border-slate-200 px-5 py-4">

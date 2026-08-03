@@ -24,7 +24,10 @@ export function CashDatePicker({ selectedDate, availableDates }: CashDatePickerP
   return (
     <div className="flex flex-wrap items-end gap-3">
       <div className="space-y-1.5">
-        <label className="text-sm font-medium text-slate-700" htmlFor="cash-date">
+        <label
+          className="block text-sm font-medium text-slate-700"
+          htmlFor="cash-date"
+        >
           Data
         </label>
         <input
@@ -38,7 +41,10 @@ export function CashDatePicker({ selectedDate, availableDates }: CashDatePickerP
 
       {availableDates.length > 0 ? (
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700" htmlFor="cash-date-list">
+          <label
+            className="block text-sm font-medium text-slate-700"
+            htmlFor="cash-date-list"
+          >
             Datas com lançamento
           </label>
           <select
