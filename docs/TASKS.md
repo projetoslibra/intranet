@@ -34,6 +34,7 @@
 ---
 
 ## 🟢 Concluídas (recentes)
+- [x] **[2026-08-03]** Ajustes básicos de UX na marca, login e visualização do Caixa — _Juan_ · branch `fix/ajustes-ux-marca-caixa`.
 - [x] **[2026-07-29]** Previsões: tooltip de composição da PDD em saldos históricos, projeções, seleção de cedente/sacado, títulos do estoque e memória de baixas — _João_ · branch `feat/previsoes-tooltip-pdd`.
 - [x] **[2026-08-03]** Nova identidade visual da OSHER no login, navegação e tela de Caixa — _Juan_ · branch `feat/identidade-visual`.
 - [x] **[2026-08-03]** Dashboard Crédito&Cadastro no OSHER, consumindo em modo somente leitura os resultados do schema `ARAM` — _Juan_ · branch `feat/credito-cadastro-integracao`.
