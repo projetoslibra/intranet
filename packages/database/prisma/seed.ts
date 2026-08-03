@@ -5,6 +5,7 @@ const prisma = new PrismaClient();
 
 const permissions = [
   "dashboard.view",
+  "credit-registration.view",
   "funds.view",
   "funds.manage",
   "quotes.view",
