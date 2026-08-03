@@ -143,11 +143,7 @@ export function DashboardShell({ children, permissions, user }: DashboardShellPr
               color="var(--osher-emerald-bright)"
               variant="mark"
             />
-            <div>
-              {/* .osher-brand-name ja define o tamanho (22px, igual ao login) */}
-              <p className="osher-brand-name leading-5">OSHER</p>
-              <p className="mt-1 text-xs text-ink-600">Finance App</p>
-            </div>
+            <p className="osher-brand-name leading-5">OSHER</p>
           </div>
         </div>
 

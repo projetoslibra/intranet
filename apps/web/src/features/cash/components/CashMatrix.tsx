@@ -65,7 +65,7 @@ export function CashMatrix({ balances }: { balances: CashDailyBalance[] }) {
     );
   }
 
-  const columnCount = balances.length + 2;
+  const columnCount = balances.length + 1;
 
   return (
     <div className="overflow-x-auto">
@@ -83,9 +83,6 @@ export function CashMatrix({ balances }: { balances: CashDailyBalance[] }) {
                 {balance.fundShortName || balance.fundName}
               </th>
             ))}
-            <th className="min-w-[150px] border-l border-slate-200 bg-slate-100/70 px-5 py-3 text-right font-semibold text-slate-600">
-              Total
-            </th>
           </tr>
         </thead>
         <tbody>
@@ -111,7 +108,6 @@ export function CashMatrix({ balances }: { balances: CashDailyBalance[] }) {
             const cents = balances.map((balance) =>
               decimalStringToCents(balance[row.key])
             );
-            const total = cents.reduce((sum, value) => sum + value, 0);
             const isResult = row.kind === "result";
 
             // Solido, sem alpha: este fundo tambem vale para a primeira coluna
@@ -158,18 +154,6 @@ export function CashMatrix({ balances }: { balances: CashDailyBalance[] }) {
                     </td>
                   );
                 })}
-
-                <td
-                  className={`osher-num min-w-[150px] border-l border-slate-200 bg-slate-50 px-5 py-3 text-right font-semibold ${
-                    isResult
-                      ? "text-emerald-900"
-                      : total === 0
-                        ? "text-slate-400"
-                        : "text-slate-900"
-                  }`}
-                >
-                  {centsToBRL(total)}
-                </td>
               </tr>
             );
           })}

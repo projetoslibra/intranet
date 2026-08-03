@@ -54,8 +54,6 @@ export function LoginForm() {
         <span className="osher-brand-name">OSHER</span>
       </div>
 
-      <p className="osher-lead mb-6">Acesso financeiro interno.</p>
-
       <form noValidate onSubmit={handleSubmit}>
         <div className="mb-4">
           <label className="osher-label mb-2" htmlFor="email">
