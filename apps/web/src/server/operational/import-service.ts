@@ -166,7 +166,11 @@ function get(row: SheetRow, key: string): unknown {
 
 async function createBatch(input: {
   user: ImportUser;
-  module: "RECEIVABLE_STOCK" | "RISK_LIMITS" | "CEDENT_DIMENSION";
+  module:
+    | "RECEIVABLE_STOCK"
+    | "RISK_LIMITS"
+    | "CEDENT_DIMENSION"
+    | "FIDC_OPEN_MOVEMENT";
   fileName: string;
   fileHash?: string;
   source: string;
@@ -249,6 +253,21 @@ async function createManyInChunks<T>(
   for (let index = 0; index < rows.length; index += chunkSize) {
     await createMany(rows.slice(index, index + chunkSize));
   }
+}
+
+async function createManyInChunksAndCount<T>(
+  rows: T[],
+  createMany: (chunk: T[]) => Promise<{ count: number }>,
+  chunkSize = 1000
+) {
+  let count = 0;
+
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    const result = await createMany(rows.slice(index, index + chunkSize));
+    count += result.count;
+  }
+
+  return count;
 }
 
 export async function importReceivableStock(input: {
@@ -337,7 +356,7 @@ export async function importReceivableStock(input: {
   }
 }
 
-function parseCsvLine(line: string): string[] {
+function parseCsvLine(line: string, delimiter = ","): string[] {
   const values: string[] = [];
   let current = "";
   let inQuotes = false;
@@ -351,7 +370,7 @@ function parseCsvLine(line: string): string[] {
       index += 1;
     } else if (char === '"') {
       inQuotes = !inQuotes;
-    } else if (char === "," && !inQuotes) {
+    } else if (char === delimiter && !inQuotes) {
       values.push(current);
       current = "";
     } else {
@@ -361,6 +380,107 @@ function parseCsvLine(line: string): string[] {
 
   values.push(current);
   return values;
+}
+
+function rowsFromCsvBuffer(buffer: Buffer, delimiter = ";"): SheetRow[] {
+  const content = buffer.toString("utf8").replace(/^\uFEFF/, "");
+  const lines = content.split(/\r?\n/).filter((line) => cleanText(line));
+  const headers = parseCsvLine(lines[0] ?? "", delimiter).map((header) => header.trim());
+
+  if (!headers.length) {
+    return [];
+  }
+
+  return lines.slice(1).map((line) => {
+    const values = parseCsvLine(line, delimiter);
+    return Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]));
+  });
+}
+
+async function findFundByOpenMovementRow(row: SheetRow) {
+  const fundDocument = onlyDigits(get(row, "docFundo"));
+  const fundName = normalizeName(get(row, "nomeFundo"));
+
+  const funds = await prisma.fund.findMany({
+    where: { status: "ACTIVE" },
+    select: { id: true, cnpj: true, name: true, shortName: true },
+  });
+
+  const byDocument = funds.find((fund) => onlyDigits(fund.cnpj) === fundDocument);
+  if (byDocument) {
+    return byDocument;
+  }
+
+  return (
+    funds.find((fund) => {
+      const name = normalizeName(`${fund.name} ${fund.shortName}`);
+      return fundName.includes(name) || name.includes(fundName.split(" ")[0] ?? "");
+    }) ?? null
+  );
+}
+
+export async function importFidcOpenMovements(input: {
+  user: ImportUser;
+  buffer: Buffer;
+  fileName: string;
+  referenceDate?: Date | null;
+}): Promise<OperationalImportResult> {
+  const rows = rowsFromCsvBuffer(input.buffer, ";");
+  if (!rows.length) {
+    throw new Error("O arquivo de movimento aberto estÃ¡ vazio.");
+  }
+
+  const referenceDate = normalizeDate(input.referenceDate ?? new Date());
+  const fund = await findFundByOpenMovementRow(rows[0]);
+  const batch = await createBatch({
+    user: input.user,
+    module: "FIDC_OPEN_MOVEMENT",
+    fileName: input.fileName,
+    fileHash: hashBuffer(input.buffer),
+    source: "OPERACIONAL_MOVIMENTO_ABERTO",
+    referenceDate,
+    fundId: fund?.id ?? null,
+  });
+
+  try {
+    const movements = rows.map((row) => ({
+      batchId: batch.id,
+      nomeFundo: cleanText(get(row, "nomeFundo")),
+      docFundo: nullableText(get(row, "docFundo")),
+      dataMovimento: parseDateRequired(get(row, "dataMovimento"), "dataMovimento"),
+      seuNumero: nullableText(get(row, "seuNumero")),
+      numeroDocumento: cleanText(get(row, "numeroDocumento")),
+      tipoMovimento: cleanText(get(row, "tipoMovimento")),
+      dataVencimento: parseDateRequired(get(row, "dataVencimento"), "dataVencimento"),
+      valorAquisicao: parseDecimal(get(row, "valorAquisicao")),
+      valorNominal: parseDecimal(get(row, "valorNominal")),
+      valorMovimentacao: parseDecimal(get(row, "valorMovimentacao")),
+      dataReferencia: referenceDate,
+    }));
+
+    const importedRows = await createManyInChunksAndCount(movements, (chunk) =>
+      prisma.fidcMovimentoAberto.createMany({ data: chunk, skipDuplicates: true })
+    );
+
+    await completeBatch(batch.id, {
+      totalRows: rows.length,
+      importedRows,
+      errorRows: rows.length - importedRows,
+    });
+
+    return {
+      batchId: batch.id,
+      importedRows,
+      totalRows: rows.length,
+      errorRows: rows.length - importedRows,
+      referenceDate: referenceDate.toISOString().slice(0, 10),
+      fundName: fund?.shortName ?? cleanText(get(rows[0], "nomeFundo")),
+      message: `Movimento aberto importado: ${importedRows} de ${rows.length} linhas novas.`,
+    };
+  } catch (error) {
+    await failBatch(batch.id, error);
+    throw error;
+  }
 }
 
 async function fetchDimensionRows(): Promise<SheetRow[]> {
