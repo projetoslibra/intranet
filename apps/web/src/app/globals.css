@@ -7,7 +7,7 @@
   --foreground: 222 47% 11%;
   --muted: 214 32% 91%;
   --muted-foreground: 215 16% 47%;
-  --primary: 166 100% 24%;
+  --primary: 158 83% 34%;
   --primary-foreground: 0 0% 100%;
   --accent: 212 100% 45%;
   --accent-foreground: 0 0% 100%;
@@ -16,6 +16,29 @@
   --border: 214 32% 88%;
   --sidebar: 220 31% 12%;
   --sidebar-foreground: 210 40% 96%;
+
+  /* ===== Marca OSHER — base escura (login / superficies imersivas) ===== */
+  --osher-navy-900: #0b0f19;
+  --osher-navy-800: #0e1420;
+  --osher-navy-700: #111827;
+
+  /* Marca */
+  --osher-emerald: #0f9d68;
+  --osher-emerald-bright: #16c989;
+  --osher-emerald-deep: #0a5d3f;
+  --osher-emerald-line: rgba(18, 129, 89, 0.55);
+
+  /* Texto sobre fundo escuro */
+  --osher-ink-100: #f3f6f5;
+  --osher-ink-400: #9aa7a2;
+  --osher-ink-600: #5e6b66;
+
+  /* Superficies / bordas */
+  --osher-ring: rgba(255, 255, 255, 0.14);
+
+  /* Campos escuros */
+  --osher-input-bg: #171e1b;
+  --osher-input-bg-focus: #1a221e;
 }
 
 * {
@@ -43,4 +66,629 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+/* =========================================================================
+   OSHER — utilitarios da identidade visual
+   Escopo: telas imersivas (login/auth) e estados vazios. NAO usar glass nem
+   fundo animado atras de tabela densa de dados financeiros.
+   ========================================================================= */
+
+/* Necessario p/ animar o angulo do gradiente da borda de foco.
+   Fallback: browsers sem @property (Firefox) mostram brilho estatico. */
+@property --ang {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+/* Base escura imersiva -------------------------------------------------- */
+.osher-auth-root {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  width: 100%;
+  overflow: hidden;
+  perspective: 1200px;
+  background: radial-gradient(
+    140% 120% at 50% 0%,
+    #0e1524 0%,
+    var(--osher-navy-900) 55%,
+    #080b12 100%
+  );
+  color: var(--osher-ink-100);
+}
+
+/* Card do login: inclinacao 3d + entrada suave ---------------------------- */
+.osher-tilt {
+  position: relative;
+  z-index: 3;
+  transform-style: preserve-3d;
+  transition: transform 0.12s ease-out;
+}
+
+.osher-card {
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  padding: 36px 36px 30px;
+}
+
+.osher-card--rise {
+  opacity: 0;
+  animation: osher-rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.15s forwards;
+}
+
+@keyframes osher-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Marca e textos do card ------------------------------------------------- */
+.osher-mark-glow {
+  filter: drop-shadow(0 6px 16px rgba(15, 157, 104, 0.45));
+}
+
+.osher-brand-mark {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  filter: drop-shadow(0 6px 16px rgba(15, 157, 104, 0.45));
+}
+
+.osher-brand-name {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--osher-ink-100);
+}
+
+.osher-lead {
+  font-size: 13px;
+  color: var(--osher-ink-400);
+}
+
+.osher-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--osher-ink-400);
+}
+
+/* Card de vidro (glassmorphism) ---------------------------------------- */
+.osher-glass {
+  background: linear-gradient(
+    160deg,
+    rgba(22, 201, 137, 0.1) 0%,
+    rgba(11, 15, 25, 0.32) 55%,
+    rgba(15, 157, 104, 0.05) 100%
+  );
+  backdrop-filter: blur(22px) saturate(120%);
+  -webkit-backdrop-filter: blur(22px) saturate(120%);
+  border: 1px solid var(--osher-ring);
+  border-radius: 24px;
+  box-shadow:
+    0 24px 60px -18px rgba(0, 0, 0, 0.7),
+    0 1px 0 0 rgba(255, 255, 255, 0.06) inset;
+}
+
+/* Fio de luz no topo do card */
+.osher-glass--sheen {
+  position: relative;
+}
+
+.osher-glass--sheen::before {
+  content: "";
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(22, 201, 137, 0.6),
+    transparent
+  );
+}
+
+/* Campo com borda animada de foco (a "signature") ---------------------- */
+/* Envolva o <input> com <div class="osher-focus-wrap"> ... </div>.
+   Usa :focus-within, entao funciona sem JS. */
+.osher-focus-wrap {
+  position: relative;
+  border-radius: 12px;
+  padding: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  transition: background 0.22s ease;
+}
+
+.osher-focus-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--ang, 0deg),
+    transparent 0deg,
+    transparent 250deg,
+    var(--osher-emerald-bright) 300deg,
+    rgba(22, 201, 137, 0) 340deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.22s ease;
+  pointer-events: none;
+}
+
+.osher-focus-wrap:focus-within {
+  background: var(--osher-emerald-line);
+}
+
+.osher-focus-wrap:focus-within::after {
+  opacity: 1;
+  animation: osher-spin 2.6s linear infinite;
+}
+
+@keyframes osher-spin {
+  to {
+    --ang: 360deg;
+  }
+}
+
+.osher-input {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: var(--osher-input-bg);
+  color: var(--osher-ink-100);
+  font-size: 14px;
+  padding: 13px 14px;
+  border-radius: 11px;
+  transition: background 0.2s ease;
+}
+
+.osher-input::placeholder {
+  color: var(--osher-ink-600);
+}
+
+.osher-input:focus {
+  background: var(--osher-input-bg-focus);
+}
+
+.osher-input:-webkit-autofill {
+  -webkit-text-fill-color: var(--osher-ink-100);
+  -webkit-box-shadow: 0 0 0 40px var(--osher-input-bg) inset;
+}
+
+/* Campo com acao a direita (ex.: mostrar/ocultar senha). Sem esse espaco a
+   senha passa por baixo do botao. */
+.osher-input--with-action {
+  padding-right: 88px;
+}
+
+.osher-pass-toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--osher-ink-400);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 8px;
+  border-radius: 8px;
+  transition:
+    color 0.2s ease,
+    background 0.2s ease;
+}
+
+.osher-pass-toggle:hover {
+  color: var(--osher-ink-100);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Aviso de erro sobre fundo escuro -------------------------------------- */
+.osher-alert {
+  border-radius: 11px;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.1);
+  color: #fca5a5;
+  font-size: 13px;
+  padding: 10px 12px;
+}
+
+/* Botao primario ------------------------------------------------------- */
+.osher-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 13px 16px;
+  border: 1px solid var(--osher-emerald-deep);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--osher-emerald) 0%, #0c8556 100%);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.2s ease,
+    filter 0.2s ease,
+    background 0.2s ease;
+  box-shadow: 0 10px 24px -10px rgba(15, 157, 104, 0.8);
+}
+
+.osher-btn:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 14px 30px -10px rgba(15, 157, 104, 0.9);
+}
+
+.osher-btn:active {
+  transform: translateY(1px) scale(0.995);
+}
+
+.osher-btn:disabled {
+  cursor: not-allowed;
+  background: #1b2320;
+  border-color: #26312c;
+  color: #4e5b55;
+  box-shadow: none;
+  filter: none;
+}
+
+.osher-btn .osher-arrow {
+  transition: transform 0.2s ease;
+}
+
+.osher-btn:not(:disabled):hover .osher-arrow {
+  transform: translateX(3px);
+}
+
+/* Foco visivel (os campos usam a borda animada do .osher-focus-wrap) ----- */
+.osher-btn:focus-visible,
+.osher-pass-toggle:focus-visible {
+  outline: 2px solid var(--osher-emerald-bright);
+  outline-offset: 2px;
+}
+
+/* Numeros financeiros: largura fixa por digito, para as colunas alinharem
+   na vertical. Vale para qualquer tabela/KPI de valor do app. */
+.osher-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* =========================================================================
+   Sidebar — mesma paleta e efeitos do login (navy + esmeralda).
+   Glows sao gradientes estaticos, sem filter:blur nem rAF: a sidebar fica
+   sempre em tela e nao pode custar frame.
+   ========================================================================= */
+/* ATENCAO: nao declarar `position` aqui. Este CSS vem depois do
+   @tailwind utilities e tem a mesma especificidade das utilities, entao um
+   `position` aqui sobrescreve o `fixed` do <aside> e joga a sidebar de volta
+   pro flow (o conteudo desce a tela toda). O `fixed` do elemento ja serve de
+   containing block para os ::before/::after abaixo. */
+.osher-sidebar {
+  background: linear-gradient(
+    180deg,
+    #0e1524 0%,
+    var(--osher-navy-900) 45%,
+    #080b12 100%
+  );
+  color: var(--osher-ink-100);
+}
+
+.osher-sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      72% 30% at 10% 0%,
+      rgba(22, 201, 137, 0.16),
+      transparent 70%
+    ),
+    radial-gradient(
+      60% 26% at 92% 100%,
+      rgba(15, 157, 104, 0.1),
+      transparent 70%
+    );
+}
+
+/* Fio de luz esmeralda na borda direita (o sheen do card, na vertical) */
+.osher-sidebar::after {
+  content: "";
+  position: absolute;
+  top: 24px;
+  bottom: 24px;
+  right: 0;
+  width: 1px;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(22, 201, 137, 0.5),
+    transparent
+  );
+}
+
+.osher-sidebar > * {
+  position: relative;
+  z-index: 1;
+}
+
+.osher-sidebar-divider {
+  border-color: var(--osher-ring);
+}
+
+/* Itens de navegacao ---------------------------------------------------- */
+.osher-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--osher-ink-400);
+  transition:
+    color 0.18s ease,
+    background 0.18s ease;
+}
+
+.osher-nav-item:hover {
+  color: var(--osher-ink-100);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.osher-nav-item:focus-visible {
+  outline: 2px solid var(--osher-emerald-bright);
+  outline-offset: 2px;
+}
+
+.osher-nav-item--active {
+  color: var(--osher-ink-100);
+  background: linear-gradient(
+    90deg,
+    rgba(22, 201, 137, 0.18) 0%,
+    rgba(22, 201, 137, 0.05) 100%
+  );
+  box-shadow: inset 0 0 0 1px var(--osher-emerald-line);
+}
+
+.osher-nav-item--active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  border-radius: 0 3px 3px 0;
+  background: var(--osher-emerald-bright);
+  box-shadow: 0 0 12px rgba(22, 201, 137, 0.8);
+}
+
+.osher-nav-item--active .osher-nav-icon {
+  color: var(--osher-emerald-bright);
+}
+
+/* Rodape: usuario + sair ------------------------------------------------ */
+.osher-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  width: 36px;
+  flex: none;
+  border-radius: 10px;
+  border: 1px solid var(--osher-emerald-line);
+  background: linear-gradient(
+    160deg,
+    rgba(22, 201, 137, 0.22) 0%,
+    rgba(11, 15, 25, 0.4) 100%
+  );
+  color: var(--osher-ink-100);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.osher-sidebar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--osher-ring);
+  background: transparent;
+  color: var(--osher-ink-100);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.osher-sidebar-btn:hover {
+  background: rgba(22, 201, 137, 0.12);
+  border-color: var(--osher-emerald-line);
+  color: #fff;
+}
+
+.osher-sidebar-btn:focus-visible {
+  outline: 2px solid var(--osher-emerald-bright);
+  outline-offset: 2px;
+}
+
+/* Fundo interativo (usado por components/brand/AuthBackground) ---------- */
+.osher-bg-glows {
+  position: absolute;
+  inset: -12%;
+  z-index: 0;
+  filter: blur(72px);
+  will-change: transform;
+}
+
+.osher-glow {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0.6;
+  mix-blend-mode: screen;
+}
+
+.osher-glow--1 {
+  width: 50vw;
+  height: 50vw;
+  left: -6vw;
+  top: -10vw;
+  background: radial-gradient(circle, rgba(22, 201, 137, 0.34), transparent 62%);
+  animation: osher-drift1 22s ease-in-out infinite;
+}
+
+.osher-glow--2 {
+  width: 44vw;
+  height: 44vw;
+  right: -8vw;
+  bottom: -12vw;
+  background: radial-gradient(circle, rgba(15, 157, 104, 0.28), transparent 62%);
+  animation: osher-drift2 28s ease-in-out infinite;
+}
+
+.osher-glow--3 {
+  width: 32vw;
+  height: 32vw;
+  left: 40vw;
+  top: 28vh;
+  background: radial-gradient(circle, rgba(28, 120, 150, 0.16), transparent 62%);
+  animation: osher-drift3 34s ease-in-out infinite;
+}
+
+@keyframes osher-drift1 {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(9vw, 6vh) scale(1.1);
+  }
+  66% {
+    transform: translate(4vw, -4vh) scale(0.96);
+  }
+}
+
+@keyframes osher-drift2 {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(-8vw, -5vh) scale(1.14);
+  }
+  66% {
+    transform: translate(-3vw, 5vh) scale(0.94);
+  }
+}
+
+@keyframes osher-drift3 {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-6vw, 4vh) scale(1.08);
+  }
+}
+
+.osher-spotlight {
+  position: absolute;
+  width: 640px;
+  height: 640px;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  margin: -320px 0 0 -320px;
+  border-radius: 50%;
+  mix-blend-mode: screen;
+  will-change: transform;
+  background: radial-gradient(
+    circle,
+    rgba(22, 201, 137, 0.22) 0%,
+    rgba(22, 201, 137, 0.08) 35%,
+    transparent 70%
+  );
+}
+
+.osher-bg-grid {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background-image: radial-gradient(
+    rgba(255, 255, 255, 0.05) 1px,
+    transparent 1px
+  );
+  background-size: 30px 30px;
+  -webkit-mask-image: radial-gradient(
+    80% 70% at 50% 45%,
+    #000 40%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(80% 70% at 50% 45%, #000 40%, transparent 100%);
+}
+
+.osher-vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: radial-gradient(
+    120% 90% at 50% 42%,
+    transparent 45%,
+    rgba(6, 9, 15, 0.55) 100%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .osher-focus-wrap:focus-within::after,
+  .osher-glow,
+  .osher-spotlight {
+    animation: none !important;
+  }
+
+  .osher-card--rise {
+    opacity: 1;
+    animation: none;
+  }
+
+  .osher-tilt {
+    transition: none;
+  }
 }

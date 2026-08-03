@@ -14,6 +14,7 @@ import {
   Users,
   Wallet,
 } from "lucide-react";
+import { OsherLogo } from "@/components/brand/osher-logo";
 import { cn } from "@/lib/utils";
 
 type DashboardShellProps = {
@@ -84,13 +85,25 @@ const todayFormatter = new Intl.DateTimeFormat("pt-BR", {
   year: "numeric",
 });
 
-function getPageTitle(pathname: string) {
+// Item de navegacao correspondente a rota: o match MAIS ESPECIFICO. Sem isso
+// "/dashboard" casa com "/dashboard/dre" via startsWith e dois itens ficam
+// marcados como ativos ao mesmo tempo.
+function getActiveHref(pathname: string) {
   return (
     navigation
-      .slice()
-      .reverse()
-      .find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))
-      ?.title ?? "Dashboard"
+      .filter(
+        (item) =>
+          pathname === item.href || pathname.startsWith(`${item.href}/`)
+      )
+      .sort((a, b) => b.href.length - a.href.length)[0]?.href ?? null
+  );
+}
+
+function getPageTitle(pathname: string) {
+  const activeHref = getActiveHref(pathname);
+
+  return (
+    navigation.find((item) => item.href === activeHref)?.title ?? "Dashboard"
   );
 }
 
@@ -105,6 +118,7 @@ function getInitials(name: string) {
 
 export function DashboardShell({ children, permissions, user }: DashboardShellProps) {
   const pathname = usePathname();
+  const activeHref = getActiveHref(pathname);
   const pageTitle = getPageTitle(pathname);
   const today = todayFormatter.format(new Date());
   const permissionSet = new Set(permissions);
@@ -114,15 +128,18 @@ export function DashboardShell({ children, permissions, user }: DashboardShellPr
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-950">
-      <aside className="fixed inset-y-0 left-0 z-20 flex w-[240px] flex-col bg-[#0f172a] text-slate-100">
-        <div className="border-b border-white/10 px-5 py-6">
+      <aside className="osher-sidebar fixed inset-y-0 left-0 z-20 flex w-[240px] flex-col">
+        <div className="osher-sidebar-divider border-b px-5 py-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded bg-emerald-500 text-sm font-bold text-slate-950">
-              OS
-            </div>
+            <OsherLogo
+              className="osher-mark-glow h-10 w-10 shrink-0"
+              color="var(--osher-emerald-bright)"
+              variant="mark"
+            />
             <div>
-              <p className="text-lg font-semibold leading-5">OSHER</p>
-              <p className="text-xs text-slate-400">Finance App</p>
+              {/* .osher-brand-name ja define o tamanho (22px, igual ao login) */}
+              <p className="osher-brand-name leading-5">OSHER</p>
+              <p className="mt-1 text-xs text-ink-600">Finance App</p>
             </div>
           </div>
         </div>
@@ -130,38 +147,40 @@ export function DashboardShell({ children, permissions, user }: DashboardShellPr
         <nav className="flex-1 space-y-1 px-3 py-5">
           {visibleNavigation.map((item) => {
             const Icon = item.icon;
-            const isActive =
-              pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const isActive = item.href === activeHref;
 
             return (
               <Link
+                aria-current={isActive ? "page" : undefined}
                 className={cn(
-                  "flex h-10 items-center gap-3 rounded px-3 text-sm font-medium text-slate-300 transition hover:bg-white/10 hover:text-white",
-                  isActive && "bg-white/15 text-white"
+                  "osher-nav-item",
+                  isActive && "osher-nav-item--active"
                 )}
                 href={item.href}
                 key={item.href}
               >
-                <Icon className="h-4 w-4" />
+                <Icon className="osher-nav-icon h-4 w-4 shrink-0" />
                 {item.title}
               </Link>
             );
           })}
         </nav>
 
-        <div className="border-t border-white/10 p-4">
+        <div className="osher-sidebar-divider border-t p-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-white/10 text-xs font-semibold text-white">
+            <div className="osher-avatar">
               {getInitials(user.name) || "OS"}
             </div>
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold">{user.name}</p>
-              <p className="truncate text-xs text-slate-400">{user.role}</p>
+              <p className="truncate text-sm font-semibold text-ink-100">
+                {user.name}
+              </p>
+              <p className="truncate text-xs text-ink-400">{user.role}</p>
             </div>
           </div>
 
           <button
-            className="mt-4 flex h-10 w-full items-center justify-center gap-2 rounded border border-white/10 px-3 text-sm font-semibold text-slate-200 transition hover:bg-white/10 hover:text-white"
+            className="osher-sidebar-btn mt-4"
             onClick={() => signOut({ callbackUrl: "/login" })}
             type="button"
           >
