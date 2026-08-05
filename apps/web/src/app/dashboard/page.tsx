@@ -49,6 +49,10 @@ function resolveCarteiraFundo(fund: { name: string; shortName: string }) {
     return "BRISTOL";
   }
 
+  if (label.includes("CONSIGNADO")) {
+    return "CONSIGNADO";
+  }
+
   return null;
 }
 

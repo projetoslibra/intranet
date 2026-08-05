@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { findDefaultFund, sortFundsByDisplayPriority } from "@/lib/fund-order";
 import { hasPermission } from "@/lib/permissions";
 import { CarteiraImportPanel } from "@/features/carteiras/components/CarteiraImportPanel";
+import { ConsignadoCarteiraImportPanel } from "@/features/carteiras/components/ConsignadoCarteiraImportPanel";
 import {
   getMostRecentBusinessDate,
   toDateKey,
@@ -333,6 +334,10 @@ function resolveCarteiraFundo(fund: { name: string; shortName: string }) {
     return "BRISTOL";
   }
 
+  if (label.includes("CONSIGNADO")) {
+    return "CONSIGNADO";
+  }
+
   return null;
 }
 
@@ -361,6 +366,14 @@ function classifyCarteiraAtivo(value: string) {
 
   if (ativo === "VARIACAO ANUAL") {
     return "variacao_anual";
+  }
+
+  if (ativo === "QUANTIDADE DE COTAS") {
+    return "quantidade_cotas";
+  }
+
+  if (ativo === "VALOR DA COTA") {
+    return "valor_cota";
   }
 
   if (ativo.includes("PDD")) {
@@ -560,7 +573,10 @@ function valueClassName(row: DreRow, value: number | undefined) {
 }
 
 export default async function DrePage({ searchParams }: DrePageProps) {
-  const canView = await hasPermission("dre.view");
+  const [canView, canImport] = await Promise.all([
+    hasPermission("dre.view"),
+    hasPermission("dre.import"),
+  ]);
 
   if (!canView) {
     return (
@@ -598,7 +614,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
   if (!selectedFund) {
     return (
       <div className="space-y-6">
-        <CarteiraImportPanel defaultDate={defaultImportDate} />
+        {canImport ? <CarteiraImportPanel defaultDate={defaultImportDate} /> : null}
         <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
           <h2 className="text-lg font-semibold text-slate-950">DRE dos Fundos</h2>
           <p className="mt-2 text-sm text-slate-500">
@@ -785,6 +801,10 @@ export default async function DrePage({ searchParams }: DrePageProps) {
       quoteMaps.monthReturn.set(key, value);
     } else if (category === "variacao_anual") {
       quoteMaps.yearReturn.set(key, value);
+    } else if (category === "quantidade_cotas") {
+      quoteMaps.sharesQuantity.set(key, value);
+    } else if (category === "valor_cota") {
+      quoteMaps.quotaValue.set(key, value);
     } else if (category === "creditRights") {
       addToMap(creditRights, key, value);
     } else if (category === "otherFunds") {
@@ -1088,8 +1108,6 @@ export default async function DrePage({ searchParams }: DrePageProps) {
 
   return (
     <div className="space-y-6">
-      <CarteiraImportPanel defaultDate={defaultImportDate} />
-
       <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
         <form className="grid gap-4 lg:grid-cols-[minmax(220px,1fr)_190px_160px_160px_auto] lg:items-end">
           <input name="view" type="hidden" value={selectedView} />
@@ -1176,6 +1194,14 @@ export default async function DrePage({ searchParams }: DrePageProps) {
           </div>
         </form>
       </section>
+
+      {canImport ? (
+        carteiraFundo === "CONSIGNADO" ? (
+          <ConsignadoCarteiraImportPanel />
+        ) : (
+          <CarteiraImportPanel defaultDate={defaultImportDate} />
+        )
+      ) : null}
 
       <section className="rounded border border-slate-200 bg-white shadow-executive">
         <div className="border-b border-slate-200 px-5 py-4">
