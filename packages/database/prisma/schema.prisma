@@ -337,16 +337,23 @@ model ImportBatch {
   module                 ImportModule
   fileName               String
   fileHash               String?
+  fileSize               Int?
   source                 String?
   storageKey             String?
   referenceDate          DateTime?                 @db.Date
   fundId                 String?
+  version                Int                       @default(1)
+  isActive               Boolean                   @default(false)
   status                 ImportStatus              @default(PENDING)
   totalRows              Int                       @default(0)
+  progressRows           Int                       @default(0)
   importedRows           Int                       @default(0)
   errorRows              Int                       @default(0)
+  warningRows            Int                       @default(0)
   errorMessage           String?
+  metadata               Json?
   createdAt              DateTime                  @default(now())
+  startedAt              DateTime?
   completedAt            DateTime?
   dimensionSnapshot      CedentDimensionSnapshot?
   fund                   Fund?                     @relation(fields: [fundId], references: [id], onDelete: Restrict)
@@ -358,6 +365,7 @@ model ImportBatch {
 
   @@index([module, referenceDate])
   @@index([fundId, referenceDate])
+  @@index([module, fundId, referenceDate, isActive])
   @@map("import_batches")
 }
 
@@ -426,11 +434,17 @@ model ReceivableStockPosition {
   assignmentRate      Decimal?    @map("assignment_rate") @db.Decimal(18, 10)
   receivableRate      Decimal?    @map("receivable_rate") @db.Decimal(18, 10)
   coobligation        String?
+  sourceRow           Int?        @map("source_row")
+  rowHash             String?     @map("row_hash")
   createdAt           DateTime    @default(now()) @map("created_at")
   batch               ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
   fund                Fund        @relation(fields: [fundId], references: [id], onDelete: Restrict)
 
+  @@unique([batchId, sourceRow])
   @@index([batchId])
+  @@index([batchId, yourNumber])
+  @@index([batchId, documentNumber])
+  @@index([batchId, debtorDocument])
   @@index([fundId, referenceDate])
   @@index([referenceDate, cedentDocument])
   @@index([referenceDate, debtorDocument])
