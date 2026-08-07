@@ -3,6 +3,7 @@ import { del, get, head } from "@vercel/blob";
 import { Prisma } from "@prisma/client";
 import * as XLSX from "xlsx";
 import { prisma } from "@/lib/prisma";
+import { reconcileRemittancesWithStock } from "./consignado-settlement-service";
 
 const CONSIGNADO_CNPJ = "54842157000193";
 const STOCK_SOURCE = "CONSIGNADO_STOCK_MANUAL";
@@ -573,6 +574,10 @@ export async function processConsignadoStockBatch(batchId: string) {
       },
     });
 
+    if (!activeForDate) {
+      await reconcileRemittancesWithStock(batchId);
+    }
+
     return prisma.importBatch.findUniqueOrThrow({ where: { id: batchId } });
   } catch (error) {
     await prisma.receivableStockPosition.deleteMany({ where: { batchId } });
@@ -618,6 +623,8 @@ export async function activateConsignadoStockBatch(batchId: string) {
       data: { isActive: true },
     });
   });
+
+  await reconcileRemittancesWithStock(batch.id);
 }
 
 export async function getConsignadoStockHistory(): Promise<ConsignadoStockBatchView[]> {

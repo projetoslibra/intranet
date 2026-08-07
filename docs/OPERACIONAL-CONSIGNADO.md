@@ -187,7 +187,16 @@ Classificações previstas:
 - ✅ OC-01 — implementada e validada em build.
 - ✅ OC-02 — implementada; requer Blob privado configurado no ambiente publicado.
 - ✅ OC-03 — implementada e incluída na navegação do Financeiro.
-- ⏳ OC-04 em diante — ainda não iniciadas.
+- ✅ OC-04 — modelo de lotes, itens, originadores, correções, remessas e eventos.
+- ✅ OC-05 — parser BMP CNAB 444 validado com arquivo real e ocorrências 14/77.
+- ✅ OC-06 — parser UY3 validado com as variações reais de cabeçalho.
+- ✅ OC-07 — matching determinístico contra o snapshot ativo e proteção contra duplicidade.
+- ✅ OC-08 — revisão, pesquisa, exclusão e substituição manual auditada.
+- ✅ OC-09 — geração privada do CNAB 444 Daycoval em Latin-1/CRLF.
+- ✅ OC-10 — importador idempotente do extrato Bradesco em cp1252.
+- ✅ OC-11 — conciliação bancária muitos-para-muitos com saldos e reversão.
+- ✅ OC-12 — confirmação automática pelo primeiro estoque ativo posterior.
+- ⏳ OC-13 e OC-14 — indicadores consolidados e homologação final ainda pendentes.
 
 ### OC-01 — Fundação do estoque do Consignado
 

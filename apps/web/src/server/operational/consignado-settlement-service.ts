@@ -1,0 +1,290 @@
+import { createHash } from "node:crypto";
+import { del, get, put } from "@vercel/blob";
+import { Prisma, type OperationalFlowSource, type SettlementItemStatus } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { generateDaycovalCnab } from "./consignado-cnab";
+import { parseBmpCnab, parseUy3Workbook, type ParsedSettlementItem } from "./consignado-parsers";
+
+const CONSIGNADO_CNPJ = "54842157000193";
+const MATCHABLE = new Set<SettlementItemStatus>(["FULL_MATCH", "PARTIAL_MATCH", "MANUALLY_MATCHED"]);
+
+function digits(value: unknown) { return String(value ?? "").replace(/\D/g, ""); }
+function normalized(value: unknown) {
+  return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase().replace(/\s+/g, " ");
+}
+function sameMoney(left: unknown, right: unknown) { return Math.abs(Number(left) - Number(right)) < 0.01; }
+function dateKey(value: Date | null | undefined) { return value?.toISOString().slice(0, 10) ?? null; }
+
+async function consignadoFund() {
+  const funds = await prisma.fund.findMany({ where: { status: "ACTIVE" }, select: { id: true, cnpj: true, name: true } });
+  const fund = funds.find((item) => digits(item.cnpj) === CONSIGNADO_CNPJ || normalized(item.name).includes("CONSIGNADO"));
+  if (!fund) throw new Error("Fundo Consignado não cadastrado.");
+  return fund;
+}
+
+async function activeStock(fundId: string) {
+  const stock = await prisma.importBatch.findFirst({
+    where: { fundId, module: "RECEIVABLE_STOCK", source: "CONSIGNADO_STOCK_MANUAL", status: "COMPLETED", isActive: true },
+    orderBy: [{ referenceDate: "desc" }, { version: "desc" }],
+  });
+  if (!stock?.referenceDate) throw new Error("Importe e ative um estoque do Consignado antes de processar baixas.");
+  return stock;
+}
+
+type StockCandidate = Prisma.ReceivableStockPositionGetPayload<{}>;
+
+async function loadCandidates(stockBatchId: string, items: ParsedSettlementItem[]) {
+  const all = new Map<string, StockCandidate>();
+  for (let offset = 0; offset < items.length; offset += 150) {
+    const chunk = items.slice(offset, offset + 150);
+    const clauses: Prisma.ReceivableStockPositionWhereInput[] = [];
+    chunk.forEach((item) => {
+      if (item.yourNumber) clauses.push({ yourNumber: item.yourNumber });
+      if (item.documentNumber) clauses.push({ documentNumber: item.documentNumber });
+      if (item.contractNumber) clauses.push({ documentNumber: item.contractNumber });
+      if (item.debtorDocument) clauses.push({ debtorDocument: { contains: digits(item.debtorDocument) } });
+    });
+    if (!clauses.length) continue;
+    const rows = await prisma.receivableStockPosition.findMany({ where: { batchId: stockBatchId, OR: clauses } });
+    rows.forEach((row) => all.set(row.id, row));
+  }
+  return Array.from(all.values());
+}
+
+function sourceMatches(source: OperationalFlowSource, candidate: StockCandidate) {
+  const cedent = normalized(candidate.cedentName);
+  return source === "UY3" ? cedent.includes("UY3") : cedent.includes("BMP") || cedent.includes("MONEY PLUS");
+}
+
+function chooseCandidate(source: OperationalFlowSource, item: ParsedSettlementItem, candidates: StockCandidate[]) {
+  if (item.parseIssue) return { status: "DIVERGENT" as const, reason: item.parseIssue, candidate: null };
+  const ranked = candidates
+    .filter((candidate) => sourceMatches(source, candidate))
+    .map((candidate) => {
+      let score = 0;
+      if (item.yourNumber && candidate.yourNumber === item.yourNumber) score += 120;
+      if (item.documentNumber && candidate.documentNumber === item.documentNumber) score += 70;
+      if (item.contractNumber && candidate.documentNumber === item.contractNumber) score += 60;
+      if (item.debtorDocument && digits(candidate.debtorDocument) === digits(item.debtorDocument)) score += 25;
+      if (item.debtorName && normalized(candidate.debtorName) === normalized(item.debtorName)) score += 15;
+      if (sameMoney(candidate.nominalValue, item.titleAmount)) score += 15;
+      if (item.dueDate && dateKey(candidate.adjustedDueDate ?? candidate.originalDueDate) === dateKey(item.dueDate)) score += 5;
+      return { candidate, score };
+    })
+    .filter((entry) => entry.score >= 60)
+    .sort((left, right) => right.score - left.score || left.candidate.id.localeCompare(right.candidate.id));
+  if (!ranked.length) return { status: "NOT_FOUND" as const, reason: "Título não encontrado no estoque ativo.", candidate: null };
+  const top = ranked[0];
+  if (ranked[1]?.score === top.score) return { status: "AMBIGUOUS" as const, reason: `${ranked.filter((entry) => entry.score === top.score).length} candidatos equivalentes.`, candidate: null };
+
+  const nominal = Number(top.candidate.nominalValue);
+  const paid = Number(item.paidAmount);
+  if (item.occurrence === "14") {
+    if (!(paid > 0 && paid < nominal)) return { status: "DIVERGENT" as const, reason: "Ocorrência 14 exige valor pago positivo e menor que o valor de face do estoque.", candidate: top.candidate };
+    return { status: "PARTIAL_MATCH" as const, reason: null, candidate: top.candidate };
+  }
+  if (item.occurrence !== "77") return { status: "DIVERGENT" as const, reason: "Ocorrência diferente de 14 ou 77.", candidate: top.candidate };
+  if (!sameMoney(paid, nominal) && paid < nominal) return { status: "DIVERGENT" as const, reason: "Ocorrência 77 com valor pago inferior ao valor de face.", candidate: top.candidate };
+  return { status: "FULL_MATCH" as const, reason: null, candidate: top.candidate };
+}
+
+export async function listConsignadoOriginators() {
+  return prisma.consignadoOriginator.findMany({ where: { active: true }, orderBy: { code: "asc" } });
+}
+
+export async function importSettlementBatch(input: { userId: string; source: OperationalFlowSource; originatorCode?: string; fileName: string; buffer: Buffer }) {
+  const fund = await consignadoFund();
+  const stock = await activeStock(fund.id);
+  if (input.source === "BMP" && !["GIBB", "JUCA", "BANKERIZE"].includes(input.originatorCode ?? "")) {
+    throw new Error("Selecione o originador BMP: GIBB, JUCA ou BANKERIZE.");
+  }
+  const originator = await prisma.consignadoOriginator.findFirst({
+    where: { code: (input.source === "UY3" ? "UY3" : input.originatorCode) as never, source: input.source, active: true },
+  });
+  if (!originator) throw new Error("Originador inválido ou inativo.");
+  const fileHash = createHash("sha256").update(input.buffer).digest("hex");
+  const existing = await prisma.consignadoSettlementBatch.findUnique({
+    where: { fundId_source_fileHash: { fundId: fund.id, source: input.source, fileHash } }, select: { id: true },
+  });
+  if (existing) return { batchId: existing.id, duplicate: true };
+
+  const parsed = input.source === "BMP" ? parseBmpCnab(input.buffer) : parseUy3Workbook(input.buffer);
+  const candidates = await loadCandidates(stock.id, parsed);
+  const usedPositions = new Set<string>();
+  const matched = parsed.map((item) => {
+    const result = chooseCandidate(input.source, item, candidates);
+    if (result.candidate && usedPositions.has(result.candidate.id)) {
+      return { item, status: "DUPLICATE" as SettlementItemStatus, reason: "Título já utilizado neste lote.", candidate: null };
+    }
+    if (result.candidate && MATCHABLE.has(result.status)) usedPositions.add(result.candidate.id);
+    return { item, status: result.status as SettlementItemStatus, reason: result.reason, candidate: result.candidate };
+  });
+  const fullItems = matched.filter((item) => item.status === "FULL_MATCH").length;
+  const partialItems = matched.filter((item) => item.status === "PARTIAL_MATCH").length;
+  const issueItems = matched.length - fullItems - partialItems;
+  const receivedAmount = matched.reduce((sum, entry) => sum.add(entry.item.paidAmount), new Prisma.Decimal(0));
+  const matchedAmount = matched.filter((entry) => MATCHABLE.has(entry.status)).reduce((sum, entry) => sum.add(entry.item.paidAmount), new Prisma.Decimal(0));
+  const safeName = input.fileName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._-]/g, "-");
+  const storageKey = `operacional/consignado/baixas/${Date.now()}-${safeName}`;
+  await put(storageKey, input.buffer, { access: "private", addRandomSuffix: false, contentType: input.source === "BMP" ? "text/plain" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+
+  try {
+    const batch = await prisma.$transaction(async (tx) => {
+      const created = await tx.consignadoSettlementBatch.create({ data: {
+        fundId: fund.id, stockBatchId: stock.id, uploadedByUserId: input.userId, originatorId: originator.id,
+        source: input.source, fileName: input.fileName, fileHash, storageKey, referenceDate: stock.referenceDate!,
+        status: issueItems ? "REVIEW_REQUIRED" : "READY", totalItems: matched.length, fullItems, partialItems, issueItems,
+        receivedAmount, matchedAmount, excludedAmount: receivedAmount.sub(matchedAmount), completedAt: new Date(),
+      }});
+      await tx.consignadoSettlementItem.createMany({ data: matched.map(({ item, status, reason, candidate }) => ({
+        batchId: created.id, sourceRow: item.sourceRow, sourceRaw: item.sourceRaw, occurrence: item.occurrence,
+        contractNumber: item.contractNumber, installmentNumber: item.installmentNumber, yourNumber: item.yourNumber,
+        documentNumber: item.documentNumber, debtorName: item.debtorName, debtorDocument: item.debtorDocument,
+        dueDate: item.dueDate, titleAmount: new Prisma.Decimal(item.titleAmount), paidAmount: new Prisma.Decimal(item.paidAmount),
+        status, statusReason: reason, matchedStockPositionId: candidate?.id ?? null, approved: MATCHABLE.has(status),
+      })) });
+      await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_BATCH", entityId: created.id, toStatus: created.status, metadata: { stockBatchId: stock.id, originator: originator.code } } });
+      return created;
+    });
+    return { batchId: batch.id, duplicate: false };
+  } catch (error) {
+    await del(storageKey).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function refreshBatchTotals(batchId: string) {
+  const items = await prisma.consignadoSettlementItem.findMany({ where: { batchId }, select: { status: true, approved: true, paidAmount: true } });
+  const fullItems = items.filter((item) => item.status === "FULL_MATCH").length;
+  const partialItems = items.filter((item) => item.status === "PARTIAL_MATCH").length;
+  const matchedItems = items.filter((item) => item.approved && MATCHABLE.has(item.status));
+  const received = items.reduce((sum, item) => sum.add(item.paidAmount), new Prisma.Decimal(0));
+  const matched = matchedItems.reduce((sum, item) => sum.add(item.paidAmount), new Prisma.Decimal(0));
+  const issueItems = items.length - matchedItems.length;
+  await prisma.consignadoSettlementBatch.update({ where: { id: batchId }, data: {
+    fullItems, partialItems, issueItems, receivedAmount: received, matchedAmount: matched, excludedAmount: received.sub(matched),
+    status: issueItems ? "REVIEW_REQUIRED" : "READY",
+  }});
+}
+
+export async function searchStockCandidates(batchId: string, query: string) {
+  const batch = await prisma.consignadoSettlementBatch.findUniqueOrThrow({ where: { id: batchId }, select: { stockBatchId: true } });
+  const text = query.trim();
+  const document = digits(text);
+  return prisma.receivableStockPosition.findMany({
+    where: { batchId: batch.stockBatchId, OR: [
+      { yourNumber: { contains: text, mode: "insensitive" } }, { documentNumber: { contains: text, mode: "insensitive" } },
+      ...(document ? [{ debtorDocument: { contains: document } }] : []), { debtorName: { contains: text, mode: "insensitive" } },
+    ] },
+    take: 30, orderBy: [{ debtorName: "asc" }, { originalDueDate: "asc" }],
+    select: { id: true, yourNumber: true, documentNumber: true, debtorName: true, debtorDocument: true, nominalValue: true, originalDueDate: true, adjustedDueDate: true, cedentName: true },
+  });
+}
+
+export async function correctSettlementItem(input: { userId: string; itemId: string; replacementPositionId: string; justification: string }) {
+  const item = await prisma.consignadoSettlementItem.findUniqueOrThrow({ where: { id: input.itemId }, include: { batch: true } });
+  if (item.batch.status === "GENERATED") throw new Error("O lote já possui remessa gerada.");
+  const replacement = await prisma.receivableStockPosition.findFirst({ where: { id: input.replacementPositionId, batchId: item.batch.stockBatchId } });
+  if (!replacement) throw new Error("Título substituto não pertence ao estoque utilizado pelo lote.");
+  const reused = await prisma.consignadoRemittanceItem.findFirst({ where: { stockPositionId: replacement.id, remittance: { status: { not: "CANCELLED" } }, settlementItemId: { not: item.id } } });
+  const usedInBatch = await prisma.consignadoSettlementItem.findFirst({ where: { batchId: item.batchId, id: { not: item.id }, matchedStockPositionId: replacement.id, approved: true } });
+  if (reused || usedInBatch) throw new Error("Este título já está sendo utilizado em outro item ou remessa ativa.");
+  await prisma.$transaction(async (tx) => {
+    await tx.consignadoManualCorrection.updateMany({ where: { itemId: item.id, active: true }, data: { active: false } });
+    await tx.consignadoManualCorrection.create({ data: { itemId: item.id, replacementPositionId: replacement.id, previousPositionId: item.matchedStockPositionId, userId: input.userId, originalYourNumber: item.yourNumber, replacementYourNumber: replacement.yourNumber, justification: input.justification, active: true } });
+    await tx.consignadoSettlementItem.update({ where: { id: item.id }, data: { matchedStockPositionId: replacement.id, status: "MANUALLY_MATCHED", statusReason: "Título substituído manualmente pelo operador.", approved: true, exclusionReason: null } });
+    await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_ITEM", entityId: item.id, fromStatus: item.status, toStatus: "MANUALLY_MATCHED", metadata: { replacementPositionId: replacement.id, justification: input.justification } } });
+  });
+  await refreshBatchTotals(item.batchId);
+}
+
+export async function setSettlementItemDecision(input: { userId: string; itemId: string; action: "APPROVE" | "EXCLUDE"; reason?: string }) {
+  const item = await prisma.consignadoSettlementItem.findUniqueOrThrow({ where: { id: input.itemId }, include: { batch: true } });
+  if (item.batch.status === "GENERATED") throw new Error("O lote já possui remessa gerada.");
+  if (input.action === "APPROVE" && (!item.matchedStockPositionId || !MATCHABLE.has(item.status))) throw new Error("Resolva a divergência antes de aprovar este título.");
+  await prisma.consignadoSettlementItem.update({ where: { id: item.id }, data: input.action === "EXCLUDE"
+    ? { status: "EXCLUDED", approved: false, exclusionReason: input.reason?.trim() || "Excluído pelo operador." }
+    : { approved: true, exclusionReason: null } });
+  await prisma.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_ITEM", entityId: item.id, fromStatus: item.status, toStatus: input.action === "EXCLUDE" ? "EXCLUDED" : item.status, metadata: { reason: input.reason ?? null } } });
+  await refreshBatchTotals(item.batchId);
+}
+
+export async function generateSettlementRemittance(batchId: string, userId: string) {
+  const batch = await prisma.consignadoSettlementBatch.findUniqueOrThrow({ where: { id: batchId }, include: {
+    originator: true, remittances: true, items: { where: { approved: true, matchedStockPositionId: { not: null }, status: { in: ["FULL_MATCH", "PARTIAL_MATCH", "MANUALLY_MATCHED"] } }, include: { matchedStockPosition: true } },
+  }});
+  if (batch.remittances.some((item) => item.status !== "CANCELLED")) throw new Error("Este lote já possui uma remessa ativa.");
+  const items = batch.items.filter((item): item is typeof item & { matchedStockPosition: NonNullable<typeof item.matchedStockPosition> } => Boolean(item.matchedStockPosition));
+  const generated = generateDaycovalCnab(items, batch.remittances.length + 1);
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const fileName = `${batch.source}_${batch.originator?.code ?? "ORIGINADOR"}_${date}_${batch.id.slice(-6)}.REM`;
+  const storageKey = `operacional/consignado/remessas/${fileName}`;
+  await put(storageKey, generated.buffer, { access: "private", addRandomSuffix: false, contentType: "text/plain; charset=iso-8859-1" });
+  const totalAmount = items.reduce((sum, item) => sum.add(item.paidAmount), new Prisma.Decimal(0));
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await tx.consignadoSettlementItem.updateMany({ where: { batchId, approved: false, status: { not: "EXCLUDED" } }, data: { status: "EXCLUDED", exclusionReason: "Não incluído na remessa aprovada." } });
+      const remittance = await tx.consignadoRemittance.create({ data: { batchId, fundId: batch.fundId, generatedByUserId: userId, fileName, storageKey, fileHash: generated.hash, totalItems: items.length, totalAmount } });
+      await tx.consignadoRemittanceItem.createMany({ data: items.map((item) => ({ remittanceId: remittance.id, settlementItemId: item.id, stockPositionId: item.matchedStockPosition.id, yourNumber: item.matchedStockPosition.yourNumber, documentNumber: item.matchedStockPosition.documentNumber, debtorDocument: item.matchedStockPosition.debtorDocument, amount: item.paidAmount, occurrence: item.occurrence ?? "77" })) });
+      await tx.consignadoSettlementBatch.update({ where: { id: batchId }, data: { status: "GENERATED" } });
+      await tx.consignadoStatusEvent.create({ data: { userId, entityType: "REMITTANCE", entityId: remittance.id, toStatus: "GENERATED", metadata: { fileName, totalItems: items.length, totalAmount: totalAmount.toString() } } });
+      return remittance;
+    });
+  } catch (error) { await del(storageKey).catch(() => undefined); throw error; }
+}
+
+export async function getRemittanceDownload(remittanceId: string) {
+  const remittance = await prisma.consignadoRemittance.findUniqueOrThrow({ where: { id: remittanceId }, select: { fileName: true, storageKey: true } });
+  const blob = await get(remittance.storageKey, { access: "private", useCache: false });
+  if (!blob?.stream) throw new Error("Arquivo da remessa não encontrado.");
+  return { fileName: remittance.fileName, stream: blob.stream };
+}
+
+export async function getSettlementWorkspace() {
+  const fund = await consignadoFund();
+  const [originators, batches] = await Promise.all([
+    listConsignadoOriginators(),
+    prisma.consignadoSettlementBatch.findMany({
+      where: { fundId: fund.id },
+      orderBy: { createdAt: "desc" },
+      take: 30,
+      include: {
+        originator: true,
+        stockBatch: { select: { referenceDate: true, version: true } },
+        remittances: { select: { id: true, fileName: true, status: true, stockStatus: true, totalItems: true, totalAmount: true, allocatedAmount: true, generatedAt: true } },
+        items: {
+          orderBy: { sourceRow: "asc" },
+          include: {
+            matchedStockPosition: { select: { id: true, yourNumber: true, documentNumber: true, debtorName: true, debtorDocument: true, nominalValue: true, adjustedDueDate: true, originalDueDate: true } },
+            corrections: { where: { active: true }, select: { id: true, justification: true, replacementYourNumber: true, createdAt: true } },
+          },
+        },
+      },
+    }),
+  ]);
+  return JSON.parse(JSON.stringify({ originators, batches }, (_, value) => value instanceof Prisma.Decimal ? value.toString() : value));
+}
+
+export async function reconcileRemittancesWithStock(stockBatchId: string, userId?: string) {
+  const stock = await prisma.importBatch.findFirstOrThrow({ where: { id: stockBatchId, status: "COMPLETED" }, select: { id: true, fundId: true, referenceDate: true, isActive: true } });
+  if (!stock.isActive || !stock.fundId || !stock.referenceDate) return { processed: 0 };
+  const remittances = await prisma.consignadoRemittance.findMany({ where: { fundId: stock.fundId, stockStatus: { in: ["AWAITING_NEXT_STOCK", "STILL_IN_STOCK"] }, batch: { referenceDate: { lt: stock.referenceDate } } }, include: { items: true } });
+  for (const remittance of remittances) {
+    for (const item of remittance.items) {
+      if (!item.yourNumber && !item.documentNumber) {
+        await prisma.consignadoRemittanceItem.update({ where: { id: item.id }, data: { stockStatus: "REVIEW_REQUIRED", checkedAt: new Date() } });
+        continue;
+      }
+      const present = await prisma.receivableStockPosition.findFirst({ where: { batchId: stock.id, OR: [
+        ...(item.yourNumber ? [{ yourNumber: item.yourNumber }] : []),
+        ...(item.documentNumber ? [{ documentNumber: item.documentNumber, debtorDocument: item.debtorDocument ?? undefined }] : []),
+      ] }, select: { id: true } });
+      await prisma.consignadoRemittanceItem.update({ where: { id: item.id }, data: { stockStatus: present ? "STILL_IN_STOCK" : "CONFIRMED", checkedAt: new Date() } });
+    }
+    const statuses = await prisma.consignadoRemittanceItem.findMany({ where: { remittanceId: remittance.id }, select: { stockStatus: true } });
+    const overall = statuses.some((item) => item.stockStatus === "REVIEW_REQUIRED") ? "REVIEW_REQUIRED" : statuses.some((item) => item.stockStatus === "STILL_IN_STOCK") ? "STILL_IN_STOCK" : "CONFIRMED";
+    await prisma.consignadoRemittance.update({ where: { id: remittance.id }, data: { stockStatus: overall, checkedStockBatchId: stock.id, checkedAt: new Date() } });
+    await prisma.consignadoStatusEvent.create({ data: { userId, entityType: "REMITTANCE_STOCK", entityId: remittance.id, fromStatus: remittance.stockStatus, toStatus: overall, metadata: { stockBatchId: stock.id } } });
+  }
+  return { processed: remittances.length };
+}

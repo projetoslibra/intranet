@@ -27,15 +27,6 @@
 ## 🟡 Próximas (backlog priorizado)
 > Pegue de cima para baixo. Se for começar, mova para "Em andamento".
 
-- [ ] **OC-04 — Modelo de lotes, itens, originadores, correções e remessas** — depende de OC-01
-- [ ] **OC-05 — Parser do fluxo diário BMP** — depende de OC-04
-- [ ] **OC-06 — Parser do fluxo diário UY3** — depende de OC-04
-- [ ] **OC-07 — Matching e classificação contra o estoque** — depende de OC-03/05/06
-- [ ] **OC-08 — Revisão de divergências e substituição manual de títulos** — depende de OC-07
-- [ ] **OC-09 — Geração auditável do CNAB 444 Daycoval** — depende de OC-08
-- [ ] **OC-10 — Importação idempotente do extrato Bradesco** — depende de OC-04
-- [ ] **OC-11 — Conciliação bancária muitos-para-muitos** — depende de OC-09/10
-- [ ] **OC-12 — Confirmação das baixas pelo estoque seguinte** — depende de OC-03/09
 - [ ] **OC-13 — Indicadores, permissões e auditoria operacional** — depende das telas anteriores
 - [ ] **OC-14 — Testes, benchmark e homologação paralela** — contínua por entrega
 - [ ] **Enforcement de permissões** — hoje o middleware só checa login, não as permissões `*.view`/`*.manage`
@@ -45,7 +36,8 @@
 ---
 
 ## 🟢 Concluídas (recentes)
-- [x] **[2026-08-06] OC-01 a OC-03** — Fundação histórica do estoque do Consignado, upload direto para armazenamento privado, processamento reexecutável em blocos e tela de versões/histórico — _Juan_ · branch `feat/operacional-consignado`. Implantação requer migration e `BLOB_READ_WRITE_TOKEN`.
+- [x] **[2026-08-06] OC-04 a OC-12** — Fluxos diários BMP/UY3, matching com estoque, revisão manual, CNAB 444 Daycoval, extrato Bradesco, conciliação muitos-para-muitos e confirmação pelo estoque seguinte — _Juan_ · branch `feat/operacional-consignado`. Alterações locais ainda sem commit; migration não aplicada.
+- [x] **[2026-08-06] OC-01 a OC-03** — Fundação histórica do estoque do Consignado, upload direto para armazenamento privado, processamento reexecutável em blocos e tela de versões/histórico — _Juan_ · branch `feat/operacional-consignado`. Blob privado configurado via OIDC.
 - [x] **[2026-08-03]** Estrutura QProf de cobrança no schema `OSHER`, com tabela para carga do n8n e views por fundo — _Juan_ · branch `feat/qprof-cobranca`.
 - [x] **[2026-08-03]** Ajustes básicos de UX na marca, login e visualização do Caixa — _Juan_ · branch `fix/ajustes-ux-marca-caixa`.
 - [x] **[2026-07-29]** Previsões: tooltip de composição da PDD em saldos históricos, projeções, seleção de cedente/sacado, títulos do estoque e memória de baixas — _João_ · branch `feat/previsoes-tooltip-pdd`.

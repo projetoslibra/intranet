@@ -80,19 +80,87 @@ enum ImportStatus {
   FAILED
 }
 
+enum OperationalFlowSource {
+  BMP
+  UY3
+}
+
+enum OperationalOriginatorCode {
+  GIBB
+  JUCA
+  BANKERIZE
+  UY3
+}
+
+enum SettlementBatchStatus {
+  UPLOADED
+  PROCESSING
+  REVIEW_REQUIRED
+  READY
+  APPROVED
+  GENERATED
+  RECONCILING
+  RECONCILED
+  CANCELLED
+  FAILED
+}
+
+enum SettlementItemStatus {
+  FULL_MATCH
+  PARTIAL_MATCH
+  NOT_FOUND
+  AMBIGUOUS
+  DIVERGENT
+  DUPLICATE
+  MANUALLY_MATCHED
+  EXCLUDED
+}
+
+enum RemittanceStatus {
+  GENERATED
+  RECONCILING
+  RECONCILED
+  CANCELLED
+}
+
+enum StockReconciliationStatus {
+  AWAITING_NEXT_STOCK
+  CONFIRMED
+  STILL_IN_STOCK
+  REVIEW_REQUIRED
+}
+
+enum BankEntryStatus {
+  PENDING
+  PARTIAL
+  RECONCILED
+}
+
+enum BankReconciliationStatus {
+  ACTIVE
+  UNDONE
+}
+
 model User {
-  id                 String                    @id @default(cuid())
-  name               String
-  email              String                    @unique
-  passwordHash       String
-  status             UserStatus                @default(ACTIVE)
-  createdAt          DateTime                  @default(now())
-  updatedAt          DateTime                  @updatedAt
-  auditLogs          AuditLog[]
-  dimensionSnapshots CedentDimensionSnapshot[]
-  fundAccesses       UserFundAccess[]
-  importBatches      ImportBatch[]
-  roles              UserRole[]
+  id                        String                          @id @default(cuid())
+  name                      String
+  email                     String                          @unique
+  passwordHash              String
+  status                    UserStatus                      @default(ACTIVE)
+  createdAt                 DateTime                        @default(now())
+  updatedAt                 DateTime                        @updatedAt
+  auditLogs                 AuditLog[]
+  dimensionSnapshots        CedentDimensionSnapshot[]
+  fundAccesses              UserFundAccess[]
+  importBatches             ImportBatch[]
+  roles                     UserRole[]
+  settlementBatches         ConsignadoSettlementBatch[]
+  manualCorrections         ConsignadoManualCorrection[]
+  generatedRemittances      ConsignadoRemittance[]
+  bankStatementImports      ConsignadoBankStatementImport[]
+  bankReconciliations       ConsignadoBankReconciliation[]  @relation("BankReconciliationCreatedBy")
+  undoneBankReconciliations ConsignadoBankReconciliation[]  @relation("BankReconciliationUndoneBy")
+  operationalStatusEvents   ConsignadoStatusEvent[]
 
   @@map("users")
 }
@@ -137,23 +205,27 @@ model RolePermission {
 }
 
 model Fund {
-  id                  String                    @id @default(cuid())
-  name                String
-  shortName           String
-  cnpj                String                    @unique
-  fundType            FundType
-  status              FundStatus                @default(ACTIVE)
-  startDate           DateTime                  @db.Date
-  createdAt           DateTime                  @default(now())
-  updatedAt           DateTime                  @updatedAt
-  dreEntries          DreEntry[]
-  fundCashFlows       FundCashFlow[]
-  financialPositions  FinancialPosition[]
-  importBatches       ImportBatch[]
-  quotes              FundQuote[]
-  receivablePositions ReceivableStockPosition[]
-  userAccesses        UserFundAccess[]
-  cashDailyBalances   CompanyCashDailyBalance[]
+  id                    String                          @id @default(cuid())
+  name                  String
+  shortName             String
+  cnpj                  String                          @unique
+  fundType              FundType
+  status                FundStatus                      @default(ACTIVE)
+  startDate             DateTime                        @db.Date
+  createdAt             DateTime                        @default(now())
+  updatedAt             DateTime                        @updatedAt
+  dreEntries            DreEntry[]
+  fundCashFlows         FundCashFlow[]
+  financialPositions    FinancialPosition[]
+  importBatches         ImportBatch[]
+  quotes                FundQuote[]
+  receivablePositions   ReceivableStockPosition[]
+  userAccesses          UserFundAccess[]
+  cashDailyBalances     CompanyCashDailyBalance[]
+  settlementBatches     ConsignadoSettlementBatch[]
+  consignadoRemittances ConsignadoRemittance[]
+  bankStatementImports  ConsignadoBankStatementImport[]
+  bankCreditEntries     ConsignadoBankCreditEntry[]
 
   @@map("funds")
 }
@@ -332,7 +404,7 @@ model CaixaSingulare {
 }
 
 model ImportBatch {
-  id                     String                    @id @default(cuid())
+  id                     String                      @id @default(cuid())
   importedByUserId       String
   module                 ImportModule
   fileName               String
@@ -340,28 +412,30 @@ model ImportBatch {
   fileSize               Int?
   source                 String?
   storageKey             String?
-  referenceDate          DateTime?                 @db.Date
+  referenceDate          DateTime?                   @db.Date
   fundId                 String?
-  version                Int                       @default(1)
-  isActive               Boolean                   @default(false)
-  status                 ImportStatus              @default(PENDING)
-  totalRows              Int                       @default(0)
-  progressRows           Int                       @default(0)
-  importedRows           Int                       @default(0)
-  errorRows              Int                       @default(0)
-  warningRows            Int                       @default(0)
+  version                Int                         @default(1)
+  isActive               Boolean                     @default(false)
+  status                 ImportStatus                @default(PENDING)
+  totalRows              Int                         @default(0)
+  progressRows           Int                         @default(0)
+  importedRows           Int                         @default(0)
+  errorRows              Int                         @default(0)
+  warningRows            Int                         @default(0)
   errorMessage           String?
   metadata               Json?
-  createdAt              DateTime                  @default(now())
+  createdAt              DateTime                    @default(now())
   startedAt              DateTime?
   completedAt            DateTime?
   dimensionSnapshot      CedentDimensionSnapshot?
-  fund                   Fund?                     @relation(fields: [fundId], references: [id], onDelete: Restrict)
-  importedByUser         User                      @relation(fields: [importedByUserId], references: [id], onDelete: Restrict)
+  fund                   Fund?                       @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  importedByUser         User                        @relation(fields: [importedByUserId], references: [id], onDelete: Restrict)
   receivablePositions    ReceivableStockPosition[]
   riskLimitPositions     RiskLimitPosition[]
   fidcOpenMovements      FidcMovimentoAberto[]
   fidcSettledReceivables FidcLiquidadoBaixado[]
+  settlementBatches      ConsignadoSettlementBatch[] @relation("SettlementStockSnapshot")
+  checkedRemittances     ConsignadoRemittance[]      @relation("RemittanceCheckedStock")
 
   @@index([module, referenceDate])
   @@index([fundId, referenceDate])
@@ -401,44 +475,47 @@ model CedentDimensionEntry {
 }
 
 model ReceivableStockPosition {
-  id                  String      @id @default(cuid())
-  batchId             String
-  fundId              String
-  fundName            String      @map("fund_name")
-  fundDocument        String      @map("fund_document")
-  fundDate            DateTime?   @map("fund_date") @db.Date
-  originatorName      String?     @map("originator_name")
-  originatorDocument  String?     @map("originator_document")
-  cedentName          String      @map("cedent_name")
-  cedentDocument      String      @map("cedent_document")
-  debtorName          String      @map("debtor_name")
-  debtorDocument      String      @map("debtor_document")
-  yourNumber          String?     @map("your_number")
-  documentKey         String?     @map("document_key")
-  status              String?
-  documentNumber      String?     @map("document_number")
-  receivableType      String?     @map("receivable_type")
-  nominalValue        Decimal     @default(0) @map("nominal_value") @db.Decimal(24, 10)
-  presentValue        Decimal     @default(0) @map("present_value") @db.Decimal(24, 10)
-  acquisitionValue    Decimal     @default(0) @map("acquisition_value") @db.Decimal(24, 10)
-  pddValue            Decimal     @default(0) @map("pdd_value") @db.Decimal(24, 10)
-  pddRange            String?     @map("pdd_range")
-  referenceDate       DateTime    @map("reference_date") @db.Date
-  originalDueDate     DateTime?   @map("original_due_date") @db.Date
-  adjustedDueDate     DateTime?   @map("adjusted_due_date") @db.Date
-  issuedAt            DateTime?   @map("issued_at") @db.Date
-  acquiredAt          DateTime?   @map("acquired_at") @db.Date
-  term                Int?
-  currentTerm         Int?        @map("current_term")
-  receivableSituation String?     @map("receivable_situation")
-  assignmentRate      Decimal?    @map("assignment_rate") @db.Decimal(18, 10)
-  receivableRate      Decimal?    @map("receivable_rate") @db.Decimal(18, 10)
-  coobligation        String?
-  sourceRow           Int?        @map("source_row")
-  rowHash             String?     @map("row_hash")
-  createdAt           DateTime    @default(now()) @map("created_at")
-  batch               ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  fund                Fund        @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  id                     String                       @id @default(cuid())
+  batchId                String
+  fundId                 String
+  fundName               String                       @map("fund_name")
+  fundDocument           String                       @map("fund_document")
+  fundDate               DateTime?                    @map("fund_date") @db.Date
+  originatorName         String?                      @map("originator_name")
+  originatorDocument     String?                      @map("originator_document")
+  cedentName             String                       @map("cedent_name")
+  cedentDocument         String                       @map("cedent_document")
+  debtorName             String                       @map("debtor_name")
+  debtorDocument         String                       @map("debtor_document")
+  yourNumber             String?                      @map("your_number")
+  documentKey            String?                      @map("document_key")
+  status                 String?
+  documentNumber         String?                      @map("document_number")
+  receivableType         String?                      @map("receivable_type")
+  nominalValue           Decimal                      @default(0) @map("nominal_value") @db.Decimal(24, 10)
+  presentValue           Decimal                      @default(0) @map("present_value") @db.Decimal(24, 10)
+  acquisitionValue       Decimal                      @default(0) @map("acquisition_value") @db.Decimal(24, 10)
+  pddValue               Decimal                      @default(0) @map("pdd_value") @db.Decimal(24, 10)
+  pddRange               String?                      @map("pdd_range")
+  referenceDate          DateTime                     @map("reference_date") @db.Date
+  originalDueDate        DateTime?                    @map("original_due_date") @db.Date
+  adjustedDueDate        DateTime?                    @map("adjusted_due_date") @db.Date
+  issuedAt               DateTime?                    @map("issued_at") @db.Date
+  acquiredAt             DateTime?                    @map("acquired_at") @db.Date
+  term                   Int?
+  currentTerm            Int?                         @map("current_term")
+  receivableSituation    String?                      @map("receivable_situation")
+  assignmentRate         Decimal?                     @map("assignment_rate") @db.Decimal(18, 10)
+  receivableRate         Decimal?                     @map("receivable_rate") @db.Decimal(18, 10)
+  coobligation           String?
+  sourceRow              Int?                         @map("source_row")
+  rowHash                String?                      @map("row_hash")
+  createdAt              DateTime                     @default(now()) @map("created_at")
+  batch                  ImportBatch                  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  fund                   Fund                         @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  matchedSettlementItems ConsignadoSettlementItem[]   @relation("SettlementMatchedStock")
+  correctionReplacements ConsignadoManualCorrection[] @relation("CorrectionReplacementStock")
+  remittanceItems        ConsignadoRemittanceItem[]
 
   @@unique([batchId, sourceRow])
   @@index([batchId])
@@ -449,6 +526,248 @@ model ReceivableStockPosition {
   @@index([referenceDate, cedentDocument])
   @@index([referenceDate, debtorDocument])
   @@map("receivable_stock_positions")
+}
+
+model ConsignadoOriginator {
+  id        String                      @id @default(cuid())
+  code      OperationalOriginatorCode   @unique
+  name      String
+  source    OperationalFlowSource
+  active    Boolean                     @default(true)
+  createdAt DateTime                    @default(now()) @map("created_at")
+  batches   ConsignadoSettlementBatch[]
+
+  @@map("consignado_originators")
+}
+
+model ConsignadoSettlementBatch {
+  id               String                     @id @default(cuid())
+  fundId           String                     @map("fund_id")
+  stockBatchId     String                     @map("stock_batch_id")
+  uploadedByUserId String                     @map("uploaded_by_user_id")
+  originatorId     String?                    @map("originator_id")
+  source           OperationalFlowSource
+  fileName         String                     @map("file_name")
+  fileHash         String                     @map("file_hash")
+  storageKey       String?                    @map("storage_key")
+  referenceDate    DateTime                   @map("reference_date") @db.Date
+  status           SettlementBatchStatus      @default(UPLOADED)
+  totalItems       Int                        @default(0) @map("total_items")
+  fullItems        Int                        @default(0) @map("full_items")
+  partialItems     Int                        @default(0) @map("partial_items")
+  issueItems       Int                        @default(0) @map("issue_items")
+  receivedAmount   Decimal                    @default(0) @map("received_amount") @db.Decimal(24, 2)
+  matchedAmount    Decimal                    @default(0) @map("matched_amount") @db.Decimal(24, 2)
+  excludedAmount   Decimal                    @default(0) @map("excluded_amount") @db.Decimal(24, 2)
+  errorMessage     String?                    @map("error_message")
+  createdAt        DateTime                   @default(now()) @map("created_at")
+  updatedAt        DateTime                   @updatedAt @map("updated_at")
+  completedAt      DateTime?                  @map("completed_at")
+  fund             Fund                       @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  stockBatch       ImportBatch                @relation("SettlementStockSnapshot", fields: [stockBatchId], references: [id], onDelete: Restrict)
+  uploadedBy       User                       @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+  originator       ConsignadoOriginator?      @relation(fields: [originatorId], references: [id], onDelete: Restrict)
+  items            ConsignadoSettlementItem[]
+  remittances      ConsignadoRemittance[]
+
+  @@unique([fundId, source, fileHash])
+  @@index([fundId, referenceDate, status])
+  @@index([stockBatchId])
+  @@map("consignado_settlement_batches")
+}
+
+model ConsignadoSettlementItem {
+  id                     String                       @id @default(cuid())
+  batchId                String                       @map("batch_id")
+  sourceRow              Int                          @map("source_row")
+  sourceRaw              String?                      @map("source_raw")
+  occurrence             String?
+  contractNumber         String?                      @map("contract_number")
+  installmentNumber      String?                      @map("installment_number")
+  yourNumber             String?                      @map("your_number")
+  documentNumber         String?                      @map("document_number")
+  debtorName             String?                      @map("debtor_name")
+  debtorDocument         String?                      @map("debtor_document")
+  dueDate                DateTime?                    @map("due_date") @db.Date
+  titleAmount            Decimal                      @default(0) @map("title_amount") @db.Decimal(24, 2)
+  paidAmount             Decimal                      @default(0) @map("paid_amount") @db.Decimal(24, 2)
+  status                 SettlementItemStatus
+  statusReason           String?                      @map("status_reason")
+  matchedStockPositionId String?                      @map("matched_stock_position_id")
+  approved               Boolean                      @default(false)
+  exclusionReason        String?                      @map("exclusion_reason")
+  createdAt              DateTime                     @default(now()) @map("created_at")
+  updatedAt              DateTime                     @updatedAt @map("updated_at")
+  batch                  ConsignadoSettlementBatch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  matchedStockPosition   ReceivableStockPosition?     @relation("SettlementMatchedStock", fields: [matchedStockPositionId], references: [id], onDelete: Restrict)
+  corrections            ConsignadoManualCorrection[]
+  remittanceItem         ConsignadoRemittanceItem?
+
+  @@unique([batchId, sourceRow])
+  @@index([batchId, status])
+  @@index([yourNumber])
+  @@index([contractNumber])
+  @@map("consignado_settlement_items")
+}
+
+model ConsignadoManualCorrection {
+  id                    String                   @id @default(cuid())
+  itemId                String                   @map("item_id")
+  replacementPositionId String                   @map("replacement_position_id")
+  userId                String                   @map("user_id")
+  previousPositionId    String?                  @map("previous_position_id")
+  originalYourNumber    String?                  @map("original_your_number")
+  replacementYourNumber String?                  @map("replacement_your_number")
+  justification         String
+  active                Boolean                  @default(true)
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  item                  ConsignadoSettlementItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  replacementPosition   ReceivableStockPosition  @relation("CorrectionReplacementStock", fields: [replacementPositionId], references: [id], onDelete: Restrict)
+  user                  User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([itemId, active])
+  @@index([replacementPositionId])
+  @@map("consignado_manual_corrections")
+}
+
+model ConsignadoRemittance {
+  id                  String                     @id @default(cuid())
+  batchId             String                     @map("batch_id")
+  fundId              String                     @map("fund_id")
+  generatedByUserId   String                     @map("generated_by_user_id")
+  fileName            String                     @map("file_name")
+  storageKey          String                     @map("storage_key")
+  fileHash            String                     @map("file_hash")
+  status              RemittanceStatus           @default(GENERATED)
+  stockStatus         StockReconciliationStatus  @default(AWAITING_NEXT_STOCK) @map("stock_status")
+  totalItems          Int                        @map("total_items")
+  totalAmount         Decimal                    @map("total_amount") @db.Decimal(24, 2)
+  allocatedAmount     Decimal                    @default(0) @map("allocated_amount") @db.Decimal(24, 2)
+  generatedAt         DateTime                   @default(now()) @map("generated_at")
+  checkedStockBatchId String?                    @map("checked_stock_batch_id")
+  checkedAt           DateTime?                  @map("checked_at")
+  batch               ConsignadoSettlementBatch  @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  fund                Fund                       @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  generatedBy         User                       @relation(fields: [generatedByUserId], references: [id], onDelete: Restrict)
+  checkedStockBatch   ImportBatch?               @relation("RemittanceCheckedStock", fields: [checkedStockBatchId], references: [id], onDelete: Restrict)
+  items               ConsignadoRemittanceItem[]
+  bankAllocations     ConsignadoBankAllocation[]
+
+  @@unique([batchId])
+  @@unique([storageKey])
+  @@index([fundId, status])
+  @@index([stockStatus, generatedAt])
+  @@map("consignado_remittances")
+}
+
+model ConsignadoRemittanceItem {
+  id               String                    @id @default(cuid())
+  remittanceId     String                    @map("remittance_id")
+  settlementItemId String                    @unique @map("settlement_item_id")
+  stockPositionId  String                    @map("stock_position_id")
+  yourNumber       String?                   @map("your_number")
+  documentNumber   String?                   @map("document_number")
+  debtorDocument   String?                   @map("debtor_document")
+  amount           Decimal                   @db.Decimal(24, 2)
+  occurrence       String
+  stockStatus      StockReconciliationStatus @default(AWAITING_NEXT_STOCK) @map("stock_status")
+  checkedAt        DateTime?                 @map("checked_at")
+  remittance       ConsignadoRemittance      @relation(fields: [remittanceId], references: [id], onDelete: Cascade)
+  settlementItem   ConsignadoSettlementItem  @relation(fields: [settlementItemId], references: [id], onDelete: Restrict)
+  stockPosition    ReceivableStockPosition   @relation(fields: [stockPositionId], references: [id], onDelete: Restrict)
+
+  @@index([remittanceId, stockStatus])
+  @@index([yourNumber, documentNumber])
+  @@map("consignado_remittance_items")
+}
+
+model ConsignadoBankStatementImport {
+  id               String                      @id @default(cuid())
+  fundId           String                      @map("fund_id")
+  importedByUserId String                      @map("imported_by_user_id")
+  fileName         String                      @map("file_name")
+  fileHash         String                      @map("file_hash")
+  agency           String?
+  account          String?
+  totalRows        Int                         @default(0) @map("total_rows")
+  importedRows     Int                         @default(0) @map("imported_rows")
+  duplicateRows    Int                         @default(0) @map("duplicate_rows")
+  ignoredRows      Int                         @default(0) @map("ignored_rows")
+  createdAt        DateTime                    @default(now()) @map("created_at")
+  fund             Fund                        @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  importedBy       User                        @relation(fields: [importedByUserId], references: [id], onDelete: Restrict)
+  entries          ConsignadoBankCreditEntry[]
+
+  @@unique([fundId, fileHash])
+  @@map("consignado_bank_statement_imports")
+}
+
+model ConsignadoBankCreditEntry {
+  id              String                        @id @default(cuid())
+  importId        String                        @map("import_id")
+  fundId          String                        @map("fund_id")
+  transactionDate DateTime                      @map("transaction_date") @db.Date
+  description     String
+  document        String?
+  amount          Decimal                       @db.Decimal(24, 2)
+  allocatedAmount Decimal                       @default(0) @map("allocated_amount") @db.Decimal(24, 2)
+  fingerprint     String                        @unique
+  status          BankEntryStatus               @default(PENDING)
+  createdAt       DateTime                      @default(now()) @map("created_at")
+  statementImport ConsignadoBankStatementImport @relation(fields: [importId], references: [id], onDelete: Restrict)
+  fund            Fund                          @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  allocations     ConsignadoBankAllocation[]
+
+  @@index([fundId, status, transactionDate])
+  @@map("consignado_bank_credit_entries")
+}
+
+model ConsignadoBankReconciliation {
+  id              String                     @id @default(cuid())
+  createdByUserId String                     @map("created_by_user_id")
+  undoneByUserId  String?                    @map("undone_by_user_id")
+  status          BankReconciliationStatus   @default(ACTIVE)
+  totalAmount     Decimal                    @map("total_amount") @db.Decimal(24, 2)
+  note            String?
+  createdAt       DateTime                   @default(now()) @map("created_at")
+  undoneAt        DateTime?                  @map("undone_at")
+  createdBy       User                       @relation("BankReconciliationCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  undoneBy        User?                      @relation("BankReconciliationUndoneBy", fields: [undoneByUserId], references: [id], onDelete: Restrict)
+  allocations     ConsignadoBankAllocation[]
+
+  @@index([status, createdAt])
+  @@map("consignado_bank_reconciliations")
+}
+
+model ConsignadoBankAllocation {
+  id               String                       @id @default(cuid())
+  reconciliationId String                       @map("reconciliation_id")
+  bankEntryId      String                       @map("bank_entry_id")
+  remittanceId     String                       @map("remittance_id")
+  amount           Decimal                      @db.Decimal(24, 2)
+  reconciliation   ConsignadoBankReconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+  bankEntry        ConsignadoBankCreditEntry    @relation(fields: [bankEntryId], references: [id], onDelete: Restrict)
+  remittance       ConsignadoRemittance         @relation(fields: [remittanceId], references: [id], onDelete: Restrict)
+
+  @@unique([reconciliationId, bankEntryId, remittanceId])
+  @@index([bankEntryId])
+  @@index([remittanceId])
+  @@map("consignado_bank_allocations")
+}
+
+model ConsignadoStatusEvent {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  fromStatus String?  @map("from_status")
+  toStatus   String   @map("to_status")
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId, createdAt])
+  @@map("consignado_status_events")
 }
 
 model FidcEstoque {
