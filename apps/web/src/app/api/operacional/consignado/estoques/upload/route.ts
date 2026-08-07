@@ -1,4 +1,8 @@
-import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
+import { issueSignedToken } from "@vercel/blob";
+import {
+  handleUploadPresigned,
+  type HandleUploadPresignedBody,
+} from "@vercel/blob/client";
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
@@ -16,26 +20,38 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const body = (await request.json()) as HandleUploadBody;
-    const response = await handleUpload({
+    const body = (await request.json()) as HandleUploadPresignedBody;
+    const response = await handleUploadPresigned({
       body,
       request,
-      onBeforeGenerateToken: async (pathname) => {
+      getSignedToken: async (pathname) => {
         if (
           !pathname.startsWith(consignadoStockUploadConfig.pathPrefix) ||
           !pathname.toLowerCase().endsWith(".xlsx")
         ) {
           throw new Error("Caminho ou extensão de arquivo inválidos.");
         }
+        const allowedContentTypes = [
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "application/octet-stream",
+        ];
+        const maximumSizeInBytes = consignadoStockUploadConfig.maxFileSize;
+        const token = await issueSignedToken({
+          pathname,
+          operations: ["put"],
+          allowedContentTypes,
+          maximumSizeInBytes,
+        });
+
         return {
-          allowedContentTypes: [
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/octet-stream",
-          ],
-          maximumSizeInBytes: consignadoStockUploadConfig.maxFileSize,
-          addRandomSuffix: true,
-          allowOverwrite: false,
-          tokenPayload: JSON.stringify({ userId: session.user.id }),
+          token,
+          urlOptions: {
+            allowedContentTypes,
+            maximumSizeInBytes,
+            addRandomSuffix: true,
+            allowOverwrite: false,
+            tokenPayload: JSON.stringify({ userId: session.user.id }),
+          },
         };
       },
     });

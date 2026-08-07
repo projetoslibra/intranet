@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { upload } from "@vercel/blob/client";
+import { uploadPresigned } from "@vercel/blob/client";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -138,7 +138,7 @@ export function ConsignadoStockPanel({ canManage, initialBatches }: Props) {
       const fileHash = await sha256(file);
       setStage("Enviando para o armazenamento privado...");
       const pathname = `operacional/consignado/estoques/${Date.now()}-${safeFileName(file.name)}`;
-      const blob = await upload(pathname, file, {
+      const blob = await uploadPresigned(pathname, file, {
         access: "private",
         handleUploadUrl: "/api/operacional/consignado/estoques/upload",
         onUploadProgress: ({ percentage }) => setUploadProgress(Math.round(percentage)),
