@@ -22,22 +22,30 @@ export async function importBradescoStatement(input: { userId: string; fileName:
   if (duplicateFile) return { duplicateFile: true, importedRows: 0, duplicateRows: duplicateFile.importedRows, ignoredRows: duplicateFile.ignoredRows };
   const parsed = parseBradescoStatement(input.buffer);
   const rows = parsed.entries.map((entry) => ({ ...entry, fingerprint: fingerprint([consignado.id, entry.transactionDate.toISOString().slice(0, 10), entry.document, entry.amount, entry.description]) }));
-  const existing = new Set((await prisma.consignadoBankCreditEntry.findMany({ where: { fingerprint: { in: rows.map((row) => row.fingerprint) } }, select: { fingerprint: true } })).map((row) => row.fingerprint));
-  const newRows = rows.filter((row) => !existing.has(row.fingerprint));
   const statementImport = await prisma.$transaction(async (tx) => {
     const created = await tx.consignadoBankStatementImport.create({ data: {
       fundId: consignado.id, importedByUserId: input.userId, fileName: input.fileName, fileHash,
-      agency: parsed.agency, account: parsed.account, totalRows: parsed.totalRows, importedRows: newRows.length,
-      duplicateRows: rows.length - newRows.length, ignoredRows: parsed.ignoredRows,
+      agency: parsed.agency, account: parsed.account, totalRows: parsed.totalRows,
+      importedRows: 0, duplicateRows: 0, ignoredRows: parsed.ignoredRows,
     }});
-    if (newRows.length) await tx.consignadoBankCreditEntry.createMany({ data: newRows.map((row) => ({
-      importId: created.id, fundId: consignado.id, transactionDate: row.transactionDate, description: row.description,
-      document: row.document, amount: new Prisma.Decimal(row.amount), fingerprint: row.fingerprint,
-    })) });
-    await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "BANK_STATEMENT_IMPORT", entityId: created.id, toStatus: "COMPLETED", metadata: { importedRows: newRows.length, duplicateRows: rows.length - newRows.length, ignoredRows: parsed.ignoredRows } } });
-    return created;
+    const inserted = rows.length
+      ? await tx.consignadoBankCreditEntry.createMany({
+          data: rows.map((row) => ({
+            importId: created.id, fundId: consignado.id, transactionDate: row.transactionDate, description: row.description,
+            document: row.document, amount: new Prisma.Decimal(row.amount), fingerprint: row.fingerprint,
+          })),
+          skipDuplicates: true,
+        })
+      : { count: 0 };
+    const duplicateRows = rows.length - inserted.count;
+    const updated = await tx.consignadoBankStatementImport.update({
+      where: { id: created.id },
+      data: { importedRows: inserted.count, duplicateRows },
+    });
+    await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "BANK_STATEMENT_IMPORT", entityId: created.id, toStatus: "COMPLETED", metadata: { importedRows: inserted.count, duplicateRows, ignoredRows: parsed.ignoredRows } } });
+    return updated;
   });
-  return { id: statementImport.id, duplicateFile: false, importedRows: newRows.length, duplicateRows: rows.length - newRows.length, ignoredRows: parsed.ignoredRows };
+  return { id: statementImport.id, duplicateFile: false, importedRows: statementImport.importedRows, duplicateRows: statementImport.duplicateRows, ignoredRows: parsed.ignoredRows };
 }
 
 function entryStatus(amount: Prisma.Decimal, allocated: Prisma.Decimal) {
