@@ -570,7 +570,7 @@ model ConsignadoSettlementBatch {
   items            ConsignadoSettlementItem[]
   remittances      ConsignadoRemittance[]
 
-  @@unique([fundId, source, fileHash])
+  @@index([fundId, source, fileHash])
   @@index([fundId, referenceDate, status])
   @@index([stockBatchId])
   @@map("consignado_settlement_batches")

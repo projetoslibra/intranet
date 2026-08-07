@@ -24,7 +24,22 @@ export async function POST(request: NextRequest) {
     if (!(file instanceof File)) throw new Error("Selecione o arquivo de baixa.");
     if (!(["BMP", "UY3"] as string[]).includes(source)) throw new Error("Selecione BMP ou UY3.");
     if (file.size > 15 * 1024 * 1024) throw new Error("O arquivo de baixa deve possuir no máximo 15 MB.");
-    const result = await importSettlementBatch({ userId: session.user.id, source: source as "BMP" | "UY3", originatorCode: String(form.get("originator") ?? ""), fileName: file.name, buffer: Buffer.from(await file.arrayBuffer()) });
-    return NextResponse.json({ ok: true, result, message: result.duplicate ? "Este arquivo já foi processado." : "Arquivo processado e confrontado com o estoque ativo." });
+    const result = await importSettlementBatch({
+      userId: session.user.id,
+      source: source as "BMP" | "UY3",
+      originatorCode: String(form.get("originator") ?? ""),
+      fileName: file.name,
+      buffer: Buffer.from(await file.arrayBuffer()),
+      allowDuplicate: form.get("allowDuplicate") === "true",
+    });
+    const previousDate = result.previousCreatedAt
+      ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" }).format(new Date(result.previousCreatedAt))
+      : null;
+    const message = result.requiresConfirmation
+      ? `Este arquivo já foi processado em ${previousDate}. Deseja processá-lo novamente?`
+      : result.duplicate
+        ? "Arquivo repetido processado novamente e confrontado com o estoque ativo."
+        : "Arquivo processado e confrontado com o estoque ativo.";
+    return NextResponse.json({ ok: true, result, message });
   } catch (error) { return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Erro ao processar baixa." }, { status: 400 }); }
 }

@@ -6,6 +6,7 @@ import { generateDaycovalCnab } from "./consignado-cnab";
 import { parseBmpCnab, parseUy3Workbook, type ParsedSettlementItem } from "./consignado-parsers";
 
 const CONSIGNADO_CNPJ = "54842157000193";
+export const BULK_UNDERPAID_LIMIT_PERCENT = 10;
 const MATCHABLE = new Set<SettlementItemStatus>(["FULL_MATCH", "PARTIAL_MATCH", "MANUALLY_MATCHED"]);
 
 function digits(value: unknown) { return String(value ?? "").replace(/\D/g, ""); }
@@ -14,6 +15,18 @@ function normalized(value: unknown) {
 }
 function sameMoney(left: unknown, right: unknown) { return Math.abs(Number(left) - Number(right)) < 0.01; }
 function dateKey(value: Date | null | undefined) { return value?.toISOString().slice(0, 10) ?? null; }
+function underpaid77Difference(item: {
+  occurrence: string | null;
+  status: SettlementItemStatus;
+  paidAmount: Prisma.Decimal;
+  matchedStockPosition: { nominalValue: Prisma.Decimal } | null;
+}) {
+  if (item.occurrence !== "77" || item.status !== "DIVERGENT" || !item.matchedStockPosition) return null;
+  const nominal = item.matchedStockPosition.nominalValue;
+  if (nominal.lte(0) || item.paidAmount.lte(0) || item.paidAmount.gte(nominal)) return null;
+  const difference = nominal.sub(item.paidAmount);
+  return { nominal, difference, percentage: difference.div(nominal).mul(100) };
+}
 
 async function consignadoFund() {
   const funds = await prisma.fund.findMany({ where: { status: "ACTIVE" }, select: { id: true, cnpj: true, name: true } });
@@ -92,7 +105,7 @@ export async function listConsignadoOriginators() {
   return prisma.consignadoOriginator.findMany({ where: { active: true }, orderBy: { code: "asc" } });
 }
 
-export async function importSettlementBatch(input: { userId: string; source: OperationalFlowSource; originatorCode?: string; fileName: string; buffer: Buffer }) {
+export async function importSettlementBatch(input: { userId: string; source: OperationalFlowSource; originatorCode?: string; fileName: string; buffer: Buffer; allowDuplicate?: boolean }) {
   const fund = await consignadoFund();
   const stock = await activeStock(fund.id);
   if (input.source === "BMP" && !["GIBB", "JUCA", "BANKERIZE"].includes(input.originatorCode ?? "")) {
@@ -103,10 +116,17 @@ export async function importSettlementBatch(input: { userId: string; source: Ope
   });
   if (!originator) throw new Error("Originador inválido ou inativo.");
   const fileHash = createHash("sha256").update(input.buffer).digest("hex");
-  const existing = await prisma.consignadoSettlementBatch.findUnique({
-    where: { fundId_source_fileHash: { fundId: fund.id, source: input.source, fileHash } }, select: { id: true },
+  const existing = await prisma.consignadoSettlementBatch.findFirst({
+    where: { fundId: fund.id, source: input.source, fileHash },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, createdAt: true },
   });
-  if (existing) return { batchId: existing.id, duplicate: true };
+  if (existing && !input.allowDuplicate) return {
+    batchId: existing.id,
+    duplicate: true,
+    requiresConfirmation: true,
+    previousCreatedAt: existing.createdAt.toISOString(),
+  };
 
   const parsed = input.source === "BMP" ? parseBmpCnab(input.buffer) : parseUy3Workbook(input.buffer);
   const candidates = await loadCandidates(stock.id, parsed);
@@ -116,7 +136,8 @@ export async function importSettlementBatch(input: { userId: string; source: Ope
     if (result.candidate && usedPositions.has(result.candidate.id)) {
       return { item, status: "DUPLICATE" as SettlementItemStatus, reason: "Título já utilizado neste lote.", candidate: null };
     }
-    if (result.candidate && MATCHABLE.has(result.status)) usedPositions.add(result.candidate.id);
+    const isUnderpaid77 = result.status === "DIVERGENT" && item.occurrence === "77" && Number(item.paidAmount) > 0 && Number(item.paidAmount) < Number(result.candidate?.nominalValue ?? 0);
+    if (result.candidate && (MATCHABLE.has(result.status) || isUnderpaid77)) usedPositions.add(result.candidate.id);
     return { item, status: result.status as SettlementItemStatus, reason: result.reason, candidate: result.candidate };
   });
   const fullItems = matched.filter((item) => item.status === "FULL_MATCH").length;
@@ -143,10 +164,10 @@ export async function importSettlementBatch(input: { userId: string; source: Ope
         dueDate: item.dueDate, titleAmount: new Prisma.Decimal(item.titleAmount), paidAmount: new Prisma.Decimal(item.paidAmount),
         status, statusReason: reason, matchedStockPositionId: candidate?.id ?? null, approved: MATCHABLE.has(status),
       })) });
-      await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_BATCH", entityId: created.id, toStatus: created.status, metadata: { stockBatchId: stock.id, originator: originator.code } } });
+      await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_BATCH", entityId: created.id, toStatus: created.status, metadata: { stockBatchId: stock.id, originator: originator.code, repeatedFileOfBatchId: existing?.id ?? null } } });
       return created;
     });
-    return { batchId: batch.id, duplicate: false };
+    return { batchId: batch.id, duplicate: Boolean(existing), requiresConfirmation: false, previousCreatedAt: existing?.createdAt.toISOString() ?? null };
   } catch (error) {
     await del(storageKey).catch(() => undefined);
     throw error;
@@ -154,13 +175,16 @@ export async function importSettlementBatch(input: { userId: string; source: Ope
 }
 
 async function refreshBatchTotals(batchId: string) {
-  const items = await prisma.consignadoSettlementItem.findMany({ where: { batchId }, select: { status: true, approved: true, paidAmount: true } });
+  const items = await prisma.consignadoSettlementItem.findMany({ where: { batchId }, select: {
+    status: true, approved: true, paidAmount: true, occurrence: true,
+    matchedStockPosition: { select: { nominalValue: true } },
+  } });
   const fullItems = items.filter((item) => item.status === "FULL_MATCH").length;
   const partialItems = items.filter((item) => item.status === "PARTIAL_MATCH").length;
-  const matchedItems = items.filter((item) => item.approved && MATCHABLE.has(item.status));
+  const matchedItems = items.filter((item) => item.approved && (MATCHABLE.has(item.status) || Boolean(underpaid77Difference(item))));
   const received = items.reduce((sum, item) => sum.add(item.paidAmount), new Prisma.Decimal(0));
   const matched = matchedItems.reduce((sum, item) => sum.add(item.paidAmount), new Prisma.Decimal(0));
-  const issueItems = items.length - matchedItems.length;
+  const issueItems = items.filter((item) => !item.approved && item.status !== "EXCLUDED").length;
   await prisma.consignadoSettlementBatch.update({ where: { id: batchId }, data: {
     fullItems, partialItems, issueItems, receivedAmount: received, matchedAmount: matched, excludedAmount: received.sub(matched),
     status: issueItems ? "REVIEW_REQUIRED" : "READY",
@@ -199,22 +223,65 @@ export async function correctSettlementItem(input: { userId: string; itemId: str
 }
 
 export async function setSettlementItemDecision(input: { userId: string; itemId: string; action: "APPROVE" | "EXCLUDE"; reason?: string }) {
-  const item = await prisma.consignadoSettlementItem.findUniqueOrThrow({ where: { id: input.itemId }, include: { batch: true } });
+  const item = await prisma.consignadoSettlementItem.findUniqueOrThrow({ where: { id: input.itemId }, include: { batch: true, matchedStockPosition: { select: { nominalValue: true } } } });
   if (item.batch.status === "GENERATED") throw new Error("O lote já possui remessa gerada.");
-  if (input.action === "APPROVE" && (!item.matchedStockPositionId || !MATCHABLE.has(item.status))) throw new Error("Resolva a divergência antes de aprovar este título.");
+  const underpaid77 = underpaid77Difference(item);
+  if (input.action === "APPROVE" && (!item.matchedStockPositionId || (!MATCHABLE.has(item.status) && !underpaid77))) throw new Error("Resolva a divergência antes de aprovar este título.");
+  if (input.action === "APPROVE" && item.matchedStockPositionId) {
+    const usedInBatch = await prisma.consignadoSettlementItem.findFirst({ where: { batchId: item.batchId, id: { not: item.id }, matchedStockPositionId: item.matchedStockPositionId, approved: true } });
+    if (usedInBatch) throw new Error("Este título do estoque já está aprovado em outro item do lote.");
+  }
   await prisma.consignadoSettlementItem.update({ where: { id: item.id }, data: input.action === "EXCLUDE"
     ? { status: "EXCLUDED", approved: false, exclusionReason: input.reason?.trim() || "Excluído pelo operador." }
     : { approved: true, exclusionReason: null } });
-  await prisma.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_ITEM", entityId: item.id, fromStatus: item.status, toStatus: input.action === "EXCLUDE" ? "EXCLUDED" : item.status, metadata: { reason: input.reason ?? null } } });
+  await prisma.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_ITEM", entityId: item.id, fromStatus: item.status, toStatus: input.action === "EXCLUDE" ? "EXCLUDED" : item.status, metadata: { reason: input.reason ?? null, approvalMode: input.action === "APPROVE" ? "INDIVIDUAL" : null, differencePercent: underpaid77?.percentage.toFixed(4) ?? null } } });
   await refreshBatchTotals(item.batchId);
+}
+
+export async function approveUnderpaid77InBulk(input: { userId: string; batchId: string }) {
+  const batch = await prisma.consignadoSettlementBatch.findUniqueOrThrow({ where: { id: input.batchId }, select: { status: true } });
+  if (batch.status === "GENERATED") throw new Error("O lote já possui remessa gerada.");
+  const items = await prisma.consignadoSettlementItem.findMany({
+    where: { batchId: input.batchId, approved: false, status: "DIVERGENT", occurrence: "77", matchedStockPositionId: { not: null } },
+    include: { matchedStockPosition: { select: { nominalValue: true } } },
+    orderBy: { sourceRow: "asc" },
+  });
+  const alreadyApproved = new Set((await prisma.consignadoSettlementItem.findMany({
+    where: { batchId: input.batchId, approved: true, matchedStockPositionId: { not: null } },
+    select: { matchedStockPositionId: true },
+  })).flatMap((item) => item.matchedStockPositionId ? [item.matchedStockPositionId] : []));
+  const selectedPositionIds = new Set<string>();
+  const eligible = items.flatMap((item) => {
+    const difference = underpaid77Difference(item);
+    const positionId = item.matchedStockPositionId;
+    if (!difference || difference.percentage.gt(BULK_UNDERPAID_LIMIT_PERCENT) || !positionId || alreadyApproved.has(positionId) || selectedPositionIds.has(positionId)) return [];
+    selectedPositionIds.add(positionId);
+    return [{ item, difference }];
+  });
+  if (!eligible.length) throw new Error(`Nenhum título com diferença de até ${BULK_UNDERPAID_LIMIT_PERCENT}% está disponível para liberação em lote.`);
+  await prisma.$transaction(async (tx) => {
+    await tx.consignadoSettlementItem.updateMany({ where: { id: { in: eligible.map(({ item }) => item.id) }, approved: false }, data: { approved: true, exclusionReason: null } });
+    await tx.consignadoStatusEvent.createMany({ data: eligible.map(({ item, difference }) => ({
+      userId: input.userId, entityType: "SETTLEMENT_ITEM", entityId: item.id, fromStatus: item.status, toStatus: item.status,
+      metadata: { approvalMode: "BULK_UNDERPAID_77", limitPercent: BULK_UNDERPAID_LIMIT_PERCENT, differencePercent: difference.percentage.toFixed(4) },
+    })) });
+  });
+  await refreshBatchTotals(input.batchId);
+  return {
+    approvedItems: eligible.length,
+    faceAmount: eligible.reduce((sum, entry) => sum.add(entry.difference.nominal), new Prisma.Decimal(0)).toString(),
+    paidAmount: eligible.reduce((sum, entry) => sum.add(entry.item.paidAmount), new Prisma.Decimal(0)).toString(),
+  };
 }
 
 export async function generateSettlementRemittance(batchId: string, userId: string) {
   const batch = await prisma.consignadoSettlementBatch.findUniqueOrThrow({ where: { id: batchId }, include: {
-    originator: true, remittances: true, items: { where: { approved: true, matchedStockPositionId: { not: null }, status: { in: ["FULL_MATCH", "PARTIAL_MATCH", "MANUALLY_MATCHED"] } }, include: { matchedStockPosition: true } },
+    originator: true, remittances: true, items: { where: { approved: true, matchedStockPositionId: { not: null }, status: { in: ["FULL_MATCH", "PARTIAL_MATCH", "MANUALLY_MATCHED", "DIVERGENT"] } }, include: { matchedStockPosition: true } },
   }});
   if (batch.remittances.some((item) => item.status !== "CANCELLED")) throw new Error("Este lote já possui uma remessa ativa.");
-  const items = batch.items.filter((item): item is typeof item & { matchedStockPosition: NonNullable<typeof item.matchedStockPosition> } => Boolean(item.matchedStockPosition));
+  const items = batch.items.filter((item): item is typeof item & { matchedStockPosition: NonNullable<typeof item.matchedStockPosition> } =>
+    Boolean(item.matchedStockPosition) && (MATCHABLE.has(item.status) || Boolean(underpaid77Difference(item)))
+  );
   const generated = generateDaycovalCnab(items, batch.remittances.length + 1);
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const fileName = `${batch.source}_${batch.originator?.code ?? "ORIGINADOR"}_${date}_${batch.id.slice(-6)}.REM`;
