@@ -14,6 +14,12 @@ const statusLabel: Record<string, string> = { FULL_MATCH: "Baixa completa", PART
 const stockStatusLabel: Record<string, string> = { AWAITING_NEXT_STOCK: "Aguardando próximo estoque", CONFIRMED: "Baixa confirmada", STILL_IN_STOCK: "Ainda no estoque", REVIEW_REQUIRED: "Revisão necessária" };
 function money(value: string | number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value)); }
 function date(value: string | null) { return value ? new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(value)) : "—"; }
+function debtorKey(item: SettlementItem) {
+  const document = String(item.debtorDocument ?? "").replace(/\D/g, "");
+  if (document) return `DOCUMENT:${document}`;
+  const name = String(item.debtorName ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase().replace(/\s+/g, " ");
+  return name ? `NAME:${name}` : null;
+}
 function underpaid77(item: SettlementItem) {
   const nominal = Number(item.matchedStockPosition?.nominalValue ?? 0);
   const paid = Number(item.paidAmount);
@@ -107,11 +113,12 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
     const payload = await response.json(); setFeedback(payload.message); if (payload.ok) await refresh();
   }
 
-  async function approveUnderpaidBulk(batchId: string, count: number) {
-    if (!window.confirm(`Liberar ${count} títulos com diferença de até 10% pelo valor pago informado no arquivo?`)) return;
+  async function approveUnderpaidBulk(batchId: string, count: number, mode: "UP_TO_10" | "GROUPED_DEBTOR") {
+    const reason = mode === "UP_TO_10" ? "diferença de até 10%" : "diferença acima de 10% e sacado com múltiplos títulos";
+    if (!window.confirm(`Liberar ${count} títulos com ${reason} pelo valor pago informado no arquivo?`)) return;
     setPending(true);
     try {
-      const response = await fetch(`/api/operacional/consignado/baixas/${batchId}/aprovar-antecipacoes`, { method: "POST" });
+      const response = await fetch(`/api/operacional/consignado/baixas/${batchId}/aprovar-antecipacoes`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode }) });
       const payload = await response.json(); setFeedback(payload.message); if (payload.ok) await refresh();
     } finally { setPending(false); }
   }
@@ -170,7 +177,10 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
         const issues = batch.items.filter((item) => !item.approved && item.status !== "EXCLUDED");
         const underpaidItems = issues.filter((item) => Boolean(underpaid77(item)));
         const underpaidWithinLimit = underpaidItems.filter((item) => (underpaid77(item)?.percentage ?? Infinity) <= 10);
-        const underpaidAboveLimit = underpaidItems.filter((item) => (underpaid77(item)?.percentage ?? 0) > 10);
+        const debtorCounts = new Map<string, number>();
+        batch.items.forEach((item) => { const key = debtorKey(item); if (key) debtorCounts.set(key, (debtorCounts.get(key) ?? 0) + 1); });
+        const groupedAboveLimit = underpaidItems.filter((item) => { const key = debtorKey(item); return (underpaid77(item)?.percentage ?? 0) > 10 && Boolean(key && (debtorCounts.get(key) ?? 0) > 1); });
+        const individualAboveLimit = underpaidItems.filter((item) => { const key = debtorKey(item); return (underpaid77(item)?.percentage ?? 0) > 10 && (!key || (debtorCounts.get(key) ?? 0) <= 1); });
         const notFoundItems = issues.filter((item) => item.status === "NOT_FOUND");
         const otherItems = issues.filter((item) => !underpaid77(item) && item.status !== "NOT_FOUND");
         const activeFilter = issueFilters[batch.id] ?? (underpaidItems.length ? "UNDERPAID" : notFoundItems.length ? "NOT_FOUND" : "OTHER");
@@ -189,12 +199,16 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
                   {[["Títulos", underpaidItems.length], ["Valor de face", money(totals.nominal)], ["Valor pago", money(totals.paid)], ["Diferença", money(totals.difference)]].map(([label, value]) => <div className="rounded border border-slate-200 bg-white p-3" key={label}><p className="text-xs text-slate-500">{label}</p><p className="mt-1 font-semibold">{value}</p></div>)}
                 </div>
                 {underpaidWithinLimit.length ? <div className="rounded border border-emerald-200 bg-emerald-50/40 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3"><div><h4 className="font-semibold text-emerald-900">Diferença de até 10%</h4><p className="mt-1 text-sm text-emerald-800">{underpaidWithinLimit.length} títulos · face {money(underpaidTotals(underpaidWithinLimit).nominal)} · pago {money(underpaidTotals(underpaidWithinLimit).paid)} · diferença {money(underpaidTotals(underpaidWithinLimit).difference)}</p></div>{canManage ? <button className="rounded bg-primary px-3 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={pending} onClick={() => void approveUnderpaidBulk(batch.id, underpaidWithinLimit.length)} type="button">Liberar todos desta faixa</button> : null}</div>
+                  <div className="flex flex-wrap items-center justify-between gap-3"><div><h4 className="font-semibold text-emerald-900">Diferença de até 10%</h4><p className="mt-1 text-sm text-emerald-800">{underpaidWithinLimit.length} títulos · face {money(underpaidTotals(underpaidWithinLimit).nominal)} · pago {money(underpaidTotals(underpaidWithinLimit).paid)} · diferença {money(underpaidTotals(underpaidWithinLimit).difference)}</p></div>{canManage ? <button className="rounded bg-primary px-3 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={pending} onClick={() => void approveUnderpaidBulk(batch.id, underpaidWithinLimit.length, "UP_TO_10")} type="button">Liberar todos desta faixa</button> : null}</div>
                   <details className="mt-3"><summary className="cursor-pointer text-sm font-semibold text-emerald-800">Ver individualmente</summary><div className="mt-3 space-y-3">{underpaidWithinLimit.map((item) => renderIssueItem(batch, item, true))}</div></details>
                 </div> : null}
-                {underpaidAboveLimit.length ? <div className="rounded border border-red-200 bg-red-50/40 p-4">
-                  <h4 className="font-semibold text-red-900">Diferença acima de 10% — análise individual</h4><p className="mt-1 text-sm text-red-800">{underpaidAboveLimit.length} títulos · face {money(underpaidTotals(underpaidAboveLimit).nominal)} · pago {money(underpaidTotals(underpaidAboveLimit).paid)} · diferença {money(underpaidTotals(underpaidAboveLimit).difference)}</p>
-                  <details className="mt-3"><summary className="cursor-pointer text-sm font-semibold text-red-800">Ver individualmente</summary><div className="mt-3 space-y-3">{underpaidAboveLimit.map((item) => renderIssueItem(batch, item, true))}</div></details>
+                {groupedAboveLimit.length ? <div className="rounded border border-blue-200 bg-blue-50/40 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3"><div><h4 className="font-semibold text-blue-900">Acima de 10% com múltiplos títulos por sacado</h4><p className="mt-1 text-sm text-blue-800">{groupedAboveLimit.length} títulos · {new Set(groupedAboveLimit.map(debtorKey).filter(Boolean)).size} sacados · face {money(underpaidTotals(groupedAboveLimit).nominal)} · pago {money(underpaidTotals(groupedAboveLimit).paid)} · diferença {money(underpaidTotals(groupedAboveLimit).difference)}</p></div>{canManage ? <button className="rounded bg-primary px-3 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={pending} onClick={() => void approveUnderpaidBulk(batch.id, groupedAboveLimit.length, "GROUPED_DEBTOR")} type="button">Liberar antecipações agrupadas</button> : null}</div>
+                  <details className="mt-3"><summary className="cursor-pointer text-sm font-semibold text-blue-800">Ver individualmente</summary><div className="mt-3 space-y-3">{groupedAboveLimit.map((item) => renderIssueItem(batch, item, true))}</div></details>
+                </div> : null}
+                {individualAboveLimit.length ? <div className="rounded border border-red-200 bg-red-50/40 p-4">
+                  <h4 className="font-semibold text-red-900">Acima de 10% com título avulso — análise individual</h4><p className="mt-1 text-sm text-red-800">{individualAboveLimit.length} títulos · face {money(underpaidTotals(individualAboveLimit).nominal)} · pago {money(underpaidTotals(individualAboveLimit).paid)} · diferença {money(underpaidTotals(individualAboveLimit).difference)}</p>
+                  <details className="mt-3"><summary className="cursor-pointer text-sm font-semibold text-red-800">Ver individualmente</summary><div className="mt-3 space-y-3">{individualAboveLimit.map((item) => renderIssueItem(batch, item, true))}</div></details>
                 </div> : null}
                 {!underpaidItems.length ? <p className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-500">Nenhum título pago abaixo do valor de face.</p> : null}
               </div> : null}

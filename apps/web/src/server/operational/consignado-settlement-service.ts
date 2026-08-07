@@ -15,6 +15,12 @@ function normalized(value: unknown) {
 }
 function sameMoney(left: unknown, right: unknown) { return Math.abs(Number(left) - Number(right)) < 0.01; }
 function dateKey(value: Date | null | undefined) { return value?.toISOString().slice(0, 10) ?? null; }
+function debtorKey(item: { debtorDocument: string | null; debtorName: string | null }) {
+  const document = digits(item.debtorDocument);
+  if (document) return `DOCUMENT:${document}`;
+  const name = normalized(item.debtorName);
+  return name ? `NAME:${name}` : null;
+}
 function underpaid77Difference(item: {
   occurrence: string | null;
   status: SettlementItemStatus;
@@ -238,32 +244,41 @@ export async function setSettlementItemDecision(input: { userId: string; itemId:
   await refreshBatchTotals(item.batchId);
 }
 
-export async function approveUnderpaid77InBulk(input: { userId: string; batchId: string }) {
+export async function approveUnderpaid77InBulk(input: { userId: string; batchId: string; mode: "UP_TO_10" | "GROUPED_DEBTOR" }) {
   const batch = await prisma.consignadoSettlementBatch.findUniqueOrThrow({ where: { id: input.batchId }, select: { status: true } });
   if (batch.status === "GENERATED") throw new Error("O lote já possui remessa gerada.");
-  const items = await prisma.consignadoSettlementItem.findMany({
-    where: { batchId: input.batchId, approved: false, status: "DIVERGENT", occurrence: "77", matchedStockPositionId: { not: null } },
+  const batchItems = await prisma.consignadoSettlementItem.findMany({
+    where: { batchId: input.batchId },
     include: { matchedStockPosition: { select: { nominalValue: true } } },
     orderBy: { sourceRow: "asc" },
   });
-  const alreadyApproved = new Set((await prisma.consignadoSettlementItem.findMany({
-    where: { batchId: input.batchId, approved: true, matchedStockPositionId: { not: null } },
-    select: { matchedStockPositionId: true },
-  })).flatMap((item) => item.matchedStockPositionId ? [item.matchedStockPositionId] : []));
+  const debtorCounts = new Map<string, number>();
+  batchItems.forEach((item) => {
+    const key = debtorKey(item);
+    if (key) debtorCounts.set(key, (debtorCounts.get(key) ?? 0) + 1);
+  });
+  const items = batchItems.filter((item) => item.status === "DIVERGENT" && item.occurrence === "77" && item.matchedStockPositionId);
+  const alreadyApproved = new Set(batchItems.flatMap((item) => item.approved && item.matchedStockPositionId ? [item.matchedStockPositionId] : []));
   const selectedPositionIds = new Set<string>();
   const eligible = items.flatMap((item) => {
     const difference = underpaid77Difference(item);
     const positionId = item.matchedStockPositionId;
-    if (!difference || difference.percentage.gt(BULK_UNDERPAID_LIMIT_PERCENT) || !positionId || alreadyApproved.has(positionId) || selectedPositionIds.has(positionId)) return [];
+    const key = debtorKey(item);
+    const matchesMode = input.mode === "UP_TO_10"
+      ? Boolean(difference && difference.percentage.lte(BULK_UNDERPAID_LIMIT_PERCENT))
+      : Boolean(difference && difference.percentage.gt(BULK_UNDERPAID_LIMIT_PERCENT) && key && (debtorCounts.get(key) ?? 0) > 1);
+    if (item.approved || !matchesMode || !difference || !positionId || alreadyApproved.has(positionId) || selectedPositionIds.has(positionId)) return [];
     selectedPositionIds.add(positionId);
     return [{ item, difference }];
   });
-  if (!eligible.length) throw new Error(`Nenhum título com diferença de até ${BULK_UNDERPAID_LIMIT_PERCENT}% está disponível para liberação em lote.`);
+  if (!eligible.length) throw new Error(input.mode === "UP_TO_10"
+    ? `Nenhum título com diferença de até ${BULK_UNDERPAID_LIMIT_PERCENT}% está disponível para liberação em lote.`
+    : "Nenhum título acima de 10% com sacado recorrente está disponível para liberação em lote.");
   await prisma.$transaction(async (tx) => {
     await tx.consignadoSettlementItem.updateMany({ where: { id: { in: eligible.map(({ item }) => item.id) }, approved: false }, data: { approved: true, exclusionReason: null } });
     await tx.consignadoStatusEvent.createMany({ data: eligible.map(({ item, difference }) => ({
       userId: input.userId, entityType: "SETTLEMENT_ITEM", entityId: item.id, fromStatus: item.status, toStatus: item.status,
-      metadata: { approvalMode: "BULK_UNDERPAID_77", limitPercent: BULK_UNDERPAID_LIMIT_PERCENT, differencePercent: difference.percentage.toFixed(4) },
+      metadata: { approvalMode: input.mode === "UP_TO_10" ? "BULK_UNDERPAID_77" : "BULK_GROUPED_DEBTOR_77", limitPercent: BULK_UNDERPAID_LIMIT_PERCENT, debtorKey: debtorKey(item), differencePercent: difference.percentage.toFixed(4) },
     })) });
   });
   await refreshBatchTotals(input.batchId);
