@@ -4,10 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
+  ArrowLeft,
   BarChart3,
   BriefcaseBusiness,
   Building2,
   ClipboardCheck,
+  ChevronRight,
   FileBarChart,
   LayoutDashboard,
   LogOut,
@@ -106,12 +108,57 @@ function getActiveHref(pathname: string) {
   );
 }
 
-function getPageTitle(pathname: string) {
-  const activeHref = getActiveHref(pathname);
+const breadcrumbLabels: Record<string, string> = {
+  caixa: "Caixa",
+  "conciliacao-bancaria": "Conciliação bancária",
+  conciliacao: "Conciliação de Fundos",
+  consignado: "Consignado",
+  "credito-cadastro": "Crédito & Cadastro",
+  dashboard: "Dashboard",
+  dre: "DRE",
+  estoques: "Estoques",
+  financeiro: "Financeiro",
+  fundos: "Fundos",
+  baixas: "Baixas e remessas",
+  mesa: "Mesa de Operações",
+  novo: "Novo fundo",
+  operacional: "Operacional",
+  previsoes: "Previsões",
+  relatorios: "Relatórios",
+  usuarios: "Usuários",
+};
 
-  return (
-    navigation.find((item) => item.href === activeHref)?.title ?? "Dashboard"
-  );
+type BreadcrumbItem = {
+  href: string;
+  label: string;
+};
+
+function humanizeSegment(segment: string) {
+  const decoded = decodeURIComponent(segment).replace(/[-_]+/g, " ");
+  return decoded.charAt(0).toUpperCase() + decoded.slice(1);
+}
+
+function getBreadcrumbs(pathname: string): BreadcrumbItem[] {
+  const segments = pathname.split("/").filter(Boolean);
+  const dashboardIndex = segments.indexOf("dashboard");
+  const routeSegments = dashboardIndex >= 0 ? segments.slice(dashboardIndex + 1) : [];
+
+  if (!routeSegments.length) {
+    return [{ href: "/dashboard", label: "Dashboard" }];
+  }
+
+  return routeSegments.map((segment, index) => {
+    const parent = routeSegments[index - 1];
+    const isFundIdentifier = parent === "fundos" && segment !== "novo";
+    const label = isFundIdentifier
+      ? "Detalhes do fundo"
+      : breadcrumbLabels[segment] ?? humanizeSegment(segment);
+
+    return {
+      href: `/dashboard/${routeSegments.slice(0, index + 1).join("/")}`,
+      label,
+    };
+  });
 }
 
 function getInitials(name: string) {
@@ -126,7 +173,8 @@ function getInitials(name: string) {
 export function DashboardShell({ children, permissions, user }: DashboardShellProps) {
   const pathname = usePathname();
   const activeHref = getActiveHref(pathname);
-  const pageTitle = getPageTitle(pathname);
+  const breadcrumbs = getBreadcrumbs(pathname);
+  const previousPage = breadcrumbs.length > 1 ? breadcrumbs[breadcrumbs.length - 2] : null;
   const today = todayFormatter.format(new Date());
   const permissionSet = new Set(permissions);
   const visibleNavigation = navigation.filter((item) =>
@@ -194,11 +242,49 @@ export function DashboardShell({ children, permissions, user }: DashboardShellPr
       </aside>
 
       <div className="min-h-screen pl-[240px]">
-        <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-slate-200 bg-white px-8">
-          <div>
-            <h1 className="text-xl font-semibold tracking-normal text-slate-950">
-              {pageTitle}
-            </h1>
+        <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-6 border-b border-slate-200 bg-white px-8">
+          <div className="flex min-w-0 items-center gap-3">
+            {previousPage ? (
+              <Link
+                aria-label={`Voltar para ${previousPage.label}`}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
+                href={previousPage.href}
+                title={`Voltar para ${previousPage.label}`}
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
+            ) : null}
+            <nav aria-label="Navegação estrutural" className="min-w-0 overflow-hidden">
+              <ol className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap text-sm">
+                {breadcrumbs.map((item, index) => {
+                  const isCurrent = index === breadcrumbs.length - 1;
+                  return (
+                    <li className="flex min-w-0 items-center gap-1.5" key={item.href}>
+                      {index > 0 ? (
+                        <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                      ) : null}
+                      {isCurrent ? (
+                        <span
+                          aria-current="page"
+                          className="truncate text-base font-semibold text-slate-950"
+                          title={item.label}
+                        >
+                          {item.label}
+                        </span>
+                      ) : (
+                        <Link
+                          className="truncate font-medium text-slate-500 transition hover:text-primary"
+                          href={item.href}
+                          title={`Ir para ${item.label}`}
+                        >
+                          {item.label}
+                        </Link>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            </nav>
           </div>
           <p className="text-sm font-medium capitalize text-slate-500">{today}</p>
         </header>
