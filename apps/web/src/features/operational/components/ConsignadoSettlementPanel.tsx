@@ -3,7 +3,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { AlertTriangle, CheckCircle2, Download, FileCheck2, Loader2, Search, UploadCloud } from "lucide-react";
 
-type Candidate = { id: string; yourNumber: string | null; documentNumber: string | null; debtorName: string; debtorDocument: string; nominalValue: string; originalDueDate: string | null; cedentName: string };
+type Candidate = { id: string; yourNumber: string | null; documentNumber: string | null; debtorName: string; debtorDocument: string; nominalValue: string; originalDueDate: string | null; adjustedDueDate: string | null; cedentName: string };
 type SettlementItem = { id: string; sourceRow: number; occurrence: string | null; contractNumber: string | null; yourNumber: string | null; debtorName: string | null; debtorDocument: string | null; titleAmount: string; paidAmount: string; status: string; statusReason: string | null; approved: boolean; exclusionReason: string | null; matchedStockPosition: Candidate | null; corrections: Array<{ id: string; justification: string; replacementYourNumber: string | null; createdAt: string }> };
 type Remittance = { id: string; fileName: string; status: string; stockStatus: string; totalItems: number; totalAmount: string; allocatedAmount: string; generatedAt: string };
 type Batch = { id: string; source: "BMP" | "UY3"; fileName: string; referenceDate: string; status: string; totalItems: number; fullItems: number; partialItems: number; issueItems: number; receivedAmount: string; matchedAmount: string; excludedAmount: string; createdAt: string; originator: { code: string; name: string } | null; stockBatch: { referenceDate: string | null; version: number }; items: SettlementItem[]; remittances: Remittance[] };
@@ -85,8 +85,9 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
     finally { setPending(false); }
   }
 
-  async function search(batchId: string, itemId: string) {
-    const query = searches[itemId] ?? "";
+  async function search(batchId: string, itemId: string, fallbackQuery?: string) {
+    const query = searches[itemId]?.trim() || fallbackQuery?.trim() || "";
+    if (fallbackQuery && !searches[itemId]?.trim()) setSearches((current) => ({ ...current, [itemId]: fallbackQuery }));
     try {
       const response = await fetch(`/api/operacional/consignado/baixas/candidatos?batchId=${encodeURIComponent(batchId)}&q=${encodeURIComponent(query)}`);
       const payload = await response.json(); if (!payload.ok) throw new Error(payload.message);
@@ -151,10 +152,10 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
       </div> : null}
       {canManage && !underpaid ? <div className="mt-3 flex flex-wrap gap-2">
         <input className="h-9 min-w-64 flex-1 rounded border border-slate-200 px-3 text-sm" placeholder="Contrato, CPF, nome ou título correto" value={searches[item.id] ?? ""} onChange={(event) => setSearches((current) => ({ ...current, [item.id]: event.target.value }))} />
-        <button className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm" onClick={() => void search(batch.id, item.id)} type="button"><Search className="h-4 w-4" />Pesquisar</button>
+        <button className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm" onClick={() => void search(batch.id, item.id, item.debtorDocument ?? item.debtorName ?? undefined)} type="button"><Search className="h-4 w-4" />{item.status === "NOT_FOUND" ? "Abrir títulos do sacado" : "Pesquisar"}</button>
         <button className="h-9 rounded border border-red-200 px-3 text-sm text-red-700" onClick={() => void exclude(item.id)} type="button">Seguir sem este título</button>
       </div> : null}
-      {candidates[item.id]?.length ? <div className="mt-3 overflow-x-auto rounded border border-slate-200"><table className="min-w-full text-xs"><thead className="bg-slate-50"><tr><th className="px-3 py-2 text-left">Candidato</th><th className="px-3 py-2 text-left">CPF</th><th className="px-3 py-2 text-right">Valor</th><th /></tr></thead><tbody>{candidates[item.id].map((candidate) => <tr className="border-t" key={candidate.id}><td className="px-3 py-2">{candidate.yourNumber ?? candidate.documentNumber} · {candidate.debtorName}</td><td className="px-3 py-2">{candidate.debtorDocument}</td><td className="px-3 py-2 text-right">{money(candidate.nominalValue)}</td><td className="px-3 py-2 text-right"><button className="rounded bg-primary px-2 py-1 font-semibold text-white" onClick={() => void correct(item.id, candidate.id)} type="button">Usar este</button></td></tr>)}</tbody></table></div> : null}
+      {candidates[item.id]?.length ? <div className="mt-3 overflow-x-auto rounded border border-slate-200"><table className="min-w-full text-xs"><thead className="bg-slate-50"><tr><th className="px-3 py-2 text-left">Candidato</th><th className="px-3 py-2 text-left">CPF</th><th className="px-3 py-2 text-left">Vencimento</th><th className="px-3 py-2 text-right">Valor</th><th /></tr></thead><tbody>{candidates[item.id].map((candidate) => <tr className="border-t" key={candidate.id}><td className="px-3 py-2">{candidate.yourNumber ?? candidate.documentNumber} · {candidate.debtorName}</td><td className="px-3 py-2">{candidate.debtorDocument}</td><td className="px-3 py-2">{date(candidate.adjustedDueDate ?? candidate.originalDueDate)}</td><td className="px-3 py-2 text-right">{money(candidate.nominalValue)}</td><td className="px-3 py-2 text-right"><button className="rounded bg-primary px-2 py-1 font-semibold text-white" onClick={() => void correct(item.id, candidate.id)} type="button">Usar este</button></td></tr>)}</tbody></table></div> : null}
     </div>;
   }
 
