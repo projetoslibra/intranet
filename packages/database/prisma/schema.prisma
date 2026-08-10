@@ -109,6 +109,8 @@ enum SettlementItemStatus {
   FULL_MATCH
   PARTIAL_MATCH
   NOT_FOUND
+  PDD_RECOVERY
+  PDD_REVIEW
   AMBIGUOUS
   DIVERGENT
   DUPLICATE
@@ -161,6 +163,7 @@ model User {
   bankReconciliations       ConsignadoBankReconciliation[]  @relation("BankReconciliationCreatedBy")
   undoneBankReconciliations ConsignadoBankReconciliation[]  @relation("BankReconciliationUndoneBy")
   operationalStatusEvents   ConsignadoStatusEvent[]
+  pddImports                ConsignadoPddImport[]
 
   @@map("users")
 }
@@ -226,6 +229,8 @@ model Fund {
   consignadoRemittances ConsignadoRemittance[]
   bankStatementImports  ConsignadoBankStatementImport[]
   bankCreditEntries     ConsignadoBankCreditEntry[]
+  consignadoPddImports  ConsignadoPddImport[]
+  consignadoPddTitles   ConsignadoPddTitle[]
 
   @@map("funds")
 }
@@ -594,12 +599,14 @@ model ConsignadoSettlementItem {
   status                 SettlementItemStatus
   statusReason           String?                      @map("status_reason")
   matchedStockPositionId String?                      @map("matched_stock_position_id")
+  matchedPddTitleId      String?                      @map("matched_pdd_title_id")
   approved               Boolean                      @default(false)
   exclusionReason        String?                      @map("exclusion_reason")
   createdAt              DateTime                     @default(now()) @map("created_at")
   updatedAt              DateTime                     @updatedAt @map("updated_at")
   batch                  ConsignadoSettlementBatch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
   matchedStockPosition   ReceivableStockPosition?     @relation("SettlementMatchedStock", fields: [matchedStockPositionId], references: [id], onDelete: Restrict)
+  matchedPddTitle        ConsignadoPddTitle?          @relation(fields: [matchedPddTitleId], references: [id], onDelete: Restrict)
   corrections            ConsignadoManualCorrection[]
   remittanceItem         ConsignadoRemittanceItem?
 
@@ -607,7 +614,76 @@ model ConsignadoSettlementItem {
   @@index([batchId, status])
   @@index([yourNumber])
   @@index([contractNumber])
+  @@index([matchedPddTitleId])
   @@map("consignado_settlement_items")
+}
+
+model ConsignadoPddImport {
+  id               String               @id @default(cuid())
+  fundId           String               @map("fund_id")
+  importedByUserId String               @map("imported_by_user_id")
+  fileName         String               @map("file_name")
+  fileHash         String               @map("file_hash")
+  totalRows        Int                  @default(0) @map("total_rows")
+  importedRows     Int                  @default(0) @map("imported_rows")
+  duplicateRows    Int                  @default(0) @map("duplicate_rows")
+  invalidRows      Int                  @default(0) @map("invalid_rows")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  fund             Fund                 @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  importedBy       User                 @relation(fields: [importedByUserId], references: [id], onDelete: Restrict)
+  titles           ConsignadoPddTitle[]
+
+  @@unique([fundId, fileHash])
+  @@index([fundId, createdAt])
+  @@map("consignado_pdd_imports")
+}
+
+model ConsignadoPddTitle {
+  id                     String                     @id @default(cuid())
+  importId               String                     @map("import_id")
+  fundId                 String                     @map("fund_id")
+  sourceRow              Int                        @map("source_row")
+  rowHash                String                     @unique @map("row_hash")
+  generatedAt            DateTime?                  @map("generated_at")
+  remittanceFile         String?                    @map("remittance_file")
+  auditFile              String?                    @map("audit_file")
+  flowSource             String?                    @map("flow_source")
+  originator             String?
+  debtorName             String?                    @map("debtor_name")
+  debtorDocument         String?                    @map("debtor_document")
+  cedentName             String?                    @map("cedent_name")
+  documentNumber         String?                    @map("document_number")
+  yourNumberUsed         String?                    @map("your_number_used")
+  yourNumberOriginal     String?                    @map("your_number_original")
+  cnabDocumentNumber     String?                    @map("cnab_document_number")
+  stockYourNumber        String?                    @map("stock_your_number")
+  stockDocumentNumber    String?                    @map("stock_document_number")
+  nominalValue           Decimal?                   @map("nominal_value") @db.Decimal(24, 2)
+  presentValue           Decimal?                   @map("present_value") @db.Decimal(24, 2)
+  acquisitionValue       Decimal?                   @map("acquisition_value") @db.Decimal(24, 2)
+  pddValue               Decimal?                   @map("pdd_value") @db.Decimal(24, 2)
+  dueDate                DateTime?                  @map("due_date") @db.Date
+  acquisitionDate        DateTime?                  @map("acquisition_date") @db.Date
+  pddRange               String?                    @map("pdd_range")
+  receivableSituation    String?                    @map("receivable_situation")
+  writeOffType           String?                    @map("write_off_type")
+  occurrence             String?
+  controlStatus          String?                    @map("control_status")
+  historyStatus          String?                    @map("history_status")
+  relationshipStatus     String?                    @map("relationship_status")
+  currentStockStatus     String?                    @map("current_stock_status")
+  pddLine                String?                    @map("pdd_line")
+  sourceLines            String?                    @map("source_lines")
+  createdAt              DateTime                   @default(now()) @map("created_at")
+  import                 ConsignadoPddImport        @relation(fields: [importId], references: [id], onDelete: Cascade)
+  fund                   Fund                       @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  matchedSettlementItems ConsignadoSettlementItem[]
+
+  @@unique([importId, sourceRow])
+  @@index([fundId, debtorDocument, yourNumberUsed])
+  @@index([fundId, debtorDocument, documentNumber])
+  @@index([fundId, debtorDocument, dueDate, nominalValue])
+  @@map("consignado_pdd_titles")
 }
 
 model ConsignadoManualCorrection {

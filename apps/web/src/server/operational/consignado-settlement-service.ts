@@ -4,6 +4,7 @@ import { Prisma, type OperationalFlowSource, type SettlementItemStatus } from "@
 import { prisma } from "@/lib/prisma";
 import { generateDaycovalCnab } from "./consignado-cnab";
 import { parseBmpCnab, parseUy3Workbook, type ParsedSettlementItem } from "./consignado-parsers";
+import { classifyPddMatch, getConsignadoPddSummary, loadConsignadoPddTitles } from "./consignado-pdd-service";
 
 const CONSIGNADO_CNPJ = "54842157000193";
 export const BULK_UNDERPAID_LIMIT_PERCENT = 10;
@@ -135,20 +136,24 @@ export async function importSettlementBatch(input: { userId: string; source: Ope
   };
 
   const parsed = input.source === "BMP" ? parseBmpCnab(input.buffer) : parseUy3Workbook(input.buffer);
-  const candidates = await loadCandidates(stock.id, parsed);
+  const [candidates, pddTitles] = await Promise.all([loadCandidates(stock.id, parsed), loadConsignadoPddTitles(fund.id)]);
   const usedPositions = new Set<string>();
   const matched = parsed.map((item) => {
-    const result = chooseCandidate(input.source, item, candidates);
+    let result: ReturnType<typeof chooseCandidate> | (ReturnType<typeof classifyPddMatch> & { candidate: null }) = chooseCandidate(input.source, item, candidates);
+    if (result.status === "NOT_FOUND") {
+      const pddMatch = classifyPddMatch(input.source, { ...item, titleAmount: Number(item.titleAmount) }, pddTitles);
+      if (pddMatch.status !== "NOT_FOUND") result = { ...pddMatch, candidate: null };
+    }
     if (result.candidate && usedPositions.has(result.candidate.id)) {
       return { item, status: "DUPLICATE" as SettlementItemStatus, reason: "Título já utilizado neste lote.", candidate: null };
     }
     const isUnderpaid77 = result.status === "DIVERGENT" && item.occurrence === "77" && Number(item.paidAmount) > 0 && Number(item.paidAmount) < Number(result.candidate?.nominalValue ?? 0);
     if (result.candidate && (MATCHABLE.has(result.status) || isUnderpaid77)) usedPositions.add(result.candidate.id);
-    return { item, status: result.status as SettlementItemStatus, reason: result.reason, candidate: result.candidate };
+    return { item, status: result.status as SettlementItemStatus, reason: result.reason, candidate: result.candidate, pddTitle: "title" in result ? result.title : null };
   });
   const fullItems = matched.filter((item) => item.status === "FULL_MATCH").length;
   const partialItems = matched.filter((item) => item.status === "PARTIAL_MATCH").length;
-  const issueItems = matched.length - fullItems - partialItems;
+  const issueItems = matched.filter((item) => !MATCHABLE.has(item.status) && item.status !== "PDD_RECOVERY").length;
   const receivedAmount = matched.reduce((sum, entry) => sum.add(entry.item.paidAmount), new Prisma.Decimal(0));
   const matchedAmount = matched.filter((entry) => MATCHABLE.has(entry.status)).reduce((sum, entry) => sum.add(entry.item.paidAmount), new Prisma.Decimal(0));
   const safeName = input.fileName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -163,12 +168,12 @@ export async function importSettlementBatch(input: { userId: string; source: Ope
         status: issueItems ? "REVIEW_REQUIRED" : "READY", totalItems: matched.length, fullItems, partialItems, issueItems,
         receivedAmount, matchedAmount, excludedAmount: receivedAmount.sub(matchedAmount), completedAt: new Date(),
       }});
-      await tx.consignadoSettlementItem.createMany({ data: matched.map(({ item, status, reason, candidate }) => ({
+      await tx.consignadoSettlementItem.createMany({ data: matched.map(({ item, status, reason, candidate, pddTitle }) => ({
         batchId: created.id, sourceRow: item.sourceRow, sourceRaw: item.sourceRaw, occurrence: item.occurrence,
         contractNumber: item.contractNumber, installmentNumber: item.installmentNumber, yourNumber: item.yourNumber,
         documentNumber: item.documentNumber, debtorName: item.debtorName, debtorDocument: item.debtorDocument,
         dueDate: item.dueDate, titleAmount: new Prisma.Decimal(item.titleAmount), paidAmount: new Prisma.Decimal(item.paidAmount),
-        status, statusReason: reason, matchedStockPositionId: candidate?.id ?? null, approved: MATCHABLE.has(status),
+        status, statusReason: reason, matchedStockPositionId: candidate?.id ?? null, matchedPddTitleId: pddTitle?.id ?? null, approved: MATCHABLE.has(status),
       })) });
       await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_BATCH", entityId: created.id, toStatus: created.status, metadata: { stockBatchId: stock.id, originator: originator.code, repeatedFileOfBatchId: existing?.id ?? null } } });
       return created;
@@ -190,7 +195,7 @@ async function refreshBatchTotals(batchId: string) {
   const matchedItems = items.filter((item) => item.approved && (MATCHABLE.has(item.status) || Boolean(underpaid77Difference(item))));
   const received = items.reduce((sum, item) => sum.add(item.paidAmount), new Prisma.Decimal(0));
   const matched = matchedItems.reduce((sum, item) => sum.add(item.paidAmount), new Prisma.Decimal(0));
-  const issueItems = items.filter((item) => !item.approved && item.status !== "EXCLUDED").length;
+  const issueItems = items.filter((item) => !item.approved && !["EXCLUDED", "PDD_RECOVERY"].includes(item.status)).length;
   await prisma.consignadoSettlementBatch.update({ where: { id: batchId }, data: {
     fullItems, partialItems, issueItems, receivedAmount: received, matchedAmount: matched, excludedAmount: received.sub(matched),
     status: issueItems ? "REVIEW_REQUIRED" : "READY",
@@ -222,7 +227,7 @@ export async function correctSettlementItem(input: { userId: string; itemId: str
   await prisma.$transaction(async (tx) => {
     await tx.consignadoManualCorrection.updateMany({ where: { itemId: item.id, active: true }, data: { active: false } });
     await tx.consignadoManualCorrection.create({ data: { itemId: item.id, replacementPositionId: replacement.id, previousPositionId: item.matchedStockPositionId, userId: input.userId, originalYourNumber: item.yourNumber, replacementYourNumber: replacement.yourNumber, justification: input.justification, active: true } });
-    await tx.consignadoSettlementItem.update({ where: { id: item.id }, data: { matchedStockPositionId: replacement.id, status: "MANUALLY_MATCHED", statusReason: "Título substituído manualmente pelo operador.", approved: true, exclusionReason: null } });
+    await tx.consignadoSettlementItem.update({ where: { id: item.id }, data: { matchedStockPositionId: replacement.id, matchedPddTitleId: null, status: "MANUALLY_MATCHED", statusReason: "Título substituído manualmente pelo operador.", approved: true, exclusionReason: null } });
     await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_ITEM", entityId: item.id, fromStatus: item.status, toStatus: "MANUALLY_MATCHED", metadata: { replacementPositionId: replacement.id, justification: input.justification } } });
   });
   await refreshBatchTotals(item.batchId);
@@ -305,7 +310,7 @@ export async function generateSettlementRemittance(batchId: string, userId: stri
   const totalAmount = items.reduce((sum, item) => sum.add(item.paidAmount), new Prisma.Decimal(0));
   try {
     return await prisma.$transaction(async (tx) => {
-      await tx.consignadoSettlementItem.updateMany({ where: { batchId, approved: false, status: { not: "EXCLUDED" } }, data: { status: "EXCLUDED", exclusionReason: "Não incluído na remessa aprovada." } });
+      await tx.consignadoSettlementItem.updateMany({ where: { batchId, approved: false, status: { notIn: ["EXCLUDED", "PDD_RECOVERY"] } }, data: { status: "EXCLUDED", exclusionReason: "Não incluído na remessa aprovada." } });
       const remittance = await tx.consignadoRemittance.create({ data: { batchId, fundId: batch.fundId, generatedByUserId: userId, fileName, storageKey, fileHash: generated.hash, totalItems: items.length, totalAmount } });
       await tx.consignadoRemittanceItem.createMany({ data: items.map((item) => ({ remittanceId: remittance.id, settlementItemId: item.id, stockPositionId: item.matchedStockPosition.id, yourNumber: item.matchedStockPosition.yourNumber, documentNumber: item.matchedStockPosition.documentNumber, debtorDocument: item.matchedStockPosition.debtorDocument, amount: item.paidAmount, occurrence: item.occurrence ?? "77" })) });
       await tx.consignadoSettlementBatch.update({ where: { id: batchId }, data: { status: "GENERATED" } });
@@ -324,7 +329,7 @@ export async function getRemittanceDownload(remittanceId: string) {
 
 export async function getSettlementWorkspace() {
   const fund = await consignadoFund();
-  const [originators, batches] = await Promise.all([
+  const [originators, batches, pddSummary] = await Promise.all([
     listConsignadoOriginators(),
     prisma.consignadoSettlementBatch.findMany({
       where: { fundId: fund.id },
@@ -338,13 +343,15 @@ export async function getSettlementWorkspace() {
           orderBy: { sourceRow: "asc" },
           include: {
             matchedStockPosition: { select: { id: true, yourNumber: true, documentNumber: true, debtorName: true, debtorDocument: true, nominalValue: true, adjustedDueDate: true, originalDueDate: true } },
+            matchedPddTitle: { select: { id: true, remittanceFile: true, generatedAt: true, yourNumberUsed: true, documentNumber: true, debtorName: true, debtorDocument: true, nominalValue: true, pddValue: true, dueDate: true, writeOffType: true, originator: true } },
             corrections: { where: { active: true }, select: { id: true, justification: true, replacementYourNumber: true, createdAt: true } },
           },
         },
       },
     }),
+    getConsignadoPddSummary(fund.id),
   ]);
-  return JSON.parse(JSON.stringify({ originators, batches }, (_, value) => value instanceof Prisma.Decimal ? value.toString() : value));
+  return JSON.parse(JSON.stringify({ originators, batches, pddSummary }, (_, value) => value instanceof Prisma.Decimal ? value.toString() : value));
 }
 
 export async function reconcileRemittancesWithStock(stockBatchId: string, userId?: string) {

@@ -4,14 +4,17 @@ import { useRef, useState, type FormEvent } from "react";
 import { AlertTriangle, CheckCircle2, Download, FileCheck2, Loader2, Search, UploadCloud } from "lucide-react";
 
 type Candidate = { id: string; yourNumber: string | null; documentNumber: string | null; debtorName: string; debtorDocument: string; nominalValue: string; originalDueDate: string | null; adjustedDueDate: string | null; cedentName: string };
-type SettlementItem = { id: string; sourceRow: number; occurrence: string | null; contractNumber: string | null; yourNumber: string | null; debtorName: string | null; debtorDocument: string | null; titleAmount: string; paidAmount: string; status: string; statusReason: string | null; approved: boolean; exclusionReason: string | null; matchedStockPosition: Candidate | null; corrections: Array<{ id: string; justification: string; replacementYourNumber: string | null; createdAt: string }> };
+type PddTitle = { id: string; remittanceFile: string | null; generatedAt: string | null; yourNumberUsed: string | null; documentNumber: string | null; debtorName: string | null; debtorDocument: string | null; nominalValue: string | null; pddValue: string | null; dueDate: string | null; writeOffType: string | null; originator: string | null };
+type SettlementItem = { id: string; sourceRow: number; occurrence: string | null; contractNumber: string | null; yourNumber: string | null; debtorName: string | null; debtorDocument: string | null; titleAmount: string; paidAmount: string; status: string; statusReason: string | null; approved: boolean; exclusionReason: string | null; matchedStockPosition: Candidate | null; matchedPddTitle: PddTitle | null; corrections: Array<{ id: string; justification: string; replacementYourNumber: string | null; createdAt: string }> };
 type Remittance = { id: string; fileName: string; status: string; stockStatus: string; totalItems: number; totalAmount: string; allocatedAmount: string; generatedAt: string };
 type Batch = { id: string; source: "BMP" | "UY3"; fileName: string; referenceDate: string; status: string; totalItems: number; fullItems: number; partialItems: number; issueItems: number; receivedAmount: string; matchedAmount: string; excludedAmount: string; createdAt: string; originator: { code: string; name: string } | null; stockBatch: { referenceDate: string | null; version: number }; items: SettlementItem[]; remittances: Remittance[] };
-type Workspace = { originators: Array<{ id: string; code: string; name: string; source: "BMP" | "UY3" }>; batches: Batch[] };
-type IssueFilter = "UNDERPAID" | "NOT_FOUND" | "OTHER";
+type Workspace = { originators: Array<{ id: string; code: string; name: string; source: "BMP" | "UY3" }>; batches: Batch[]; pddSummary: { titleCount: number; lastImport: { id: string; fileName: string; totalRows: number; importedRows: number; duplicateRows: number; invalidRows: number; createdAt: string } | null } };
+type IssueFilter = "UNDERPAID" | "PDD" | "NOT_FOUND" | "OTHER";
 
 const statusLabel: Record<string, string> = { FULL_MATCH: "Baixa completa", PARTIAL_MATCH: "Baixa parcial", NOT_FOUND: "Não encontrado", AMBIGUOUS: "Ambíguo", DIVERGENT: "Divergente", DUPLICATE: "Duplicado", MANUALLY_MATCHED: "Corrigido manualmente", EXCLUDED: "Excluído" };
 const stockStatusLabel: Record<string, string> = { AWAITING_NEXT_STOCK: "Aguardando próximo estoque", CONFIRMED: "Baixa confirmada", STILL_IN_STOCK: "Ainda no estoque", REVIEW_REQUIRED: "Revisão necessária" };
+statusLabel.PDD_RECOVERY = "Recuperação de PDD";
+statusLabel.PDD_REVIEW = "Possível baixa por PDD";
 function money(value: string | number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value)); }
 function date(value: string | null) { return value ? new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(value)) : "—"; }
 function debtorKey(item: SettlementItem) {
@@ -37,14 +40,17 @@ function underpaidTotals(items: SettlementItem[]) {
     return totals;
   }, { nominal: 0, paid: 0, difference: 0 });
 }
+function paidTotal(items: SettlementItem[]) { return items.reduce((sum, item) => sum + Number(item.paidAmount), 0); }
 
 export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { initialWorkspace: Workspace; canManage: boolean }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const pddFileRef = useRef<HTMLInputElement>(null);
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [source, setSource] = useState<"BMP" | "UY3">("BMP");
   const [originator, setOriginator] = useState("GIBB");
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [pddFeedback, setPddFeedback] = useState("");
   const [searches, setSearches] = useState<Record<string, string>>({});
   const [candidates, setCandidates] = useState<Record<string, Candidate[]>>({});
   const [issueFilters, setIssueFilters] = useState<Record<string, IssueFilter>>({});
@@ -82,6 +88,24 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
       };
       await processFile(false);
     } catch (error) { setFeedback(error instanceof Error ? error.message : "Erro ao processar arquivo."); }
+    finally { setPending(false); }
+  }
+
+  async function importPdd(event: FormEvent) {
+    event.preventDefault();
+    const file = pddFileRef.current?.files?.[0];
+    if (!file) return;
+    setPending(true); setPddFeedback("");
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      const response = await fetch("/api/operacional/consignado/baixas/pdd", { method: "POST", body: form });
+      const payload = await response.json();
+      if (!payload.ok) throw new Error(payload.message);
+      setPddFeedback(payload.message);
+      pddFileRef.current!.value = "";
+      await refresh();
+    } catch (error) { setPddFeedback(error instanceof Error ? error.message : "Erro ao importar a base PDD."); }
     finally { setPending(false); }
   }
 
@@ -172,10 +196,19 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
       {feedback ? <p className="mt-4 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm">{feedback}</p> : null}
     </section> : null}
 
+    <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div><h2 className="font-semibold text-slate-950">Base histórica de baixas PDD</h2><p className="mt-1 text-sm text-slate-500">{workspace.pddSummary.titleCount.toLocaleString("pt-BR")} títulos armazenados. Esta base separa recuperações de PDD dos títulos realmente não encontrados.</p>{workspace.pddSummary.lastImport ? <p className="mt-1 text-xs text-slate-500">Última importação: {workspace.pddSummary.lastImport.fileName} em {date(workspace.pddSummary.lastImport.createdAt)}</p> : null}</div>
+        {canManage ? <form className="flex flex-wrap items-end gap-3" onSubmit={importPdd}><label className="text-sm">Planilha consolidada<input accept=".xlsx" className="mt-1 block h-10 rounded border border-slate-200 px-3 py-2 text-sm" ref={pddFileRef} required type="file" /></label><button className="inline-flex h-10 items-center gap-2 rounded border border-primary bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60" disabled={pending}><UploadCloud className="h-4 w-4" />Importar base PDD</button></form> : null}
+      </div>
+      {pddFeedback ? <p className="mt-4 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm">{pddFeedback}</p> : null}
+    </section>
+
     <section className="overflow-hidden rounded border border-slate-200 bg-white shadow-executive">
       <div className="border-b border-slate-200 p-5"><h2 className="font-semibold">Lotes de baixa</h2><p className="mt-1 text-sm text-slate-500">Resultado, divergências, correções e remessas geradas.</p></div>
       {workspace.batches.length ? <div className="divide-y divide-slate-200">{workspace.batches.map((batch) => {
         const issues = batch.items.filter((item) => !item.approved && item.status !== "EXCLUDED");
+        const pendingIssues = issues.filter((item) => item.status !== "PDD_RECOVERY");
         const underpaidItems = issues.filter((item) => Boolean(underpaid77(item)));
         const underpaidWithinLimit = underpaidItems.filter((item) => (underpaid77(item)?.percentage ?? Infinity) <= 10);
         const debtorCounts = new Map<string, number>();
@@ -183,17 +216,18 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
         const groupedAboveLimit = underpaidItems.filter((item) => { const key = debtorKey(item); return (underpaid77(item)?.percentage ?? 0) > 10 && Boolean(key && (debtorCounts.get(key) ?? 0) > 1); });
         const individualAboveLimit = underpaidItems.filter((item) => { const key = debtorKey(item); return (underpaid77(item)?.percentage ?? 0) > 10 && (!key || (debtorCounts.get(key) ?? 0) <= 1); });
         const notFoundItems = issues.filter((item) => item.status === "NOT_FOUND");
-        const otherItems = issues.filter((item) => !underpaid77(item) && item.status !== "NOT_FOUND");
-        const activeFilter = issueFilters[batch.id] ?? (underpaidItems.length ? "UNDERPAID" : notFoundItems.length ? "NOT_FOUND" : "OTHER");
+        const pddItems = batch.items.filter((item) => ["PDD_RECOVERY", "PDD_REVIEW"].includes(item.status));
+        const otherItems = issues.filter((item) => !underpaid77(item) && !["NOT_FOUND", "PDD_RECOVERY", "PDD_REVIEW"].includes(item.status));
+        const activeFilter = issueFilters[batch.id] ?? (underpaidItems.length ? "UNDERPAID" : pddItems.length ? "PDD" : notFoundItems.length ? "NOT_FOUND" : "OTHER");
         const totals = underpaidTotals(underpaidItems);
         return <details className="p-5" key={batch.id}>
-          <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-4"><div><p className="font-semibold">{batch.source} · {batch.originator?.name} · {batch.fileName}</p><p className="mt-1 text-xs text-slate-500">Estoque {date(batch.stockBatch.referenceDate)} v{batch.stockBatch.version} · {batch.totalItems.toLocaleString("pt-BR")} títulos</p></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${issues.length ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{issues.length ? `${issues.length} para revisar` : "Pronto"}</span></summary>
+          <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-4"><div><p className="font-semibold">{batch.source} · {batch.originator?.name} · {batch.fileName}</p><p className="mt-1 text-xs text-slate-500">Estoque {date(batch.stockBatch.referenceDate)} v{batch.stockBatch.version} · {batch.totalItems.toLocaleString("pt-BR")} títulos</p></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${pendingIssues.length ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{pendingIssues.length ? `${pendingIssues.length} para revisar` : "Pronto"}</span></summary>
           <div className="mt-5 space-y-5">
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">{[["Recebidos", batch.totalItems], ["Valor total do arquivo", money(batch.receivedAmount)], ["Completos", batch.fullItems], ["Parciais", batch.partialItems], ["Fora/revisão", batch.issueItems], ["Encontrado", money(batch.matchedAmount)], ["Não incluído", money(batch.excludedAmount)]].map(([label, value]) => <div className="rounded border border-slate-200 bg-slate-50 p-3" key={label}><p className="text-xs text-slate-500">{label}</p><p className="mt-1 font-semibold">{value}</p></div>)}</div>
-            {issues.length ? <section className="rounded border border-amber-200 bg-amber-50/30 p-4">
-              <h3 className="font-semibold text-amber-900">Títulos que precisam de decisão</h3>
+            {issues.length || pddItems.length ? <section className="rounded border border-amber-200 bg-amber-50/30 p-4">
+              <h3 className="font-semibold text-amber-900">Classificação dos títulos</h3>
               <div className="mt-4 flex flex-wrap gap-2">
-                {[["UNDERPAID", "Pagos abaixo do valor de face", underpaidItems.length], ["NOT_FOUND", "Não encontrados no estoque", notFoundItems.length], ["OTHER", "Outras divergências", otherItems.length]].map(([filter, label, count]) => <button className={`rounded border px-3 py-2 text-sm font-semibold ${activeFilter === filter ? "border-primary bg-primary text-white" : "border-slate-300 bg-white text-slate-700"}`} key={filter} onClick={() => setIssueFilters((current) => ({ ...current, [batch.id]: filter as IssueFilter }))} type="button">{label} ({count})</button>)}
+                {[["UNDERPAID", "Pagos abaixo do valor de face", underpaidItems], ["PDD", "Baixados anteriormente por PDD", pddItems], ["NOT_FOUND", "Não encontrados no estoque", notFoundItems], ["OTHER", "Outras divergências", otherItems]].map(([filter, label, items]) => <button className={`rounded border px-3 py-2 text-sm font-semibold ${activeFilter === filter ? "border-primary bg-primary text-white" : "border-slate-300 bg-white text-slate-700"}`} key={String(filter)} onClick={() => setIssueFilters((current) => ({ ...current, [batch.id]: filter as IssueFilter }))} type="button">{String(label)} ({(items as SettlementItem[]).length} · {money(paidTotal(items as SettlementItem[]))})</button>)}
               </div>
               {activeFilter === "UNDERPAID" ? <div className="mt-4 space-y-4">
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -212,6 +246,11 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
                   <details className="mt-3"><summary className="cursor-pointer text-sm font-semibold text-red-800">Ver individualmente</summary><div className="mt-3 space-y-3">{individualAboveLimit.map((item) => renderIssueItem(batch, item, true))}</div></details>
                 </div> : null}
                 {!underpaidItems.length ? <p className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-500">Nenhum título pago abaixo do valor de face.</p> : null}
+              </div> : null}
+              {activeFilter === "PDD" ? <div className="mt-4 space-y-3">
+                <div className="grid gap-3 sm:grid-cols-3"><div className="rounded border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">Títulos</p><p className="mt-1 font-semibold">{pddItems.length.toLocaleString("pt-BR")}</p></div><div className="rounded border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">Valor pago recuperado</p><p className="mt-1 font-semibold">{money(paidTotal(pddItems))}</p></div><div className="rounded border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">Precisam de revisão</p><p className="mt-1 font-semibold">{pddItems.filter((item) => item.status === "PDD_REVIEW").length.toLocaleString("pt-BR")}</p></div></div>
+                {pddItems.map((item) => item.status === "PDD_REVIEW" ? renderIssueItem(batch, item) : <div className="rounded border border-emerald-200 bg-emerald-50/40 p-4" key={item.id}><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="font-semibold text-emerald-950">{item.debtorName ?? "Sacado não informado"}</p><p className="mt-1 text-xs text-emerald-800">Contrato {item.contractNumber ?? item.yourNumber ?? "—"} · CPF {item.debtorDocument ?? "—"} · linha {item.sourceRow}</p><p className="mt-2 text-sm text-emerald-800">{item.statusReason}</p></div><div className="text-right"><p className="text-xs text-emerald-700">Valor pago</p><p className="font-semibold text-emerald-950">{money(item.paidAmount)}</p></div></div>{item.matchedPddTitle ? <div className="mt-3 grid gap-2 rounded border border-emerald-200 bg-white p-3 text-xs sm:grid-cols-2 lg:grid-cols-4"><div><span className="text-slate-500">Título PDD</span><p className="font-semibold">{item.matchedPddTitle.yourNumberUsed ?? item.matchedPddTitle.documentNumber ?? "—"}</p></div><div><span className="text-slate-500">Baixa original</span><p className="font-semibold">{date(item.matchedPddTitle.generatedAt)}</p></div><div><span className="text-slate-500">Vencimento</span><p className="font-semibold">{date(item.matchedPddTitle.dueDate)}</p></div><div><span className="text-slate-500">Valor nominal / PDD</span><p className="font-semibold">{money(item.matchedPddTitle.nominalValue ?? 0)} / {money(item.matchedPddTitle.pddValue ?? 0)}</p></div><div className="sm:col-span-2 lg:col-span-4"><span className="text-slate-500">Remessa histórica</span><p className="break-all font-semibold">{item.matchedPddTitle.remittanceFile ?? "—"}</p></div></div> : null}</div>)}
+                {!pddItems.length ? <p className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-500">Nenhuma recuperação de PDD identificada.</p> : null}
               </div> : null}
               {activeFilter === "NOT_FOUND" ? <div className="mt-4 space-y-3">{notFoundItems.length ? notFoundItems.map((item) => renderIssueItem(batch, item)) : <p className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-500">Nenhum título não encontrado.</p>}</div> : null}
               {activeFilter === "OTHER" ? <div className="mt-4 space-y-3">{otherItems.length ? otherItems.map((item) => renderIssueItem(batch, item)) : <p className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-500">Nenhuma outra divergência.</p>}</div> : null}
