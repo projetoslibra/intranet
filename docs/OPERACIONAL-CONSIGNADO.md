@@ -1,4 +1,6 @@
-# Operacional do Consignado — plano de implementação
+# Operacional do Consignado — arquitetura e operação
+
+> Estado verificado em 12/08/2026. Este documento registra o fluxo que está publicado na `main`, as regras operacionais e as pendências conhecidas.
 
 ## Objetivo
 
@@ -26,11 +28,14 @@ O desenho deve permitir que, futuramente, uma API substitua o upload manual do e
 - Upload de extrato Bradesco `.csv`.
 - Conciliação de várias entradas com várias remessas.
 - Confirmação da baixa pela ausência do título no estoque posterior.
+- Base histórica de títulos baixados por PDD e identificação de recuperações.
+- Totais em quantidade e valor pago em cada classificação de revisão.
+- Navegação estrutural por breadcrumbs entre Operacional, Financeiro, Conciliação e Consignado.
 
 ### Fora da primeira versão
 
 - Baixa manual HBI.
-- Baixa de PDD.
+- Geração de novas baixas de PDD (a base histórica é importada somente para reconhecer recuperações).
 - Envio de remessa ao custodiante por API.
 - Importação de arquivo de retorno do custodiante.
 - QPROF como dependência obrigatória para BMP ou UY3.
@@ -55,6 +60,25 @@ O desenho deve permitir que, futuramente, uma API substitua o upload manual do e
 - Código e valores incoerentes geram divergência e não entram automaticamente na remessa.
 - Títulos encontrados podem gerar remessa mesmo que outras linhas do lote não sejam encontradas.
 - Linhas excluídas nunca são descartadas silenciosamente: permanecem no lote com motivo e valor.
+- Arquivo diário repetido gera aviso com a data do processamento anterior, mas pode ser reprocessado após confirmação.
+- Cada filtro de classificação apresenta quantidade de títulos e soma do valor pago.
+- Ocorrências `77` pagas abaixo da face são separadas por diferença de até 10%, acima de 10% com vários títulos do mesmo sacado e acima de 10% com título avulso.
+- Sacados com múltiplos títulos permitem liberação agrupada; títulos avulsos acima de 10% permanecem para análise individual.
+- A pesquisa de candidatos apresenta também o vencimento de cada título.
+
+### Recuperações de PDD
+
+- A planilha consolidada de PDD é importada de forma incremental e histórica.
+- O arquivo é identificado por SHA-256; uma nova tentativa com o mesmo arquivo não duplica títulos.
+- Linhas são deduplicadas pelo vínculo entre remessa, linha PDD, CPF e identificadores do título.
+- O matching contra o estoque ativo sempre tem prioridade.
+- Somente títulos não encontrados no estoque são pesquisados na base PDD.
+- Match exato por CPF e identificador, ou por CPF + vencimento + valor, recebe `PDD_RECOVERY`.
+- Mais de um título histórico possível recebe `PDD_REVIEW` e continua pendente de análise.
+- Uma recuperação confirmada por PDD fica visível no lote, com valor pago, título histórico, baixa original, vencimento, valor nominal, valor PDD e remessa histórica.
+- Recuperações de PDD não são incluídas na nova remessa ao custodiante.
+- A importação reclassifica também itens `NOT_FOUND` de lotes abertos já existentes.
+- Lotes com remessa gerada ou cancelados não são reclassificados retroativamente.
 
 ### Correção manual
 
@@ -168,6 +192,8 @@ Classificações previstas:
 - `DUPLICATE`: repetido no lote ou já usado;
 - `MANUALLY_MATCHED`: corrigido pelo operador;
 - `EXCLUDED`: não incluído na remessa.
+- `PDD_RECOVERY`: título ausente do estoque e identificado de forma exata na base histórica de PDD;
+- `PDD_REVIEW`: mais de um título histórico de PDD pode corresponder ao recebimento.
 
 ### Totais do resultado
 
@@ -182,7 +208,7 @@ Classificações previstas:
 
 ## Backlog executável
 
-### Status em 06/08/2026
+### Status em 12/08/2026
 
 - ✅ OC-01 — implementada e validada em build.
 - ✅ OC-02 — implementada; requer Blob privado configurado no ambiente publicado.
@@ -196,7 +222,43 @@ Classificações previstas:
 - ✅ OC-10 — importador idempotente do extrato Bradesco em cp1252.
 - ✅ OC-11 — conciliação bancária muitos-para-muitos com saldos e reversão.
 - ✅ OC-12 — confirmação automática pelo primeiro estoque ativo posterior.
+- ✅ OC-12A — aviso e confirmação para reprocessamento de arquivo diário repetido.
+- ✅ OC-12B — revisão de antecipações por faixas, recorrência do sacado e totais monetários.
+- ✅ OC-12C — base histórica de PDD, importação idempotente, matching secundário e filtro de recuperações.
+- ✅ Navegação estrutural — breadcrumbs e retorno entre todas as páginas internas do Operacional.
 - ⏳ OC-13 e OC-14 — indicadores consolidados e homologação final ainda pendentes.
+
+## Implementação publicada
+
+### Rotas
+
+- `/dashboard/operacional/financeiro/conciliacao/consignado`: entrada da operação.
+- `/dashboard/operacional/financeiro/conciliacao/consignado/estoques`: upload, ativação e histórico dos snapshots.
+- `/dashboard/operacional/financeiro/conciliacao/consignado/baixas`: processamento BMP/UY3, revisão, PDD e remessas.
+- `/dashboard/operacional/financeiro/conciliacao/consignado/conciliacao-bancaria`: extrato, pendências e conciliações.
+
+### Serviços
+
+- `consignado-stock-service.ts`: ingestão e ativação do estoque.
+- `consignado-parsers.ts`: leitura dos arquivos BMP e UY3.
+- `consignado-settlement-service.ts`: matching, decisões, totais e geração de remessa.
+- `consignado-pdd-service.ts`: importação histórica e classificação das recuperações de PDD.
+- `consignado-cnab.ts`: geração CNAB 444 Daycoval.
+- `consignado-bank-service.ts`: extrato e conciliação bancária.
+
+### Persistência de PDD
+
+- `consignado_pdd_imports`: auditoria de cada arquivo importado, usuário, hash e contadores.
+- `consignado_pdd_titles`: títulos históricos, identificadores, valores, vencimentos e origem da baixa.
+- `consignado_settlement_items.matched_pdd_title_id`: vínculo opcional entre recebimento e baixa histórica.
+- Migration: `20260810150000_add_consignado_pdd_history`.
+- Migration aplicada no banco compartilhado do schema `OSHER` em 10/08/2026.
+
+### Infraestrutura de upload
+
+- O estoque grande usa Vercel Blob privado e autorização OIDC, evitando transportar o XLSX pela Function.
+- A base PDD atual tem volume compatível com upload autenticado pela rota do módulo; o limite publicado é 15 MB.
+- Arquivos reais permanecem fora do Git.
 
 ### OC-01 — Fundação do estoque do Consignado
 

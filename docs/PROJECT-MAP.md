@@ -3,6 +3,8 @@
 > Relatório de reconhecimento (TASK 0). **Somente leitura** — nenhum arquivo do projeto foi modificado além deste documento.
 > Gerado em 2026-06-25.
 
+> **Aviso de atualização (12/08/2026):** este arquivo é o retrato histórico do início do projeto e várias seções abaixo estão desatualizadas. Para o estado atual do módulo operacional do Consignado, use [`OPERACIONAL-CONSIGNADO.md`](./OPERACIONAL-CONSIGNADO.md) e, para entregas recentes, [`TASKS.md`](./TASKS.md). Não use as contagens antigas de models, migrations ou páginas deste mapa como inventário atual.
+
 > ⚠️ **Nota sobre o nome do repositório**: o `CLAUDE.md` diz que o projeto fica em `C:\PROGRAMAS-JP\osher-finance-app`. O repositório real analisado está em `C:\Users\Juan Carneiro\Documents\GitHub\intranet` (remote `projetoslibra/intranet`). O conteúdo é o mesmo monorepo `osher-finance-app`.
 
 ---
