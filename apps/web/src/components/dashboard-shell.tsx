@@ -13,6 +13,7 @@ import {
   FileBarChart,
   LayoutDashboard,
   LogOut,
+  ShieldAlert,
   TrendingUp,
   Users,
   Wallet,
@@ -54,6 +55,12 @@ const navigation = [
     href: "/dashboard/previsoes",
     permissionKey: "forecasts.view",
     icon: TrendingUp,
+  },
+  {
+    title: "PDD",
+    href: "/dashboard/pdd",
+    permissionKey: "pdd.view",
+    icon: ShieldAlert,
   },
   {
     title: "Caixa",
@@ -123,6 +130,7 @@ const breadcrumbLabels: Record<string, string> = {
   mesa: "Mesa de Operações",
   novo: "Novo fundo",
   operacional: "Operacional",
+  pdd: "PDD",
   previsoes: "Previsões",
   relatorios: "Relatórios",
   usuarios: "Usuários",
