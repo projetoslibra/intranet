@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import {
   PddDashboard,
   type PddCedentMatrixRow,
+  type PddDailySummaryCard,
   type PddMatrixDate,
   type PddSummary,
   type PddTurnover,
@@ -50,6 +51,15 @@ const longDateFormatter = new Intl.DateTimeFormat("pt-BR", {
   day: "2-digit",
   month: "2-digit",
   timeZone: "UTC",
+  year: "numeric",
+});
+
+const dateTimeFormatter = new Intl.DateTimeFormat("pt-BR", {
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  month: "2-digit",
+  timeZone: "America/Sao_Paulo",
   year: "numeric",
 });
 
@@ -598,6 +608,38 @@ export default async function PddPage({ searchParams }: PddPageProps) {
       ? buildHistoricalMatrix(historicalTitles, titles, historicalDates, referenceDate)
       : [];
   const turnovers = dates.length > 0 ? buildTurnovers(titles, dates) : [];
+  let latestDailySummary: {
+    analiseTexto: string;
+    dataReferencia: Date;
+    updatedAt: Date;
+  } | null = null;
+
+  if (latestStock) {
+    try {
+      latestDailySummary = await prisma.pddResumoDiario.findFirst({
+        where: {
+          nomeFundo: latestStock.nomeFundo,
+        },
+        orderBy: {
+          dataReferencia: "desc",
+        },
+        select: {
+          analiseTexto: true,
+          dataReferencia: true,
+          updatedAt: true,
+        },
+      });
+    } catch {
+      latestDailySummary = null;
+    }
+  }
+  const dailySummary: PddDailySummaryCard | null = latestDailySummary
+    ? {
+        analiseTexto: latestDailySummary.analiseTexto,
+        dataReferenciaLabel: formatLongDateKey(dateKey(latestDailySummary.dataReferencia)),
+        updatedAtLabel: dateTimeFormatter.format(latestDailySummary.updatedAt),
+      }
+    : null;
   const summary: PddSummary | null =
     latestStock && referenceDate && dates.length > 0
       ? {
@@ -652,6 +694,7 @@ export default async function PddPage({ searchParams }: PddPageProps) {
 
       {summary ? (
         <PddDashboard
+          dailySummary={dailySummary}
           dates={dates}
           historicalDates={historicalDates}
           historicalRows={historicalMatrixRows}

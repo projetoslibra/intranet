@@ -1,0 +1,17 @@
+CREATE TABLE IF NOT EXISTS "PDD_RESUMOS_DIARIOS" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "nomeFundo" TEXT NOT NULL,
+  "dataReferencia" DATE NOT NULL,
+  "analiseTexto" TEXT NOT NULL,
+  "analiseJson" JSONB NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  CONSTRAINT "PDD_RESUMOS_DIARIOS_pkey" PRIMARY KEY ("id")
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "pdd_resumos_diarios_unique"
+  ON "PDD_RESUMOS_DIARIOS" ("nomeFundo", "dataReferencia");
+
+CREATE INDEX IF NOT EXISTS "PDD_RESUMOS_DIARIOS_dataReferencia_idx"
+  ON "PDD_RESUMOS_DIARIOS" ("dataReferencia");

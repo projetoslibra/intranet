@@ -57,7 +57,14 @@ export type PddSummary = {
   projectedFifteenDaysPdd: number;
 };
 
+export type PddDailySummaryCard = {
+  analiseTexto: string;
+  dataReferenciaLabel: string;
+  updatedAtLabel: string;
+};
+
 type PddDashboardProps = {
+  dailySummary: PddDailySummaryCard | null;
   dates: PddMatrixDate[];
   historicalDates: PddMatrixDate[];
   historicalRows: PddCedentMatrixRow[];
@@ -214,6 +221,7 @@ function rowHasMonthlyChange(row: PddCedentMatrixRow, dates: PddMatrixDate[]) {
 }
 
 export function PddDashboard({
+  dailySummary,
   dates,
   historicalDates,
   historicalRows,
@@ -373,6 +381,35 @@ export function PddDashboard({
             </div>
           </div>
         </div>
+      </section>
+
+      <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase text-primary">
+              Resumo diario
+            </p>
+            <h2 className="mt-1 text-base font-semibold text-slate-950">
+              Analise automatica de PDD
+            </h2>
+          </div>
+          {dailySummary ? (
+            <p className="text-xs text-slate-500">
+              Base {dailySummary.dataReferenciaLabel} · atualizado em{" "}
+              {dailySummary.updatedAtLabel}
+            </p>
+          ) : null}
+        </div>
+        {dailySummary ? (
+          <p className="mt-3 max-w-5xl text-sm leading-6 text-slate-700">
+            {dailySummary.analiseTexto}
+          </p>
+        ) : (
+          <p className="mt-3 text-sm text-slate-500">
+            Nenhum resumo diario foi gerado para este fundo ainda. O N8N deve chamar
+            o endpoint de resumo apos concluir a ingestao do estoque.
+          </p>
+        )}
       </section>
 
       <section className="rounded border border-slate-200 bg-white shadow-executive">
