@@ -80,14 +80,6 @@ function compactDocument(value: string | null) {
   return value || "-";
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 function slugifyFilePart(value: string) {
   return value
     .normalize("NFD")
@@ -97,7 +89,28 @@ function slugifyFilePart(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-function buildMatrixExcelWorkbook({
+function toExcelNumber(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value
+      .replace(/\s/g, "")
+      .replace(/R\$/g, "")
+      .replace(/\./g, "")
+      .replace(",", ".");
+    const number = Number(normalized);
+
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  const number = Number(value);
+
+  return Number.isFinite(number) ? number : 0;
+}
+
+function buildMatrixExcelData({
   dates,
   fundName,
   referenceDateLabel,
@@ -110,12 +123,14 @@ function buildMatrixExcelWorkbook({
   rows: PddCedentMatrixRow[];
   showPast: boolean;
 }) {
-  const headerCells = dates
-    .map(
-      (date) =>
-        `<th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:right;">${escapeHtml(date.label)}</th>`
-    )
-    .join("");
+  const header = [
+    "Tipo",
+    "Cedente / Sacado",
+    "Documento",
+    "Titulos",
+    "Valor presente",
+    ...dates.map((date) => date.label),
+  ];
   const bodyRows = rows
     .flatMap((row) => [
       { kind: "Cedente", level: 0, item: row },
@@ -125,51 +140,26 @@ function buildMatrixExcelWorkbook({
         item: debtor,
       })),
     ])
-    .map(({ item, kind, level }) => {
-      const isCedent = kind === "Cedente";
-      const rowStyle = isCedent ? "font-weight:bold;background:#f8fafc;" : "";
-      const valueCells = dates
-        .map((date) => {
-          const value = item.values[date.key] ?? 0;
+    .map(({ item, kind, level }) => [
+      kind,
+      `${level === 1 ? "  " : ""}${item.name}`,
+      compactDocument(item.document),
+      toExcelNumber(item.titleCount),
+      toExcelNumber(item.presentValue),
+      ...dates.map((date) => toExcelNumber(item.values[date.key] ?? 0)),
+    ]);
 
-          return `<td style="border:1px solid #e2e8f0;text-align:right;${rowStyle}">${escapeHtml(formatCurrency(value))}</td>`;
-        })
-        .join("");
-
-      return `<tr>
-        <td style="border:1px solid #e2e8f0;${rowStyle}">${escapeHtml(kind)}</td>
-        <td style="border:1px solid #e2e8f0;padding-left:${level === 1 ? 24 : 4}px;${rowStyle}">${escapeHtml(item.name)}</td>
-        <td style="border:1px solid #e2e8f0;${rowStyle}">${escapeHtml(compactDocument(item.document))}</td>
-        <td style="border:1px solid #e2e8f0;text-align:right;${rowStyle}">${item.titleCount.toLocaleString("pt-BR")}</td>
-        <td style="border:1px solid #e2e8f0;text-align:right;${rowStyle}">${escapeHtml(formatCurrency(item.presentValue))}</td>
-        ${valueCells}
-      </tr>`;
-    })
-    .join("");
-  const columnCount = dates.length + 5;
-
-  return `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-</head>
-<body>
-  <table>
-    <tr><th colspan="${columnCount}" style="font-size:16px;text-align:left;">Matriz de PDD</th></tr>
-    <tr><td colspan="${columnCount}" style="text-align:left;">${escapeHtml(fundName)} - base ${escapeHtml(referenceDateLabel)} - ${showPast ? "historico mensal + projecao" : "projecao futura"}</td></tr>
-    <tr></tr>
-    <tr>
-      <th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:left;">Tipo</th>
-      <th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:left;">Cedente / Sacado</th>
-      <th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:left;">Documento</th>
-      <th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:right;">Titulos</th>
-      <th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:right;">Valor presente</th>
-      ${headerCells}
-    </tr>
-    ${bodyRows}
-  </table>
-</body>
-</html>`;
+  return [
+    ["Matriz de PDD"],
+    [
+      `${fundName} - base ${referenceDateLabel} - ${
+        showPast ? "historico mensal + projecao" : "projecao futura"
+      }`,
+    ],
+    [],
+    header,
+    ...bodyRows,
+  ];
 }
 
 function MatrixValue({
@@ -268,17 +258,41 @@ export function PddDashboard({
     setExpandedCedents(new Set());
   }
 
-  function exportExcel() {
-    const blob = new Blob([excelWorkbook], {
-      type: "application/vnd.ms-excel;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
+  async function exportExcel() {
+    const XLSX = await import("xlsx");
+    const worksheet = XLSX.utils.aoa_to_sheet(excelData);
+    const range = XLSX.utils.decode_range(worksheet["!ref"] ?? "A1:A1");
 
-    link.href = url;
-    link.download = excelFileName;
-    link.click();
-    URL.revokeObjectURL(url);
+    worksheet["!cols"] = [
+      { wch: 12 },
+      { wch: 46 },
+      { wch: 22 },
+      { wch: 12 },
+      { wch: 18 },
+      ...activeDates.map(() => ({ wch: 14 })),
+    ];
+
+    for (let rowIndex = 4; rowIndex <= range.e.r; rowIndex += 1) {
+      for (let columnIndex = 3; columnIndex <= range.e.c; columnIndex += 1) {
+        const address = XLSX.utils.encode_cell({
+          c: columnIndex,
+          r: rowIndex,
+        });
+        const cell = worksheet[address];
+
+        if (cell) {
+          cell.v = toExcelNumber(cell.v);
+          cell.t = "n";
+          cell.z = columnIndex === 3 ? "0" : "0.00";
+          delete cell.w;
+        }
+      }
+    }
+
+    const workbook = XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Matriz PDD");
+    XLSX.writeFile(workbook, excelFileName);
   }
 
   const sortedTurnovers = useMemo(
@@ -302,9 +316,9 @@ export function PddDashboard({
       return left.name.localeCompare(right.name, "pt-BR");
     });
   }, [activeDates, activeRows, matrixSortMode, showOnlyMonthTurnovers]);
-  const excelWorkbook = useMemo(
+  const excelData = useMemo(
     () =>
-      buildMatrixExcelWorkbook({
+      buildMatrixExcelData({
         dates: activeDates,
         fundName: summary.fundName,
         referenceDateLabel: summary.referenceDateLabel,
@@ -313,7 +327,7 @@ export function PddDashboard({
       }),
     [activeDates, showPast, summary.fundName, summary.referenceDateLabel, visibleRows]
   );
-  const excelFileName = `matriz-pdd-${slugifyFilePart(summary.fundName)}-${slugifyFilePart(summary.referenceDateLabel)}${showPast ? "-historico" : ""}.xls`;
+  const excelFileName = `matriz-pdd-${slugifyFilePart(summary.fundName)}-${slugifyFilePart(summary.referenceDateLabel)}${showPast ? "-historico" : ""}.xlsx`;
 
   return (
     <div className="space-y-6">
