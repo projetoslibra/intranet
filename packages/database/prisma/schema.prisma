@@ -887,6 +887,20 @@ model FidcEstoque {
   @@map("FIDC_ESTOQUES")
 }
 
+model PddResumoDiario {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nomeFundo       String
+  dataReferencia  DateTime @db.Date
+  analiseTexto    String
+  analiseJson     Json
+  createdAt       DateTime @default(now()) @db.Timestamp(3)
+  updatedAt       DateTime @updatedAt @db.Timestamp(3)
+
+  @@unique([nomeFundo, dataReferencia], name: "pdd_resumos_diarios_unique")
+  @@index([dataReferencia])
+  @@map("PDD_RESUMOS_DIARIOS")
+}
+
 model FidcMovimentoAberto {
   id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   batchId           String?      @map("batch_id")
