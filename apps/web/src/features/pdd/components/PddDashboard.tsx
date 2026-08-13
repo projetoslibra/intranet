@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Download } from "lucide-react";
 import { formatCurrency } from "@/lib/formatters";
 
 export type PddMatrixDate = {
@@ -78,6 +78,98 @@ function formatSignedCurrency(value: number) {
 
 function compactDocument(value: string | null) {
   return value || "-";
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function slugifyFilePart(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildMatrixExcelWorkbook({
+  dates,
+  fundName,
+  referenceDateLabel,
+  rows,
+  showPast,
+}: {
+  dates: PddMatrixDate[];
+  fundName: string;
+  referenceDateLabel: string;
+  rows: PddCedentMatrixRow[];
+  showPast: boolean;
+}) {
+  const headerCells = dates
+    .map(
+      (date) =>
+        `<th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:right;">${escapeHtml(date.label)}</th>`
+    )
+    .join("");
+  const bodyRows = rows
+    .flatMap((row) => [
+      { kind: "Cedente", level: 0, item: row },
+      ...row.debtors.map((debtor) => ({
+        kind: "Sacado",
+        level: 1,
+        item: debtor,
+      })),
+    ])
+    .map(({ item, kind, level }) => {
+      const isCedent = kind === "Cedente";
+      const rowStyle = isCedent ? "font-weight:bold;background:#f8fafc;" : "";
+      const valueCells = dates
+        .map((date) => {
+          const value = item.values[date.key] ?? 0;
+
+          return `<td style="border:1px solid #e2e8f0;text-align:right;${rowStyle}">${escapeHtml(formatCurrency(value))}</td>`;
+        })
+        .join("");
+
+      return `<tr>
+        <td style="border:1px solid #e2e8f0;${rowStyle}">${escapeHtml(kind)}</td>
+        <td style="border:1px solid #e2e8f0;padding-left:${level === 1 ? 24 : 4}px;${rowStyle}">${escapeHtml(item.name)}</td>
+        <td style="border:1px solid #e2e8f0;${rowStyle}">${escapeHtml(compactDocument(item.document))}</td>
+        <td style="border:1px solid #e2e8f0;text-align:right;${rowStyle}">${item.titleCount.toLocaleString("pt-BR")}</td>
+        <td style="border:1px solid #e2e8f0;text-align:right;${rowStyle}">${escapeHtml(formatCurrency(item.presentValue))}</td>
+        ${valueCells}
+      </tr>`;
+    })
+    .join("");
+  const columnCount = dates.length + 5;
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+</head>
+<body>
+  <table>
+    <tr><th colspan="${columnCount}" style="font-size:16px;text-align:left;">Matriz de PDD</th></tr>
+    <tr><td colspan="${columnCount}" style="text-align:left;">${escapeHtml(fundName)} - base ${escapeHtml(referenceDateLabel)} - ${showPast ? "historico mensal + projecao" : "projecao futura"}</td></tr>
+    <tr></tr>
+    <tr>
+      <th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:left;">Tipo</th>
+      <th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:left;">Cedente / Sacado</th>
+      <th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:left;">Documento</th>
+      <th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:right;">Titulos</th>
+      <th style="background:#f8fafc;border:1px solid #cbd5e1;text-align:right;">Valor presente</th>
+      ${headerCells}
+    </tr>
+    ${bodyRows}
+  </table>
+</body>
+</html>`;
 }
 
 function MatrixValue({
@@ -176,6 +268,19 @@ export function PddDashboard({
     setExpandedCedents(new Set());
   }
 
+  function exportExcel() {
+    const blob = new Blob([excelWorkbook], {
+      type: "application/vnd.ms-excel;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = excelFileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   const sortedTurnovers = useMemo(
     () => [...turnovers].sort((left, right) => right.value - left.value),
     [turnovers]
@@ -197,6 +302,18 @@ export function PddDashboard({
       return left.name.localeCompare(right.name, "pt-BR");
     });
   }, [activeDates, activeRows, matrixSortMode, showOnlyMonthTurnovers]);
+  const excelWorkbook = useMemo(
+    () =>
+      buildMatrixExcelWorkbook({
+        dates: activeDates,
+        fundName: summary.fundName,
+        referenceDateLabel: summary.referenceDateLabel,
+        rows: visibleRows,
+        showPast,
+      }),
+    [activeDates, showPast, summary.fundName, summary.referenceDateLabel, visibleRows]
+  );
+  const excelFileName = `matriz-pdd-${slugifyFilePart(summary.fundName)}-${slugifyFilePart(summary.referenceDateLabel)}${showPast ? "-historico" : ""}.xls`;
 
   return (
     <div className="space-y-6">
@@ -388,6 +505,14 @@ export function PddDashboard({
                 type="button"
               >
                 {hasAnyExpansion ? "Recolher todos" : "Expandir todos"}
+              </button>
+              <button
+                className="inline-flex h-9 items-center gap-2 rounded border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                onClick={exportExcel}
+                type="button"
+              >
+                <Download className="h-4 w-4" />
+                Exportar Excel
               </button>
             </div>
           </div>
