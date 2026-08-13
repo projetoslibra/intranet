@@ -6,6 +6,7 @@ import {
   PddDashboard,
   type PddCedentMatrixRow,
   type PddDailySummaryCard,
+  type PddDailySummaryJson,
   type PddMatrixDate,
   type PddSummary,
   type PddTurnover,
@@ -464,6 +465,39 @@ function sumMatrixDate(rows: PddCedentMatrixRow[], dateKeyValue: string) {
   return rows.reduce((total, row) => total + (row.values[dateKeyValue] ?? 0), 0);
 }
 
+function normalizeDailySummaryJson(value: unknown): PddDailySummaryJson | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const json = value as Partial<PddDailySummaryJson>;
+
+  return {
+    aumentos: Array.isArray(json.aumentos) ? json.aumentos : [],
+    deltaPdd:
+      typeof json.deltaPdd === "number" && Number.isFinite(json.deltaPdd)
+        ? json.deltaPdd
+        : null,
+    pddAnterior:
+      typeof json.pddAnterior === "number" && Number.isFinite(json.pddAnterior)
+        ? json.pddAnterior
+        : null,
+    pddAtual:
+      typeof json.pddAtual === "number" && Number.isFinite(json.pddAtual)
+        ? json.pddAtual
+        : 0,
+    reversoes: Array.isArray(json.reversoes) ? json.reversoes : [],
+    semComparativoAnterior: Boolean(json.semComparativoAnterior),
+    snapshotAnteriorData:
+      typeof json.snapshotAnteriorData === "string"
+        ? json.snapshotAnteriorData
+        : null,
+    viradasProximos7Dias: Array.isArray(json.viradasProximos7Dias)
+      ? json.viradasProximos7Dias
+      : [],
+  };
+}
+
 export default async function PddPage({ searchParams }: PddPageProps) {
   const canView = await hasPermission("pdd.view");
 
@@ -609,7 +643,7 @@ export default async function PddPage({ searchParams }: PddPageProps) {
       : [];
   const turnovers = dates.length > 0 ? buildTurnovers(titles, dates) : [];
   let latestDailySummary: {
-    analiseTexto: string;
+    analiseJson: unknown;
     dataReferencia: Date;
     updatedAt: Date;
   } | null = null;
@@ -624,7 +658,7 @@ export default async function PddPage({ searchParams }: PddPageProps) {
           dataReferencia: "desc",
         },
         select: {
-          analiseTexto: true,
+          analiseJson: true,
           dataReferencia: true,
           updatedAt: true,
         },
@@ -634,11 +668,23 @@ export default async function PddPage({ searchParams }: PddPageProps) {
     }
   }
   const dailySummary: PddDailySummaryCard | null = latestDailySummary
-    ? {
-        analiseTexto: latestDailySummary.analiseTexto,
-        dataReferenciaLabel: formatLongDateKey(dateKey(latestDailySummary.dataReferencia)),
-        updatedAtLabel: dateTimeFormatter.format(latestDailySummary.updatedAt),
-      }
+    ? (() => {
+        const analiseJson = normalizeDailySummaryJson(
+          latestDailySummary.analiseJson
+        );
+
+        return analiseJson
+          ? {
+              analiseJson,
+              dataReferenciaLabel: formatLongDateKey(
+                dateKey(latestDailySummary.dataReferencia)
+              ),
+              updatedAtLabel: dateTimeFormatter.format(
+                latestDailySummary.updatedAt
+              ),
+            }
+          : null;
+      })()
     : null;
   const summary: PddSummary | null =
     latestStock && referenceDate && dates.length > 0
