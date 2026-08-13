@@ -338,31 +338,31 @@ function deterministicText({
   nomeFundo: string;
 }) {
   if (json.semComparativoAnterior) {
-    return `Sem comparativo anterior para ${nomeFundo} em ${dataReferencia}. PDD atual: ${currencyFormatter.format(json.pddAtual)}.`;
+    return `Resumo de PDD do fundo ${nomeFundo} em ${dataReferencia}: o estoque do dia foi processado com PDD atual de ${currencyFormatter.format(json.pddAtual)}. Ainda nao existe snapshot anterior disponivel para comparacao.`;
   }
 
   const topIncrease = json.aumentos[0];
   const topReversal = json.reversoes[0];
   const topTurnover = json.viradasProximos7Dias[0];
   const pieces = [
-    `Delta do dia: ${currencyFormatter.format(json.deltaPdd ?? 0)} frente ao snapshot anterior de ${json.snapshotAnteriorData}.`,
+    `Resumo de PDD do fundo ${nomeFundo} em ${dataReferencia}: a PDD atual e ${currencyFormatter.format(json.pddAtual)}, com variacao de ${currencyFormatter.format(json.deltaPdd ?? 0)} frente ao snapshot anterior de ${json.snapshotAnteriorData}.`,
   ];
 
   if (topIncrease) {
     pieces.push(
-      `Maior aumento: ${topIncrease.cedente} / ${topIncrease.sacado}, delta de ${currencyFormatter.format(topIncrease.delta)}.`
+      `O maior aumento veio de ${topIncrease.cedente} / ${topIncrease.sacado}, com delta de ${currencyFormatter.format(topIncrease.delta)}.`
     );
   }
 
   if (topReversal) {
     pieces.push(
-      `Maior reversao: ${topReversal.cedente} / ${topReversal.sacado}, delta de ${currencyFormatter.format(topReversal.delta)}.`
+      `A maior reversao veio de ${topReversal.cedente} / ${topReversal.sacado}, com delta de ${currencyFormatter.format(topReversal.delta)}.`
     );
   }
 
   if (topTurnover) {
     pieces.push(
-      `Maior virada prevista em 7 dias: ${topTurnover.cedente} / ${topTurnover.sacado}, em ${topTurnover.data}, impacto de ${currencyFormatter.format(topTurnover.valorVirada)}.`
+      `Nos proximos 7 dias, a maior virada prevista e ${topTurnover.cedente} / ${topTurnover.sacado}, em ${topTurnover.data}, com impacto de ${currencyFormatter.format(topTurnover.valorVirada)}.`
     );
   }
 
@@ -393,7 +393,7 @@ async function generateNarrativeWithOpenAi({
           resumo: json,
         }),
         instructions:
-          "Voce recebe dados financeiros ja calculados e validados. Sua unica tarefa e escrever um resumo em portugues natural descrevendo esses dados. Nao faca nenhum calculo, nao corrija, nao estime, nao arredonde de forma diferente e nao invente nenhum valor. Use exatamente os numeros fornecidos. Nao abra o texto falando da PDD atual total. Destaque apenas: delta do dia, maior aumento, maior reversao e maior virada prevista nos proximos 7 dias. Tom executivo, curto, para leitura rapida por gestores.",
+          "Voce recebe dados financeiros ja calculados e validados. Sua unica tarefa e escrever um resumo em portugues natural descrevendo esses dados. Nao faca nenhum calculo, nao corrija, nao estime, nao arredonde de forma diferente e nao invente nenhum valor. Use exatamente os numeros fornecidos. O texto sera enviado por e-mail, entao pode contextualizar com fundo, data, PDD atual, variacao frente ao snapshot anterior, maior aumento, maior reversao e maior virada prevista nos proximos 7 dias. Tom executivo, curto, para leitura rapida por gestores.",
         max_output_tokens: 450,
         model: process.env.OPENAI_PDD_SUMMARY_MODEL ?? "gpt-5-mini",
       }),

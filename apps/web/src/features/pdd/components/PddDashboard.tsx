@@ -235,12 +235,14 @@ function SummaryMetricCard({
   accent,
   caption,
   detail,
+  hoverItems,
   title,
   value,
 }: {
   accent: "amber" | "green" | "red" | "slate";
   caption?: string;
   detail?: string;
+  hoverItems?: string[];
   title: string;
   value: string;
 }) {
@@ -252,7 +254,9 @@ function SummaryMetricCard({
   };
 
   return (
-    <div className={`rounded border px-4 py-3 ${accentClasses[accent]}`}>
+    <div
+      className={`group relative rounded border px-4 py-3 ${accentClasses[accent]}`}
+    >
       <p className="text-xs font-semibold uppercase tracking-wide">{title}</p>
       <p className="mt-2 text-lg font-semibold">{value}</p>
       {caption ? (
@@ -261,7 +265,46 @@ function SummaryMetricCard({
         </p>
       ) : null}
       {detail ? <p className="mt-1 text-xs text-slate-500">{detail}</p> : null}
+      {hoverItems?.length ? (
+        <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-40 hidden w-[min(520px,calc(100vw-48px))] rounded border border-slate-200 bg-white p-3 text-slate-700 shadow-xl group-hover:block">
+          <p className="text-xs font-semibold uppercase text-slate-500">
+            Composicao
+          </p>
+          <div className="mt-2 max-h-72 space-y-2 overflow-y-auto pr-1">
+            {hoverItems.map((item, index) => (
+              <p className="text-xs leading-5" key={`${item}-${index}`}>
+                {item}
+              </p>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function buildSummaryItemsTooltip(
+  items: PddDailySummaryItem[],
+  emptyLabel: string
+) {
+  if (!items.length) {
+    return [emptyLabel];
+  }
+
+  return items.map(
+    (item, index) =>
+      `${index + 1}. ${formatSignedCurrency(item.delta)} - ${item.cedente} / ${item.sacado} (antes ${formatCurrency(item.valorAnterior)}, atual ${formatCurrency(item.valorAtual)})`
+  );
+}
+
+function buildTurnoverTooltip(items: PddDailyTurnover[]) {
+  if (!items.length) {
+    return ["Sem viradas previstas nos proximos 7 dias."];
+  }
+
+  return items.map(
+    (item, index) =>
+      `${index + 1}. ${formatSignedCurrency(item.valorVirada)} - ${item.data} - ${item.cedente} / ${item.sacado} (${item.faixaAnterior} para ${item.faixaNova})`
   );
 }
 
@@ -312,6 +355,21 @@ export function PddDashboard({
   const topReversal = dailySummary?.analiseJson.reversoes[0] ?? null;
   const topTurnover =
     dailySummary?.analiseJson.viradasProximos7Dias[0] ?? null;
+  const increaseTooltipItems = dailySummary
+    ? buildSummaryItemsTooltip(
+        dailySummary.analiseJson.aumentos,
+        "Sem aumentos relevantes no dia."
+      )
+    : [];
+  const reversalTooltipItems = dailySummary
+    ? buildSummaryItemsTooltip(
+        dailySummary.analiseJson.reversoes,
+        "Sem reversoes relevantes no dia."
+      )
+    : [];
+  const turnoverTooltipItems = dailySummary
+    ? buildTurnoverTooltip(dailySummary.analiseJson.viradasProximos7Dias)
+    : [];
 
   function toggleCedent(key: string) {
     setExpandedCedents((current) => {
@@ -484,6 +542,16 @@ export function PddDashboard({
                   ? `vs. ${dailySummary.analiseJson.snapshotAnteriorData}`
                   : "sem snapshot anterior"
               }
+              hoverItems={[
+                `PDD anterior: ${
+                  dailySummary.analiseJson.pddAnterior === null
+                    ? "-"
+                    : formatCurrency(dailySummary.analiseJson.pddAnterior)
+                }`,
+                `PDD atual: ${formatCurrency(dailySummary.analiseJson.pddAtual)}`,
+                `Aumentos listados: ${dailySummary.analiseJson.aumentos.length}`,
+                `Reversoes listadas: ${dailySummary.analiseJson.reversoes.length}`,
+              ]}
               title="Delta do dia"
               value={
                 dailySummary.analiseJson.deltaPdd === null
@@ -503,6 +571,7 @@ export function PddDashboard({
                   ? `Anterior ${formatCurrency(topIncrease.valorAnterior)} · atual ${formatCurrency(topIncrease.valorAtual)}`
                   : undefined
               }
+              hoverItems={increaseTooltipItems}
               title="Maior aumento"
               value={topIncrease ? formatSignedCurrency(topIncrease.delta) : "-"}
             />
@@ -518,6 +587,7 @@ export function PddDashboard({
                   ? `Anterior ${formatCurrency(topReversal.valorAnterior)} · atual ${formatCurrency(topReversal.valorAtual)}`
                   : undefined
               }
+              hoverItems={reversalTooltipItems}
               title="Maior reversao"
               value={topReversal ? formatSignedCurrency(topReversal.delta) : "-"}
             />
@@ -533,6 +603,7 @@ export function PddDashboard({
                   ? `${topTurnover.data} · ${topTurnover.faixaAnterior} para ${topTurnover.faixaNova}`
                   : undefined
               }
+              hoverItems={turnoverTooltipItems}
               title="Maior virada 7d"
               value={
                 topTurnover ? formatSignedCurrency(topTurnover.valorVirada) : "-"
