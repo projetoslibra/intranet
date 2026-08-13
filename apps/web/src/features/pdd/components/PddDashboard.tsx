@@ -57,8 +57,39 @@ export type PddSummary = {
   projectedFifteenDaysPdd: number;
 };
 
+export type PddDailySummaryItem = {
+  cedente: string;
+  sacado: string;
+  documentoSacado: string | null;
+  valorAnterior: number;
+  valorAtual: number;
+  delta: number;
+};
+
+export type PddDailyTurnover = {
+  data: string;
+  cedente: string;
+  sacado: string;
+  documentoSacado: string | null;
+  faixaAnterior: string;
+  faixaNova: string;
+  valorPresente: number;
+  valorVirada: number;
+};
+
+export type PddDailySummaryJson = {
+  pddAtual: number;
+  pddAnterior: number | null;
+  deltaPdd: number | null;
+  aumentos: PddDailySummaryItem[];
+  reversoes: PddDailySummaryItem[];
+  viradasProximos7Dias: PddDailyTurnover[];
+  semComparativoAnterior: boolean;
+  snapshotAnteriorData: string | null;
+};
+
 export type PddDailySummaryCard = {
-  analiseTexto: string;
+  analiseJson: PddDailySummaryJson;
   dataReferenciaLabel: string;
   updatedAtLabel: string;
 };
@@ -200,6 +231,40 @@ function matrixCellClass(changed: boolean) {
     : "border-b border-slate-100 px-4 py-3 text-right";
 }
 
+function SummaryMetricCard({
+  accent,
+  caption,
+  detail,
+  title,
+  value,
+}: {
+  accent: "amber" | "green" | "red" | "slate";
+  caption?: string;
+  detail?: string;
+  title: string;
+  value: string;
+}) {
+  const accentClasses = {
+    amber: "border-amber-200 bg-amber-50 text-amber-800",
+    green: "border-emerald-200 bg-emerald-50 text-emerald-800",
+    red: "border-red-200 bg-red-50 text-red-700",
+    slate: "border-slate-200 bg-slate-50 text-slate-900",
+  };
+
+  return (
+    <div className={`rounded border px-4 py-3 ${accentClasses[accent]}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide">{title}</p>
+      <p className="mt-2 text-lg font-semibold">{value}</p>
+      {caption ? (
+        <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-700">
+          {caption}
+        </p>
+      ) : null}
+      {detail ? <p className="mt-1 text-xs text-slate-500">{detail}</p> : null}
+    </div>
+  );
+}
+
 function rowHasMonthlyChange(row: PddCedentMatrixRow, dates: PddMatrixDate[]) {
   const baseMonth = dates[0]?.key.slice(0, 7);
 
@@ -243,6 +308,10 @@ export function PddDashboard({
   const hasAnyExpansion = expandedCedents.size > 0;
   const activeDates = showPast ? historicalDates : dates;
   const activeRows = showPast ? historicalRows : rows;
+  const topIncrease = dailySummary?.analiseJson.aumentos[0] ?? null;
+  const topReversal = dailySummary?.analiseJson.reversoes[0] ?? null;
+  const topTurnover =
+    dailySummary?.analiseJson.viradasProximos7Dias[0] ?? null;
 
   function toggleCedent(key: string) {
     setExpandedCedents((current) => {
@@ -401,9 +470,75 @@ export function PddDashboard({
           ) : null}
         </div>
         {dailySummary ? (
-          <p className="mt-3 max-w-5xl text-sm leading-6 text-slate-700">
-            {dailySummary.analiseTexto}
-          </p>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <SummaryMetricCard
+              accent={
+                (dailySummary.analiseJson.deltaPdd ?? 0) > 0
+                  ? "red"
+                  : (dailySummary.analiseJson.deltaPdd ?? 0) < 0
+                    ? "green"
+                    : "slate"
+              }
+              detail={
+                dailySummary.analiseJson.snapshotAnteriorData
+                  ? `vs. ${dailySummary.analiseJson.snapshotAnteriorData}`
+                  : "sem snapshot anterior"
+              }
+              title="Delta do dia"
+              value={
+                dailySummary.analiseJson.deltaPdd === null
+                  ? "-"
+                  : formatSignedCurrency(dailySummary.analiseJson.deltaPdd)
+              }
+            />
+            <SummaryMetricCard
+              accent="red"
+              caption={
+                topIncrease
+                  ? `${topIncrease.cedente} / ${topIncrease.sacado}`
+                  : "Sem aumento relevante"
+              }
+              detail={
+                topIncrease
+                  ? `Anterior ${formatCurrency(topIncrease.valorAnterior)} · atual ${formatCurrency(topIncrease.valorAtual)}`
+                  : undefined
+              }
+              title="Maior aumento"
+              value={topIncrease ? formatSignedCurrency(topIncrease.delta) : "-"}
+            />
+            <SummaryMetricCard
+              accent="green"
+              caption={
+                topReversal
+                  ? `${topReversal.cedente} / ${topReversal.sacado}`
+                  : "Sem reversao relevante"
+              }
+              detail={
+                topReversal
+                  ? `Anterior ${formatCurrency(topReversal.valorAnterior)} · atual ${formatCurrency(topReversal.valorAtual)}`
+                  : undefined
+              }
+              title="Maior reversao"
+              value={topReversal ? formatSignedCurrency(topReversal.delta) : "-"}
+            />
+            <SummaryMetricCard
+              accent="amber"
+              caption={
+                topTurnover
+                  ? `${topTurnover.cedente} / ${topTurnover.sacado}`
+                  : "Sem virada prevista"
+              }
+              detail={
+                topTurnover
+                  ? `${topTurnover.data} · ${topTurnover.faixaAnterior} para ${topTurnover.faixaNova}`
+                  : undefined
+              }
+              title="Maior virada 7d"
+              value={
+                topTurnover ? formatSignedCurrency(topTurnover.valorVirada) : "-"
+              }
+            />
+          </div>
         ) : (
           <p className="mt-3 text-sm text-slate-500">
             Nenhum resumo diario foi gerado para este fundo ainda. O N8N deve chamar
