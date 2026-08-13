@@ -21,6 +21,7 @@
 
 | Task | Responsável | Branch | Início | Notas |
 |------|-------------|--------|--------|-------|
+| Tela PDD dos fundos | João | `feat/tela-pdd` | 2026-08-12 | Nova tela com indicadores, viradas futuras e matriz cedente/sacado por data |
 
 ---
 

@@ -90,6 +90,18 @@ export const osherAccessItems: readonly OsherAccessItem[] = [
     ],
   },
   {
+    id: "pdd",
+    title: "PDD",
+    levels: [
+      noAccess,
+      {
+        value: "VIEWER",
+        label: "Visualizador",
+        permissionKeys: ["pdd.view"],
+      },
+    ],
+  },
+  {
     id: "cash",
     title: "Caixa",
     levels: [

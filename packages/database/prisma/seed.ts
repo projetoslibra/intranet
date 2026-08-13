@@ -13,6 +13,7 @@ const permissions = [
   "dre.view",
   "dre.import",
   "forecasts.view",
+  "pdd.view",
   "cash.view",
   "cash.manage",
   "operational.view",
