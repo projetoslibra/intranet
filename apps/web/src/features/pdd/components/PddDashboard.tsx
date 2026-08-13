@@ -8,6 +8,7 @@ export type PddMatrixDate = {
   key: string;
   label: string;
   isBase: boolean;
+  isHistorical?: boolean;
 };
 
 export type PddDebtorMatrixRow = {
@@ -58,6 +59,8 @@ export type PddSummary = {
 
 type PddDashboardProps = {
   dates: PddMatrixDate[];
+  historicalDates: PddMatrixDate[];
+  historicalRows: PddCedentMatrixRow[];
   rows: PddCedentMatrixRow[];
   summary: PddSummary;
   turnovers: PddTurnover[];
@@ -130,6 +133,8 @@ function rowHasMonthlyChange(row: PddCedentMatrixRow, dates: PddMatrixDate[]) {
 
 export function PddDashboard({
   dates,
+  historicalDates,
+  historicalRows,
   rows,
   summary,
   turnovers,
@@ -141,10 +146,13 @@ export function PddDashboard({
   const [matrixSortMode, setMatrixSortMode] =
     useState<MatrixSortMode>("alpha");
   const [showOnlyMonthTurnovers, setShowOnlyMonthTurnovers] = useState(false);
+  const [showPast, setShowPast] = useState(false);
   const pddDeltaSevenDays = summary.projectedSevenDaysPdd - summary.currentPdd;
   const pddDeltaFifteenDays =
     summary.projectedFifteenDaysPdd - summary.currentPdd;
   const hasAnyExpansion = expandedCedents.size > 0;
+  const activeDates = showPast ? historicalDates : dates;
+  const activeRows = showPast ? historicalRows : rows;
 
   function toggleCedent(key: string) {
     setExpandedCedents((current) => {
@@ -174,8 +182,8 @@ export function PddDashboard({
   );
   const visibleRows = useMemo(() => {
     const filteredRows = showOnlyMonthTurnovers
-      ? rows.filter((row) => rowHasMonthlyChange(row, dates))
-      : rows;
+      ? activeRows.filter((row) => rowHasMonthlyChange(row, activeDates))
+      : activeRows;
 
     return filteredRows.slice().sort((left, right) => {
       if (matrixSortMode === "pdd_desc") {
@@ -188,7 +196,7 @@ export function PddDashboard({
 
       return left.name.localeCompare(right.name, "pt-BR");
     });
-  }, [dates, matrixSortMode, rows, showOnlyMonthTurnovers]);
+  }, [activeDates, activeRows, matrixSortMode, showOnlyMonthTurnovers]);
 
   return (
     <div className="space-y-6">
@@ -364,6 +372,17 @@ export function PddDashboard({
                 Viram no mes
               </label>
               <button
+                className={
+                  showPast
+                    ? "h-9 rounded border border-primary bg-primary px-3 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
+                    : "h-9 rounded border border-slate-200 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                }
+                onClick={() => setShowPast((current) => !current)}
+                type="button"
+              >
+                {showPast ? "Ocultar passado" : "Mostrar passado"}
+              </button>
+              <button
                 className="h-9 rounded border border-slate-200 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                 onClick={hasAnyExpansion ? collapseAll : expandAll}
                 type="button"
@@ -383,9 +402,17 @@ export function PddDashboard({
                 </th>
                 <th className="border-b border-slate-200 px-4 py-3 text-right font-semibold">Titulos</th>
                 <th className="border-b border-slate-200 px-4 py-3 text-right font-semibold">Valor presente</th>
-                {dates.map((date) => (
+                {activeDates.map((date) => (
                   <th className="border-b border-slate-200 px-4 py-3 text-right font-semibold" key={date.key}>
-                    <span className={date.isBase ? "text-primary" : undefined}>
+                    <span
+                      className={
+                        date.isBase
+                          ? "text-primary"
+                          : date.isHistorical
+                            ? "text-slate-700"
+                            : undefined
+                      }
+                    >
                       {date.label}
                     </span>
                   </th>
@@ -429,10 +456,12 @@ export function PddDashboard({
                       <td className="border-b border-slate-100 px-4 py-3 text-right text-slate-700">
                         {formatCurrency(row.presentValue)}
                       </td>
-                      {dates.map((date, index) => {
+                      {activeDates.map((date, index) => {
                         const value = row.values[date.key] ?? 0;
                         const previousValue =
-                          index > 0 ? row.values[dates[index - 1].key] ?? 0 : value;
+                          index > 0
+                            ? row.values[activeDates[index - 1].key] ?? 0
+                            : value;
                         const changed =
                           index > 0 && Math.abs(value - previousValue) >= 0.005;
 
@@ -468,11 +497,11 @@ export function PddDashboard({
                             <td className="border-b border-slate-100 px-4 py-3 text-right text-slate-600">
                               {formatCurrency(debtor.presentValue)}
                             </td>
-                            {dates.map((date, index) => {
+                            {activeDates.map((date, index) => {
                               const value = debtor.values[date.key] ?? 0;
                               const previousValue =
                                 index > 0
-                                  ? debtor.values[dates[index - 1].key] ?? 0
+                                  ? debtor.values[activeDates[index - 1].key] ?? 0
                                   : value;
                               const changed =
                                 index > 0 &&
