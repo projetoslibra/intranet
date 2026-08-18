@@ -37,6 +37,7 @@
 ---
 
 ## 🟢 Concluídas (recentes)
+- [x] **[2026-08-18] Filtros e ajustes da conciliação do Consignado** — lotes filtrados por processamento, cancelamento lógico de duplicados sem remessa, entradas por data, indicadores globais e diferenças encerradas com justificativa auditável e estorno — _Juan_ · branch `feat/conciliacao-consignado-filtros-ajustes` · migration pendente de aplicação após merge.
 - [x] **[2026-08-13] Resumo diário automático de PDD** — endpoint para N8N, tabela `PDD_RESUMOS_DIARIOS`, card na tela PDD, narrativa via OpenAI com fallback determinístico e criação idempotente da tabela no primeiro uso autorizado — _João_ · branch `feat/pdd-resumo-diario`.
 - [x] **[2026-08-12] Documentação e consolidação do Operacional Consignado** — fluxo publicado, navegação, reprocessamento, antecipações, candidatos com vencimento, base histórica PDD e valores por filtro registrados em `docs/OPERACIONAL-CONSIGNADO.md` — _Juan_ · `main`.
 - [x] **[2026-08-10] Recuperações de PDD do Consignado** — importação histórica idempotente, matching após falha no estoque, reclassificação de lotes abertos, filtro próprio e bloqueio de nova remessa — _Juan_ · branch `feat/operacional-consignado` · migration aplicada no schema `OSHER`.

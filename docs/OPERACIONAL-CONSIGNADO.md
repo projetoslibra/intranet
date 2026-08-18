@@ -1,6 +1,6 @@
 # Operacional do Consignado — arquitetura e operação
 
-> Estado verificado em 12/08/2026. Este documento registra o fluxo que está publicado na `main`, as regras operacionais e as pendências conhecidas.
+> Estado verificado em 18/08/2026. Este documento registra o fluxo operacional, as regras implementadas e as pendências conhecidas.
 
 ## Objetivo
 
@@ -61,6 +61,8 @@ O desenho deve permitir que, futuramente, uma API substitua o upload manual do e
 - Títulos encontrados podem gerar remessa mesmo que outras linhas do lote não sejam encontradas.
 - Linhas excluídas nunca são descartadas silenciosamente: permanecem no lote com motivo e valor.
 - Arquivo diário repetido gera aviso com a data do processamento anterior, mas pode ser reprocessado após confirmação.
+- Lotes podem ser filtrados pela data em que foram processados no OSHER.
+- Um lote sem remessa ativa pode ser cancelado e retirado da visualização; seus dados e eventos permanecem armazenados para auditoria.
 - Cada filtro de classificação apresenta quantidade de títulos e soma do valor pago.
 - Ocorrências `77` pagas abaixo da face são separadas por diferença de até 10%, acima de 10% com vários títulos do mesmo sacado e acima de 10% com título avulso.
 - Sacados com múltiplos títulos permitem liberação agrupada; títulos avulsos acima de 10% permanecem para análise individual.
@@ -93,8 +95,12 @@ O desenho deve permitir que, futuramente, uma API substitua o upload manual do e
 - Saldo anterior, débitos, totais, rodapés e linhas vazias são ignorados.
 - Uploads bancários sobrepostos não duplicam entradas.
 - Uma ou várias entradas podem conciliar uma ou várias remessas.
-- A alocação nunca pode superar o saldo disponível da entrada ou da remessa.
-- Um item só sai das pendências quando seu saldo chega a zero.
+- Ao abrir a tela, todas as entradas pendentes ou parciais são exibidas; o operador pode filtrar pela data da movimentação e retornar a `Todas em aberto`.
+- O resumo global informa quantidade de entradas não conciliadas e saldo total em aberto, independentemente do filtro aplicado.
+- A alocação real nunca pode superar o saldo disponível da entrada ou da remessa.
+- Quando os totais selecionados forem diferentes, o operador deve justificar a diferença; o excedente vira ajuste auditável e os dois lados são encerrados.
+- Valor alocado e valor ajustado são armazenados separadamente.
+- O estorno reverte alocações e ajustes e recalcula os estados dos dois lados.
 - Itens conciliados continuam acessíveis no histórico.
 
 ### Conciliação pelo estoque
@@ -225,6 +231,7 @@ Classificações previstas:
 - ✅ OC-12A — aviso e confirmação para reprocessamento de arquivo diário repetido.
 - ✅ OC-12B — revisão de antecipações por faixas, recorrência do sacado e totais monetários.
 - ✅ OC-12C — base histórica de PDD, importação idempotente, matching secundário e filtro de recuperações.
+- ✅ OC-12D — filtros de lotes/entradas, cancelamento lógico de lotes e conciliação com diferença justificada.
 - ✅ Navegação estrutural — breadcrumbs e retorno entre todas as páginas internas do Operacional.
 - ⏳ OC-13 e OC-14 — indicadores consolidados e homologação final ainda pendentes.
 
@@ -245,6 +252,8 @@ Classificações previstas:
 - `consignado-pdd-service.ts`: importação histórica e classificação das recuperações de PDD.
 - `consignado-cnab.ts`: geração CNAB 444 Daycoval.
 - `consignado-bank-service.ts`: extrato e conciliação bancária.
+- `consignado-reconciliation.ts`: planejamento determinístico das alocações e ajustes N:N.
+- `consignado-date.ts`: validação das datas bancárias e faixa diária de processamento em São Paulo.
 
 ### Persistência de PDD
 
@@ -259,6 +268,14 @@ Classificações previstas:
 - O estoque grande usa Vercel Blob privado e autorização OIDC, evitando transportar o XLSX pela Function.
 - A base PDD atual tem volume compatível com upload autenticado pela rota do módulo; o limite publicado é 15 MB.
 - Arquivos reais permanecem fora do Git.
+
+### Persistência dos ajustes bancários
+
+- `consignado_bank_allocations`: relacionamentos financeiros efetivos entre entradas e remessas.
+- `consignado_bank_adjustments`: excedentes justificados associados a uma entrada ou remessa.
+- `adjusted_amount`: parcela encerrada por ajuste, separada de `allocated_amount`.
+- `entry_total_amount`, `remittance_total_amount`, `difference_amount` e `difference_reason`: memória auditável da conciliação.
+- Migration: `20260818000000_add_consignado_bank_adjustments` (aplicar no ambiente antes de publicar a interface).
 
 ### OC-01 — Fundação do estoque do Consignado
 
