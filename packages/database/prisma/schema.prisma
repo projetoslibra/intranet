@@ -719,6 +719,7 @@ model ConsignadoRemittance {
   totalItems          Int                        @map("total_items")
   totalAmount         Decimal                    @map("total_amount") @db.Decimal(24, 2)
   allocatedAmount     Decimal                    @default(0) @map("allocated_amount") @db.Decimal(24, 2)
+  adjustedAmount      Decimal                    @default(0) @map("adjusted_amount") @db.Decimal(24, 2)
   generatedAt         DateTime                   @default(now()) @map("generated_at")
   checkedStockBatchId String?                    @map("checked_stock_batch_id")
   checkedAt           DateTime?                  @map("checked_at")
@@ -728,6 +729,7 @@ model ConsignadoRemittance {
   checkedStockBatch   ImportBatch?               @relation("RemittanceCheckedStock", fields: [checkedStockBatchId], references: [id], onDelete: Restrict)
   items               ConsignadoRemittanceItem[]
   bankAllocations     ConsignadoBankAllocation[]
+  bankAdjustments     ConsignadoBankAdjustment[]
 
   @@unique([batchId])
   @@unique([storageKey])
@@ -787,29 +789,36 @@ model ConsignadoBankCreditEntry {
   document        String?
   amount          Decimal                       @db.Decimal(24, 2)
   allocatedAmount Decimal                       @default(0) @map("allocated_amount") @db.Decimal(24, 2)
+  adjustedAmount  Decimal                       @default(0) @map("adjusted_amount") @db.Decimal(24, 2)
   fingerprint     String                        @unique
   status          BankEntryStatus               @default(PENDING)
   createdAt       DateTime                      @default(now()) @map("created_at")
   statementImport ConsignadoBankStatementImport @relation(fields: [importId], references: [id], onDelete: Restrict)
   fund            Fund                          @relation(fields: [fundId], references: [id], onDelete: Restrict)
   allocations     ConsignadoBankAllocation[]
+  adjustments     ConsignadoBankAdjustment[]
 
   @@index([fundId, status, transactionDate])
   @@map("consignado_bank_credit_entries")
 }
 
 model ConsignadoBankReconciliation {
-  id              String                     @id @default(cuid())
-  createdByUserId String                     @map("created_by_user_id")
-  undoneByUserId  String?                    @map("undone_by_user_id")
-  status          BankReconciliationStatus   @default(ACTIVE)
-  totalAmount     Decimal                    @map("total_amount") @db.Decimal(24, 2)
-  note            String?
-  createdAt       DateTime                   @default(now()) @map("created_at")
-  undoneAt        DateTime?                  @map("undone_at")
-  createdBy       User                       @relation("BankReconciliationCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  undoneBy        User?                      @relation("BankReconciliationUndoneBy", fields: [undoneByUserId], references: [id], onDelete: Restrict)
-  allocations     ConsignadoBankAllocation[]
+  id                    String                     @id @default(cuid())
+  createdByUserId       String                     @map("created_by_user_id")
+  undoneByUserId        String?                    @map("undone_by_user_id")
+  status                BankReconciliationStatus   @default(ACTIVE)
+  totalAmount           Decimal                    @map("total_amount") @db.Decimal(24, 2)
+  entryTotalAmount      Decimal                    @default(0) @map("entry_total_amount") @db.Decimal(24, 2)
+  remittanceTotalAmount Decimal                    @default(0) @map("remittance_total_amount") @db.Decimal(24, 2)
+  differenceAmount      Decimal                    @default(0) @map("difference_amount") @db.Decimal(24, 2)
+  differenceReason      String?                    @map("difference_reason")
+  note                  String?
+  createdAt             DateTime                   @default(now()) @map("created_at")
+  undoneAt              DateTime?                  @map("undone_at")
+  createdBy             User                       @relation("BankReconciliationCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  undoneBy              User?                      @relation("BankReconciliationUndoneBy", fields: [undoneByUserId], references: [id], onDelete: Restrict)
+  allocations           ConsignadoBankAllocation[]
+  adjustments           ConsignadoBankAdjustment[]
 
   @@index([status, createdAt])
   @@map("consignado_bank_reconciliations")
@@ -829,6 +838,23 @@ model ConsignadoBankAllocation {
   @@index([bankEntryId])
   @@index([remittanceId])
   @@map("consignado_bank_allocations")
+}
+
+model ConsignadoBankAdjustment {
+  id               String                       @id @default(cuid())
+  reconciliationId String                       @map("reconciliation_id")
+  bankEntryId      String?                      @map("bank_entry_id")
+  remittanceId     String?                      @map("remittance_id")
+  amount           Decimal                      @db.Decimal(24, 2)
+  createdAt        DateTime                     @default(now()) @map("created_at")
+  reconciliation   ConsignadoBankReconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+  bankEntry        ConsignadoBankCreditEntry?   @relation(fields: [bankEntryId], references: [id], onDelete: Restrict)
+  remittance       ConsignadoRemittance?        @relation(fields: [remittanceId], references: [id], onDelete: Restrict)
+
+  @@index([reconciliationId])
+  @@index([bankEntryId])
+  @@index([remittanceId])
+  @@map("consignado_bank_adjustments")
 }
 
 model ConsignadoStatusEvent {
@@ -888,13 +914,13 @@ model FidcEstoque {
 }
 
 model PddResumoDiario {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nomeFundo       String
-  dataReferencia  DateTime @db.Date
-  analiseTexto    String
-  analiseJson     Json
-  createdAt       DateTime @default(now()) @db.Timestamp(3)
-  updatedAt       DateTime @updatedAt @db.Timestamp(3)
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nomeFundo      String
+  dataReferencia DateTime @db.Date
+  analiseTexto   String
+  analiseJson    Json
+  createdAt      DateTime @default(now()) @db.Timestamp(3)
+  updatedAt      DateTime @updatedAt @db.Timestamp(3)
 
   @@unique([nomeFundo, dataReferencia], name: "pdd_resumos_diarios_unique")
   @@index([dataReferencia])
