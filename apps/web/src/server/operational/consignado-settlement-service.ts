@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { generateDaycovalCnab } from "./consignado-cnab";
 import { parseBmpCnab, parseUy3Workbook, type ParsedSettlementItem } from "./consignado-parsers";
 import { classifyPddMatch, getConsignadoPddSummary, loadConsignadoPddTitles } from "./consignado-pdd-service";
+import { saoPauloDayRange } from "./consignado-date";
 
 const CONSIGNADO_CNPJ = "54842157000193";
 export const BULK_UNDERPAID_LIMIT_PERCENT = 10;
@@ -327,14 +328,37 @@ export async function getRemittanceDownload(remittanceId: string) {
   return { fileName: remittance.fileName, stream: blob.stream };
 }
 
-export async function getSettlementWorkspace() {
+export async function cancelSettlementBatch(batchId: string, userId: string) {
+  return prisma.$transaction(async (tx) => {
+    const batch = await tx.consignadoSettlementBatch.findUniqueOrThrow({
+      where: { id: batchId },
+      include: { remittances: { select: { status: true } } },
+    });
+    if (batch.status === "CANCELLED") throw new Error("Este lote já foi excluído da visualização.");
+    if (batch.remittances.some((remittance) => remittance.status !== "CANCELLED")) {
+      throw new Error("Não é possível excluir um lote que possui remessa ativa ou conciliada.");
+    }
+    const cancelled = await tx.consignadoSettlementBatch.update({ where: { id: batch.id }, data: { status: "CANCELLED" } });
+    await tx.consignadoStatusEvent.create({ data: {
+      userId,
+      entityType: "SETTLEMENT_BATCH",
+      entityId: batch.id,
+      fromStatus: batch.status,
+      toStatus: "CANCELLED",
+      metadata: { reason: "REMOVED_FROM_WORKSPACE", fileName: batch.fileName },
+    } });
+    return cancelled;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function getSettlementWorkspace(input: { createdDate?: string } = {}) {
   const fund = await consignadoFund();
   const [originators, batches, pddSummary] = await Promise.all([
     listConsignadoOriginators(),
     prisma.consignadoSettlementBatch.findMany({
-      where: { fundId: fund.id },
+      where: { fundId: fund.id, status: { not: "CANCELLED" }, ...(input.createdDate ? { createdAt: saoPauloDayRange(input.createdDate) } : {}) },
       orderBy: { createdAt: "desc" },
-      take: 30,
+      take: input.createdDate ? undefined : 30,
       include: {
         originator: true,
         stockBatch: { select: { referenceDate: true, version: true } },
