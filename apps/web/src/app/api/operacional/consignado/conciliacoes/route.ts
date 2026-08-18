@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
 import { createBankReconciliation } from "@/server/operational/consignado-bank-service";
 
-const schema = z.object({ entryIds: z.array(z.string().min(1)).min(1), remittanceIds: z.array(z.string().min(1)).min(1), note: z.string().trim().max(500).optional() });
+const schema = z.object({ entryIds: z.array(z.string().min(1)).min(1), remittanceIds: z.array(z.string().min(1)).min(1), note: z.string().trim().max(500).optional(), differenceReason: z.string().trim().min(5).max(500).optional() });
 
 export async function POST(request: NextRequest) {
   const session = await auth();

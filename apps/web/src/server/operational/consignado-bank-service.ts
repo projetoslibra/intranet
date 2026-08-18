@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { parseBradescoStatement } from "./consignado-parsers";
+import { parseDateOnly } from "./consignado-date";
+import { planConsignadoReconciliation } from "./consignado-reconciliation";
 
 const CONSIGNADO_CNPJ = "54842157000193";
 function digits(value: unknown) { return String(value ?? "").replace(/\D/g, ""); }
@@ -48,19 +50,21 @@ export async function importBradescoStatement(input: { userId: string; fileName:
   return { id: statementImport.id, duplicateFile: false, importedRows: statementImport.importedRows, duplicateRows: statementImport.duplicateRows, ignoredRows: parsed.ignoredRows };
 }
 
-function entryStatus(amount: Prisma.Decimal, allocated: Prisma.Decimal) {
-  if (allocated.gte(amount)) return "RECONCILED" as const;
-  if (allocated.gt(0)) return "PARTIAL" as const;
+function entryStatus(amount: Prisma.Decimal, allocated: Prisma.Decimal, adjusted: Prisma.Decimal) {
+  const settled = allocated.add(adjusted);
+  if (settled.gte(amount)) return "RECONCILED" as const;
+  if (settled.gt(0)) return "PARTIAL" as const;
   return "PENDING" as const;
 }
 
-function remittanceStatus(amount: Prisma.Decimal, allocated: Prisma.Decimal) {
-  if (allocated.gte(amount)) return "RECONCILED" as const;
-  if (allocated.gt(0)) return "RECONCILING" as const;
+function remittanceStatus(amount: Prisma.Decimal, allocated: Prisma.Decimal, adjusted: Prisma.Decimal) {
+  const settled = allocated.add(adjusted);
+  if (settled.gte(amount)) return "RECONCILED" as const;
+  if (settled.gt(0)) return "RECONCILING" as const;
   return "GENERATED" as const;
 }
 
-export async function createBankReconciliation(input: { userId: string; entryIds: string[]; remittanceIds: string[]; note?: string }) {
+export async function createBankReconciliation(input: { userId: string; entryIds: string[]; remittanceIds: string[]; note?: string; differenceReason?: string }) {
   const entryIds = Array.from(new Set(input.entryIds));
   const remittanceIds = Array.from(new Set(input.remittanceIds));
   if (!entryIds.length || !remittanceIds.length) throw new Error("Selecione ao menos uma entrada e uma remessa.");
@@ -68,58 +72,70 @@ export async function createBankReconciliation(input: { userId: string; entryIds
     const entries = await tx.consignadoBankCreditEntry.findMany({ where: { id: { in: entryIds }, status: { not: "RECONCILED" } }, orderBy: [{ transactionDate: "asc" }, { id: "asc" }] });
     const remittances = await tx.consignadoRemittance.findMany({ where: { id: { in: remittanceIds }, status: { in: ["GENERATED", "RECONCILING"] } }, orderBy: [{ generatedAt: "asc" }, { id: "asc" }] });
     if (entries.length !== entryIds.length || remittances.length !== remittanceIds.length) throw new Error("Algum item selecionado já foi conciliado ou alterado. Atualize a tela.");
-    const entryBalances = entries.map((entry) => ({ item: entry, remaining: entry.amount.sub(entry.allocatedAmount) }));
-    const remittanceBalances = remittances.map((item) => ({ item, remaining: item.totalAmount.sub(item.allocatedAmount) }));
-    const allocations: Array<{ bankEntryId: string; remittanceId: string; amount: Prisma.Decimal }> = [];
-    for (const entry of entryBalances) {
-      for (const remittance of remittanceBalances) {
-        if (entry.remaining.lte(0)) break;
-        if (remittance.remaining.lte(0)) continue;
-        const amount = Prisma.Decimal.min(entry.remaining, remittance.remaining);
-        if (amount.lte(0)) continue;
-        allocations.push({ bankEntryId: entry.item.id, remittanceId: remittance.item.id, amount });
-        entry.remaining = entry.remaining.sub(amount);
-        remittance.remaining = remittance.remaining.sub(amount);
-      }
+    const plan = planConsignadoReconciliation({
+      entries: entries.map((entry) => ({ id: entry.id, remaining: entry.amount.sub(entry.allocatedAmount).sub(entry.adjustedAmount) })),
+      remittances: remittances.map((item) => ({ id: item.id, remaining: item.totalAmount.sub(item.allocatedAmount).sub(item.adjustedAmount) })),
+    });
+    if (!plan.allocations.length) throw new Error("Não há saldo disponível entre os itens selecionados.");
+    const differenceReason = input.differenceReason?.trim() || null;
+    if (plan.difference.gt(0) && (!differenceReason || differenceReason.length < 5)) {
+      throw new Error("Informe uma justificativa com ao menos 5 caracteres para conciliar a diferença.");
     }
-    if (!allocations.length) throw new Error("Não há saldo disponível entre os itens selecionados.");
-    const total = allocations.reduce((sum, allocation) => sum.add(allocation.amount), new Prisma.Decimal(0));
-    const reconciliation = await tx.consignadoBankReconciliation.create({ data: { createdByUserId: input.userId, totalAmount: total, note: input.note?.trim() || null } });
-    await tx.consignadoBankAllocation.createMany({ data: allocations.map((allocation) => ({ reconciliationId: reconciliation.id, ...allocation })) });
+    const reconciliation = await tx.consignadoBankReconciliation.create({ data: {
+      createdByUserId: input.userId,
+      totalAmount: plan.allocatedTotal,
+      entryTotalAmount: plan.entryTotal,
+      remittanceTotalAmount: plan.remittanceTotal,
+      differenceAmount: plan.difference,
+      differenceReason,
+      note: input.note?.trim() || null,
+    } });
+    await tx.consignadoBankAllocation.createMany({ data: plan.allocations.map((allocation) => ({ reconciliationId: reconciliation.id, ...allocation })) });
+    const adjustments = [
+      ...plan.entryAdjustments.map((adjustment) => ({ reconciliationId: reconciliation.id, bankEntryId: adjustment.entityId, amount: adjustment.amount })),
+      ...plan.remittanceAdjustments.map((adjustment) => ({ reconciliationId: reconciliation.id, remittanceId: adjustment.entityId, amount: adjustment.amount })),
+    ];
+    if (adjustments.length) await tx.consignadoBankAdjustment.createMany({ data: adjustments });
     for (const entry of entries) {
-      const added = allocations.filter((allocation) => allocation.bankEntryId === entry.id).reduce((sum, allocation) => sum.add(allocation.amount), new Prisma.Decimal(0));
+      const added = plan.allocations.filter((allocation) => allocation.bankEntryId === entry.id).reduce((sum, allocation) => sum.add(allocation.amount), new Prisma.Decimal(0));
+      const adjusted = entry.adjustedAmount.add(plan.entryAdjustments.find((item) => item.entityId === entry.id)?.amount ?? 0);
       const allocated = entry.allocatedAmount.add(added);
-      await tx.consignadoBankCreditEntry.update({ where: { id: entry.id }, data: { allocatedAmount: allocated, status: entryStatus(entry.amount, allocated) } });
+      await tx.consignadoBankCreditEntry.update({ where: { id: entry.id }, data: { allocatedAmount: allocated, adjustedAmount: adjusted, status: entryStatus(entry.amount, allocated, adjusted) } });
     }
     for (const remittance of remittances) {
-      const added = allocations.filter((allocation) => allocation.remittanceId === remittance.id).reduce((sum, allocation) => sum.add(allocation.amount), new Prisma.Decimal(0));
+      const added = plan.allocations.filter((allocation) => allocation.remittanceId === remittance.id).reduce((sum, allocation) => sum.add(allocation.amount), new Prisma.Decimal(0));
+      const adjusted = remittance.adjustedAmount.add(plan.remittanceAdjustments.find((item) => item.entityId === remittance.id)?.amount ?? 0);
       const allocated = remittance.allocatedAmount.add(added);
-      const status = remittanceStatus(remittance.totalAmount, allocated);
-      await tx.consignadoRemittance.update({ where: { id: remittance.id }, data: { allocatedAmount: allocated, status } });
+      const status = remittanceStatus(remittance.totalAmount, allocated, adjusted);
+      await tx.consignadoRemittance.update({ where: { id: remittance.id }, data: { allocatedAmount: allocated, adjustedAmount: adjusted, status } });
       await tx.consignadoSettlementBatch.update({ where: { id: remittance.batchId }, data: { status: status === "RECONCILED" ? "RECONCILED" : "RECONCILING" } });
     }
-    await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "BANK_RECONCILIATION", entityId: reconciliation.id, toStatus: "ACTIVE", metadata: { total: total.toString(), entryIds, remittanceIds } } });
+    await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "BANK_RECONCILIATION", entityId: reconciliation.id, toStatus: "ACTIVE", metadata: { allocatedTotal: plan.allocatedTotal.toString(), entryTotal: plan.entryTotal.toString(), remittanceTotal: plan.remittanceTotal.toString(), difference: plan.difference.toString(), differenceReason, entryIds, remittanceIds } } });
     return reconciliation;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export async function undoBankReconciliation(reconciliationId: string, userId: string) {
   return prisma.$transaction(async (tx) => {
-    const reconciliation = await tx.consignadoBankReconciliation.findFirstOrThrow({ where: { id: reconciliationId, status: "ACTIVE" }, include: { allocations: true } });
-    const entryIds = Array.from(new Set(reconciliation.allocations.map((item) => item.bankEntryId)));
-    const remittanceIds = Array.from(new Set(reconciliation.allocations.map((item) => item.remittanceId)));
+    const reconciliation = await tx.consignadoBankReconciliation.findFirstOrThrow({ where: { id: reconciliationId, status: "ACTIVE" }, include: { allocations: true, adjustments: true } });
+    const entryIds = Array.from(new Set([...reconciliation.allocations.map((item) => item.bankEntryId), ...reconciliation.adjustments.map((item) => item.bankEntryId).filter((id): id is string => Boolean(id))]));
+    const remittanceIds = Array.from(new Set([...reconciliation.allocations.map((item) => item.remittanceId), ...reconciliation.adjustments.map((item) => item.remittanceId).filter((id): id is string => Boolean(id))]));
     const entries = await tx.consignadoBankCreditEntry.findMany({ where: { id: { in: entryIds } } });
     const remittances = await tx.consignadoRemittance.findMany({ where: { id: { in: remittanceIds } } });
     for (const entry of entries) {
       const removed = reconciliation.allocations.filter((item) => item.bankEntryId === entry.id).reduce((sum, item) => sum.add(item.amount), new Prisma.Decimal(0));
+      const adjustmentRemoved = reconciliation.adjustments.filter((item) => item.bankEntryId === entry.id).reduce((sum, item) => sum.add(item.amount), new Prisma.Decimal(0));
       const allocated = Prisma.Decimal.max(0, entry.allocatedAmount.sub(removed));
-      await tx.consignadoBankCreditEntry.update({ where: { id: entry.id }, data: { allocatedAmount: allocated, status: entryStatus(entry.amount, allocated) } });
+      const adjusted = Prisma.Decimal.max(0, entry.adjustedAmount.sub(adjustmentRemoved));
+      await tx.consignadoBankCreditEntry.update({ where: { id: entry.id }, data: { allocatedAmount: allocated, adjustedAmount: adjusted, status: entryStatus(entry.amount, allocated, adjusted) } });
     }
     for (const remittance of remittances) {
       const removed = reconciliation.allocations.filter((item) => item.remittanceId === remittance.id).reduce((sum, item) => sum.add(item.amount), new Prisma.Decimal(0));
+      const adjustmentRemoved = reconciliation.adjustments.filter((item) => item.remittanceId === remittance.id).reduce((sum, item) => sum.add(item.amount), new Prisma.Decimal(0));
       const allocated = Prisma.Decimal.max(0, remittance.allocatedAmount.sub(removed));
-      const status = remittanceStatus(remittance.totalAmount, allocated);
-      await tx.consignadoRemittance.update({ where: { id: remittance.id }, data: { allocatedAmount: allocated, status } });
+      const adjusted = Prisma.Decimal.max(0, remittance.adjustedAmount.sub(adjustmentRemoved));
+      const status = remittanceStatus(remittance.totalAmount, allocated, adjusted);
+      await tx.consignadoRemittance.update({ where: { id: remittance.id }, data: { allocatedAmount: allocated, adjustedAmount: adjusted, status } });
       await tx.consignadoSettlementBatch.update({ where: { id: remittance.batchId }, data: { status: status === "GENERATED" ? "GENERATED" : status === "RECONCILED" ? "RECONCILED" : "RECONCILING" } });
     }
     await tx.consignadoBankReconciliation.update({ where: { id: reconciliation.id }, data: { status: "UNDONE", undoneByUserId: userId, undoneAt: new Date() } });
@@ -127,13 +143,19 @@ export async function undoBankReconciliation(reconciliationId: string, userId: s
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
-export async function getBankReconciliationWorkspace() {
+export async function getBankReconciliationWorkspace(input: { transactionDate?: string } = {}) {
   const consignado = await fund();
-  const [entries, remittances, reconciliations, imports] = await Promise.all([
-    prisma.consignadoBankCreditEntry.findMany({ where: { fundId: consignado.id, status: { not: "RECONCILED" } }, orderBy: [{ transactionDate: "asc" }, { createdAt: "asc" }], take: 500 }),
+  const openWhere = { fundId: consignado.id, status: { not: "RECONCILED" as const } };
+  const [entries, remittances, reconciliations, imports, summaryAggregate] = await Promise.all([
+    prisma.consignadoBankCreditEntry.findMany({ where: { ...openWhere, ...(input.transactionDate ? { transactionDate: parseDateOnly(input.transactionDate) } : {}) }, orderBy: [{ transactionDate: "asc" }, { createdAt: "asc" }] }),
     prisma.consignadoRemittance.findMany({ where: { fundId: consignado.id, status: { in: ["GENERATED", "RECONCILING"] } }, include: { batch: { include: { originator: true } } }, orderBy: { generatedAt: "asc" } }),
-    prisma.consignadoBankReconciliation.findMany({ orderBy: { createdAt: "desc" }, take: 50, include: { createdBy: { select: { name: true } }, undoneBy: { select: { name: true } }, allocations: true } }),
+    prisma.consignadoBankReconciliation.findMany({ orderBy: { createdAt: "desc" }, take: 50, include: { createdBy: { select: { name: true } }, undoneBy: { select: { name: true } }, allocations: true, adjustments: true } }),
     prisma.consignadoBankStatementImport.findMany({ where: { fundId: consignado.id }, orderBy: { createdAt: "desc" }, take: 20, include: { importedBy: { select: { name: true } } } }),
+    prisma.consignadoBankCreditEntry.aggregate({ where: openWhere, _count: { _all: true }, _sum: { amount: true, allocatedAmount: true, adjustedAmount: true } }),
   ]);
-  return JSON.parse(JSON.stringify({ entries, remittances, reconciliations, imports }, (_, value) => value instanceof Prisma.Decimal ? value.toString() : value));
+  const openEntryAmount = (summaryAggregate._sum.amount ?? new Prisma.Decimal(0))
+    .sub(summaryAggregate._sum.allocatedAmount ?? 0)
+    .sub(summaryAggregate._sum.adjustedAmount ?? 0);
+  const summary = { openEntryCount: summaryAggregate._count._all, openEntryAmount };
+  return JSON.parse(JSON.stringify({ entries, remittances, reconciliations, imports, summary }, (_, value) => value instanceof Prisma.Decimal ? value.toString() : value));
 }

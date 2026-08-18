@@ -3,11 +3,11 @@ import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
 import { getBankReconciliationWorkspace, importBradescoStatement } from "@/server/operational/consignado-bank-service";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ ok: false, message: "Sessão expirada." }, { status: 401 });
   if (!(await hasPermission("operational.view"))) return NextResponse.json({ ok: false, message: "Sem permissão." }, { status: 403 });
-  try { return NextResponse.json({ ok: true, workspace: await getBankReconciliationWorkspace() }); }
+  try { return NextResponse.json({ ok: true, workspace: await getBankReconciliationWorkspace({ transactionDate: request.nextUrl.searchParams.get("transactionDate") || undefined }) }); }
   catch (error) { return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Erro ao consultar conciliação." }, { status: 500 }); }
 }
 
