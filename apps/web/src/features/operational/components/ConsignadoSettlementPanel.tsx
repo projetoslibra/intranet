@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, CheckCircle2, Download, FileCheck2, Loader2, Search, UploadCloud } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileCheck2, Loader2, Search, Trash2, UploadCloud } from "lucide-react";
 
 type Candidate = { id: string; yourNumber: string | null; documentNumber: string | null; debtorName: string; debtorDocument: string; nominalValue: string; originalDueDate: string | null; adjustedDueDate: string | null; cedentName: string };
 type PddTitle = { id: string; remittanceFile: string | null; generatedAt: string | null; yourNumberUsed: string | null; documentNumber: string | null; debtorName: string | null; debtorDocument: string | null; nominalValue: string | null; pddValue: string | null; dueDate: string | null; writeOffType: string | null; originator: string | null };
@@ -17,6 +17,7 @@ statusLabel.PDD_RECOVERY = "Recuperação de PDD";
 statusLabel.PDD_REVIEW = "Possível baixa por PDD";
 function money(value: string | number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value)); }
 function date(value: string | null) { return value ? new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(value)) : "—"; }
+function dateTime(value: string) { return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" }).format(new Date(value)); }
 function debtorKey(item: SettlementItem) {
   const document = String(item.debtorDocument ?? "").replace(/\D/g, "");
   if (document) return `DOCUMENT:${document}`;
@@ -54,12 +55,42 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
   const [searches, setSearches] = useState<Record<string, string>>({});
   const [candidates, setCandidates] = useState<Record<string, Candidate[]>>({});
   const [issueFilters, setIssueFilters] = useState<Record<string, IssueFilter>>({});
+  const [createdDate, setCreatedDate] = useState("");
 
-  async function refresh() {
-    const response = await fetch("/api/operacional/consignado/baixas", { cache: "no-store" });
+  async function refresh(dateFilter = createdDate) {
+    const query = dateFilter ? `?createdDate=${encodeURIComponent(dateFilter)}` : "";
+    const response = await fetch(`/api/operacional/consignado/baixas${query}`, { cache: "no-store" });
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.message);
     setWorkspace(payload.workspace);
+  }
+
+  async function filterBatches(event: FormEvent) {
+    event.preventDefault();
+    setPending(true); setFeedback("");
+    try { await refresh(createdDate); }
+    catch (error) { setFeedback(error instanceof Error ? error.message : "Erro ao filtrar lotes."); }
+    finally { setPending(false); }
+  }
+
+  async function showRecentBatches() {
+    setCreatedDate(""); setPending(true); setFeedback("");
+    try { await refresh(""); }
+    catch (error) { setFeedback(error instanceof Error ? error.message : "Erro ao consultar lotes."); }
+    finally { setPending(false); }
+  }
+
+  async function cancelBatch(batch: Batch) {
+    if (!window.confirm(`Excluir ${batch.fileName} desta visualização? O histórico continuará armazenado.`)) return;
+    setPending(true); setFeedback("");
+    try {
+      const response = await fetch(`/api/operacional/consignado/baixas/${batch.id}`, { method: "DELETE" });
+      const payload = await response.json();
+      if (!payload.ok) throw new Error(payload.message);
+      setFeedback(payload.message);
+      await refresh();
+    } catch (error) { setFeedback(error instanceof Error ? error.message : "Erro ao excluir lote."); }
+    finally { setPending(false); }
   }
 
   async function submit(event: FormEvent) {
@@ -205,7 +236,14 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
     </section>
 
     <section className="overflow-hidden rounded border border-slate-200 bg-white shadow-executive">
-      <div className="border-b border-slate-200 p-5"><h2 className="font-semibold">Lotes de baixa</h2><p className="mt-1 text-sm text-slate-500">Resultado, divergências, correções e remessas geradas.</p></div>
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 p-5">
+        <div><h2 className="font-semibold">Lotes de baixa</h2><p className="mt-1 text-sm text-slate-500">Resultado, divergências, correções e remessas geradas.</p></div>
+        <form className="flex flex-wrap items-end gap-2" onSubmit={filterBatches}>
+          <label className="text-sm">Processado em<input className="mt-1 block h-9 rounded border border-slate-200 px-3" onChange={(event) => setCreatedDate(event.target.value)} type="date" value={createdDate} /></label>
+          <button className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-60" disabled={pending || !createdDate} type="submit">Filtrar</button>
+          <button className="h-9 rounded border border-slate-300 px-3 text-sm font-semibold disabled:opacity-60" disabled={pending || !createdDate} onClick={() => void showRecentBatches()} type="button">Todos recentes</button>
+        </form>
+      </div>
       {workspace.batches.length ? <div className="divide-y divide-slate-200">{workspace.batches.map((batch) => {
         const issues = batch.items.filter((item) => !item.approved && item.status !== "EXCLUDED");
         const pendingIssues = issues.filter((item) => item.status !== "PDD_RECOVERY");
@@ -221,7 +259,7 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
         const activeFilter = issueFilters[batch.id] ?? (underpaidItems.length ? "UNDERPAID" : pddItems.length ? "PDD" : notFoundItems.length ? "NOT_FOUND" : "OTHER");
         const totals = underpaidTotals(underpaidItems);
         return <details className="p-5" key={batch.id}>
-          <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-4"><div><p className="font-semibold">{batch.source} · {batch.originator?.name} · {batch.fileName}</p><p className="mt-1 text-xs text-slate-500">Estoque {date(batch.stockBatch.referenceDate)} v{batch.stockBatch.version} · {batch.totalItems.toLocaleString("pt-BR")} títulos</p></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${pendingIssues.length ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{pendingIssues.length ? `${pendingIssues.length} para revisar` : "Pronto"}</span></summary>
+          <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-4"><div><p className="font-semibold">{batch.source} · {batch.originator?.name} · {batch.fileName}</p><p className="mt-1 text-xs text-slate-500">Processado em {dateTime(batch.createdAt)} · Estoque {date(batch.stockBatch.referenceDate)} v{batch.stockBatch.version} · {batch.totalItems.toLocaleString("pt-BR")} títulos</p></div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-3 py-1 text-xs font-semibold ${pendingIssues.length ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{pendingIssues.length ? `${pendingIssues.length} para revisar` : "Pronto"}</span>{canManage ? <button className="inline-flex h-8 items-center gap-1 rounded border border-red-200 px-2 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={pending} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void cancelBatch(batch); }} type="button"><Trash2 className="h-3.5 w-3.5" />Excluir da visualização</button> : null}</div></summary>
           <div className="mt-5 space-y-5">
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">{[["Recebidos", batch.totalItems], ["Valor total do arquivo", money(batch.receivedAmount)], ["Completos", batch.fullItems], ["Parciais", batch.partialItems], ["Fora/revisão", batch.issueItems], ["Encontrado", money(batch.matchedAmount)], ["Não incluído", money(batch.excludedAmount)]].map(([label, value]) => <div className="rounded border border-slate-200 bg-slate-50 p-3" key={label}><p className="text-xs text-slate-500">{label}</p><p className="mt-1 font-semibold">{value}</p></div>)}</div>
             {issues.length || pddItems.length ? <section className="rounded border border-amber-200 bg-amber-50/30 p-4">
@@ -258,7 +296,7 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
             {batch.remittances.length ? <div className="space-y-2">{batch.remittances.map((remittance) => <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-slate-200 p-3" key={remittance.id}><div><p className="text-sm font-semibold">{remittance.fileName}</p><p className="text-xs text-slate-500">{remittance.totalItems} títulos · {money(remittance.totalAmount)} · {stockStatusLabel[remittance.stockStatus] ?? remittance.stockStatus}</p></div><a className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm font-semibold" href={`/api/operacional/consignado/remessas/${remittance.id}/download`}><Download className="h-4 w-4" />Baixar REM</a></div>)}</div> : canManage ? <button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60" disabled={pending || batch.items.every((item) => !item.approved)} onClick={() => void generate(batch.id)} type="button">{pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}Gerar remessa com aptos</button> : null}
           </div>
         </details>;
-      })}</div> : <div className="p-8 text-center text-sm text-slate-500"><AlertTriangle className="mx-auto mb-2 h-5 w-5" />Nenhum lote processado.</div>}
+      })}</div> : <div className="p-8 text-center text-sm text-slate-500"><AlertTriangle className="mx-auto mb-2 h-5 w-5" />{createdDate ? "Nenhum lote processado nesta data." : "Nenhum lote processado."}</div>}
     </section>
   </div>;
 }
