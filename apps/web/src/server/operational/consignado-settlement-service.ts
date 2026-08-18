@@ -329,9 +329,10 @@ export async function getRemittanceDownload(remittanceId: string) {
 }
 
 export async function cancelSettlementBatch(batchId: string, userId: string) {
+  const fund = await consignadoFund();
   return prisma.$transaction(async (tx) => {
-    const batch = await tx.consignadoSettlementBatch.findUniqueOrThrow({
-      where: { id: batchId },
+    const batch = await tx.consignadoSettlementBatch.findFirstOrThrow({
+      where: { id: batchId, fundId: fund.id },
       include: { remittances: { select: { status: true } } },
     });
     if (batch.status === "CANCELLED") throw new Error("Este lote já foi excluído da visualização.");

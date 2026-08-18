@@ -77,7 +77,8 @@ export async function createBankReconciliation(input: { userId: string; entryIds
       remittances: remittances.map((item) => ({ id: item.id, remaining: item.totalAmount.sub(item.allocatedAmount).sub(item.adjustedAmount) })),
     });
     if (!plan.allocations.length) throw new Error("Não há saldo disponível entre os itens selecionados.");
-    const differenceReason = input.differenceReason?.trim() || null;
+    const submittedDifferenceReason = input.differenceReason?.trim() || null;
+    const differenceReason = plan.difference.gt(0) ? submittedDifferenceReason : null;
     if (plan.difference.gt(0) && (!differenceReason || differenceReason.length < 5)) {
       throw new Error("Informe uma justificativa com ao menos 5 caracteres para conciliar a diferença.");
     }
