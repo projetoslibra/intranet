@@ -3,6 +3,7 @@ import { del, get, put } from "@vercel/blob";
 import { Prisma, type OperationalFlowSource, type SettlementItemStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { generateDaycovalCnab } from "./consignado-cnab";
+import { summarizeBatchReconciliation } from "./consignado-reconciliation";
 import { parseBmpCnab, parseUy3Workbook, type ParsedSettlementItem } from "./consignado-parsers";
 import { classifyPddMatch, getConsignadoPddSummary, loadConsignadoPddTitles } from "./consignado-pdd-service";
 import { saoPauloDayRange } from "./consignado-date";
@@ -363,7 +364,28 @@ export async function getSettlementWorkspace(input: { createdDate?: string } = {
       include: {
         originator: true,
         stockBatch: { select: { referenceDate: true, version: true } },
-        remittances: { select: { id: true, fileName: true, status: true, stockStatus: true, totalItems: true, totalAmount: true, allocatedAmount: true, generatedAt: true } },
+        remittances: {
+          select: {
+            id: true,
+            fileName: true,
+            status: true,
+            stockStatus: true,
+            totalItems: true,
+            totalAmount: true,
+            allocatedAmount: true,
+            adjustedAmount: true,
+            generatedAt: true,
+            bankAllocations: {
+              where: { reconciliation: { status: "ACTIVE" } },
+              select: {
+                amount: true,
+                reconciliation: { select: { id: true, status: true, createdAt: true } },
+                bankEntry: { select: { id: true, transactionDate: true, description: true, document: true, amount: true } },
+              },
+              orderBy: { reconciliation: { createdAt: "asc" } },
+            },
+          },
+        },
         items: {
           orderBy: { sourceRow: "asc" },
           include: {
@@ -376,7 +398,35 @@ export async function getSettlementWorkspace(input: { createdDate?: string } = {
     }),
     getConsignadoPddSummary(fund.id),
   ]);
-  return JSON.parse(JSON.stringify({ originators, batches, pddSummary }, (_, value) => value instanceof Prisma.Decimal ? value.toString() : value));
+  const batchesWithFinancialSummary = batches.map((batch) => ({
+    ...batch,
+    financialSummary: summarizeBatchReconciliation({
+      receivedAmount: batch.receivedAmount.toString(),
+      remittances: batch.remittances.map((remittance) => ({
+        id: remittance.id,
+        status: remittance.status,
+        totalAmount: remittance.totalAmount.toString(),
+        allocatedAmount: remittance.allocatedAmount.toString(),
+        adjustedAmount: remittance.adjustedAmount.toString(),
+        allocations: remittance.bankAllocations.map((allocation) => ({
+          amount: allocation.amount.toString(),
+          reconciliation: {
+            id: allocation.reconciliation.id,
+            status: allocation.reconciliation.status,
+            createdAt: allocation.reconciliation.createdAt.toISOString(),
+          },
+          bankEntry: {
+            id: allocation.bankEntry.id,
+            transactionDate: allocation.bankEntry.transactionDate.toISOString(),
+            description: allocation.bankEntry.description,
+            document: allocation.bankEntry.document,
+            amount: allocation.bankEntry.amount.toString(),
+          },
+        })),
+      })),
+    }),
+  }));
+  return JSON.parse(JSON.stringify({ originators, batches: batchesWithFinancialSummary, pddSummary }, (_, value) => value instanceof Prisma.Decimal ? value.toString() : value));
 }
 
 export async function reconcileRemittancesWithStock(stockBatchId: string, userId?: string) {
