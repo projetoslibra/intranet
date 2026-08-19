@@ -2,5 +2,11 @@
   "framework": "nextjs",
   "buildCommand": "pnpm --filter @osher/web build",
   "installCommand": "pnpm install",
-  "outputDirectory": "apps/web/.next"
+  "outputDirectory": "apps/web/.next",
+  "crons": [
+    {
+      "path": "/api/cron/singulare-import",
+      "schedule": "0 20 * * *"
+    }
+  ]
 }
