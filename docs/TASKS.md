@@ -33,10 +33,15 @@
 - [ ] **Enforcement de permissões** — hoje o middleware só checa login, não as permissões `*.view`/`*.manage`
 - [ ] **Unificar formatters** — Dashboard e DRE redefinem formatters em vez de usar `lib/formatters.ts`
 - [ ] **Módulo Relatórios** (`/dashboard/relatorios`) — exportações (placeholder; deixar para o final)
+- [ ] **Validar DRE/Variação contra cálculos manuais** — conferir valores da aba DRE/Variação com a planilha/cálculo manual do João antes de mexer em metodologia
+- [ ] **Validar média CUSTO x RECEITA da Previsões** — reconciliar médias usadas na Previsões com os cálculos manuais e com as linhas-base da DRE/Variação
+- [ ] **Refinar metodologia de Previsões** — revisar premissas de receita, custo, PDD, cota e impacto diário para deixar a previsão mais precisa
+- [ ] **Previsões: colunas Viradas, Reversão e Líquido PDD** — adicionar Viradas da tela PDD, Reversão das baixas simuladas e Líquido PDD = Viradas - Reversão, removendo viradas futuras quando o título/sacado for baixado na simulação
 
 ---
 
 ## 🟢 Concluídas (recentes)
+- [x] **[2026-08-19] DRE abrir no mês atual por padrão** — aba DRE e DRE/Variação agora abrem no range do mês atual, mantendo os filtros de período e datas customizadas — _João_ · branch `feat/dre-mes-atual-padrao`.
 - [x] **[2026-08-13] Resumo diário automático de PDD** — endpoint para N8N, tabela `PDD_RESUMOS_DIARIOS`, card na tela PDD, narrativa via OpenAI com fallback determinístico e criação idempotente da tabela no primeiro uso autorizado — _João_ · branch `feat/pdd-resumo-diario`.
 - [x] **[2026-08-12] Documentação e consolidação do Operacional Consignado** — fluxo publicado, navegação, reprocessamento, antecipações, candidatos com vencimento, base histórica PDD e valores por filtro registrados em `docs/OPERACIONAL-CONSIGNADO.md` — _Juan_ · `main`.
 - [x] **[2026-08-10] Recuperações de PDD do Consignado** — importação histórica idempotente, matching após falha no estoque, reclassificação de lotes abertos, filtro próprio e bloqueio de nova remessa — _Juan_ · branch `feat/operacional-consignado` · migration aplicada no schema `OSHER`.
