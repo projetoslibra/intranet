@@ -71,6 +71,7 @@ O desenho deve permitir que, futuramente, uma API substitua o upload manual do e
 ### Recuperações de PDD
 
 - A planilha consolidada de PDD é importada de forma incremental e histórica.
+- A manutenção e o upload da base histórica ficam em uma aba secundária da tela de baixas, fora do fluxo diário padrão.
 - O arquivo é identificado por SHA-256; uma nova tentativa com o mesmo arquivo não duplica títulos.
 - Linhas são deduplicadas pelo vínculo entre remessa, linha PDD, CPF e identificadores do título.
 - O matching contra o estoque ativo sempre tem prioridade.
@@ -102,6 +103,8 @@ O desenho deve permitir que, futuramente, uma API substitua o upload manual do e
 - Valor alocado e valor ajustado são armazenados separadamente.
 - O estorno reverte alocações e ajustes e recalcula os estados dos dois lados.
 - Itens conciliados continuam acessíveis no histórico.
+- Cada lote recolhido exibe valor pago no arquivo, valor efetivo da remessa e estado financeiro (`sem remessa`, `não conciliado`, `parcialmente conciliado` ou `conciliado`).
+- Conciliações ativas exibem no lote as entradas bancárias vinculadas, incluindo data, descrição, documento, valor da entrada, valor alocado e data da conciliação; vínculos desfeitos deixam de compor o log.
 
 ### Conciliação pelo estoque
 
@@ -275,7 +278,7 @@ Classificações previstas:
 - `consignado_bank_adjustments`: excedentes justificados associados a uma entrada ou remessa.
 - `adjusted_amount`: parcela encerrada por ajuste, separada de `allocated_amount`.
 - `entry_total_amount`, `remittance_total_amount`, `difference_amount` e `difference_reason`: memória auditável da conciliação.
-- Migration: `20260818000000_add_consignado_bank_adjustments` (aplicar no ambiente antes de publicar a interface).
+- Migration: `20260818000000_add_consignado_bank_adjustments` aplicada no schema `OSHER`.
 
 ### OC-01 — Fundação do estoque do Consignado
 

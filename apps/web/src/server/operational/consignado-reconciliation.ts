@@ -26,7 +26,85 @@ export type ReconciliationPlan = {
   remittanceAdjustments: PlannedAdjustment[];
 };
 
+export type BatchReconciliationInput = {
+  receivedAmount: string;
+  remittances: Array<{
+    id: string;
+    status: string;
+    totalAmount: string;
+    allocatedAmount: string;
+    adjustedAmount: string;
+    allocations: Array<{
+      amount: string;
+      reconciliation: { id: string; status: string; createdAt: string };
+      bankEntry: {
+        id: string;
+        transactionDate: string;
+        description: string;
+        document: string | null;
+        amount: string;
+      };
+    }>;
+  }>;
+};
+
+export type BatchReconciliationSummary = {
+  paidAmount: string;
+  remittanceAmount: string;
+  reconciliationStatus: "NO_REMITTANCE" | "NOT_RECONCILED" | "PARTIALLY_RECONCILED" | "RECONCILED";
+  entries: Array<{
+    id: string;
+    transactionDate: string;
+    description: string;
+    document: string | null;
+    amount: string;
+    allocatedAmount: string;
+    reconciliationId: string;
+    reconciledAt: string;
+  }>;
+};
+
 const ZERO = new Prisma.Decimal(0);
+
+export function summarizeBatchReconciliation(input: BatchReconciliationInput): BatchReconciliationSummary {
+  const remittances = input.remittances.filter((remittance) => remittance.status !== "CANCELLED");
+  const remittanceAmount = remittances.reduce(
+    (sum, remittance) => sum.add(remittance.totalAmount),
+    ZERO,
+  );
+  const settledAmount = remittances.reduce(
+    (sum, remittance) => sum.add(remittance.allocatedAmount).add(remittance.adjustedAmount),
+    ZERO,
+  );
+
+  const reconciliationStatus = remittances.length === 0
+    ? "NO_REMITTANCE"
+    : settledAmount.lte(0)
+      ? "NOT_RECONCILED"
+      : settledAmount.lt(remittanceAmount)
+        ? "PARTIALLY_RECONCILED"
+        : "RECONCILED";
+
+  const entries = remittances.flatMap((remittance) => remittance.allocations
+    .filter((allocation) => allocation.reconciliation.status === "ACTIVE")
+    .map((allocation) => ({
+      id: allocation.bankEntry.id,
+      transactionDate: allocation.bankEntry.transactionDate,
+      description: allocation.bankEntry.description,
+      document: allocation.bankEntry.document,
+      amount: new Prisma.Decimal(allocation.bankEntry.amount).toFixed(2),
+      allocatedAmount: new Prisma.Decimal(allocation.amount).toFixed(2),
+      reconciliationId: allocation.reconciliation.id,
+      reconciledAt: allocation.reconciliation.createdAt,
+    })));
+
+  return {
+    paidAmount: new Prisma.Decimal(input.receivedAmount).toFixed(2),
+    remittanceAmount: remittanceAmount.toFixed(2),
+    reconciliationStatus,
+    entries,
+  };
+}
 
 function total(items: ReconciliationBalance[]) {
   return items.reduce((sum, item) => sum.add(item.remaining), ZERO);
