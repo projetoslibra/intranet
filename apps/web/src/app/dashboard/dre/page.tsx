@@ -103,7 +103,7 @@ function getPeriodRange(searchParams?: DrePageProps["searchParams"]) {
   const currentDay = new Date(
     Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())
   );
-  const period = searchParams?.period ?? "last30";
+  const period = searchParams?.period ?? "currentMonth";
 
   if (period === "last7") {
     return { period, startDate: addDays(currentDay, -6), endDate: currentDay };
@@ -137,7 +137,11 @@ function getPeriodRange(searchParams?: DrePageProps["searchParams"]) {
     };
   }
 
-  return { period: "last30", startDate: addDays(currentDay, -29), endDate: currentDay };
+  return {
+    period: "currentMonth",
+    startDate: startOfUtcMonth(currentDay),
+    endDate: currentDay,
+  };
 }
 
 function addToMap(map: Map<string, number>, key: string, value: number) {
@@ -1139,9 +1143,9 @@ export default async function DrePage({ searchParams }: DrePageProps) {
               id="period"
               name="period"
             >
+              <option value="currentMonth">Mês atual</option>
               <option value="last7">Últimos 7 dias</option>
               <option value="last30">Últimos 30 dias</option>
-              <option value="currentMonth">Mês atual</option>
               <option value="previousMonth">Mês anterior</option>
               <option value="custom">Personalizado</option>
             </select>
