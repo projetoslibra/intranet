@@ -4,13 +4,20 @@ import { prisma } from "@/lib/prisma";
 import { parseBradescoStatement } from "./consignado-parsers";
 import { parseDateOnly } from "./consignado-date";
 import { planConsignadoReconciliation } from "./consignado-reconciliation";
+import {
+  assertBankReconciliationRecordsAvailable,
+  normalizeBankReconciliationSelection,
+  type BankReconciliationInput,
+} from "./consignado-bank-input";
 
 const CONSIGNADO_CNPJ = "54842157000193";
 function digits(value: unknown) { return String(value ?? "").replace(/\D/g, ""); }
 function fingerprint(parts: unknown[]) { return createHash("sha256").update(parts.map((part) => String(part ?? "").trim().toUpperCase()).join("|")).digest("hex"); }
 
-async function fund() {
-  const funds = await prisma.fund.findMany({ where: { status: "ACTIVE" }, select: { id: true, cnpj: true, name: true } });
+type FundReader = Pick<Prisma.TransactionClient, "fund">;
+
+async function fund(client: FundReader = prisma) {
+  const funds = await client.fund.findMany({ where: { status: "ACTIVE" }, select: { id: true, cnpj: true, name: true } });
   const result = funds.find((item) => digits(item.cnpj) === CONSIGNADO_CNPJ || item.name.toUpperCase().includes("CONSIGNADO"));
   if (!result) throw new Error("Fundo Consignado não cadastrado.");
   return result;
@@ -64,24 +71,86 @@ function remittanceStatus(amount: Prisma.Decimal, allocated: Prisma.Decimal, adj
   return "GENERATED" as const;
 }
 
-export async function createBankReconciliation(input: { userId: string; entryIds: string[]; remittanceIds: string[]; note?: string; differenceReason?: string }) {
-  const entryIds = Array.from(new Set(input.entryIds));
-  const remittanceIds = Array.from(new Set(input.remittanceIds));
+export async function createBankReconciliation(input: BankReconciliationInput & { userId: string }) {
+  const { entryIds, remittanceIds, exclusionIds } = normalizeBankReconciliationSelection(input);
   if (!entryIds.length || !remittanceIds.length) throw new Error("Selecione ao menos uma entrada e uma remessa.");
   return prisma.$transaction(async (tx) => {
-    const entries = await tx.consignadoBankCreditEntry.findMany({ where: { id: { in: entryIds }, status: { not: "RECONCILED" } }, orderBy: [{ transactionDate: "asc" }, { id: "asc" }] });
-    const remittances = await tx.consignadoRemittance.findMany({ where: { id: { in: remittanceIds }, status: { in: ["GENERATED", "RECONCILING"] } }, orderBy: [{ generatedAt: "asc" }, { id: "asc" }] });
-    if (entries.length !== entryIds.length || remittances.length !== remittanceIds.length) throw new Error("Algum item selecionado já foi conciliado ou alterado. Atualize a tela.");
+    const consignado = await fund(tx);
+    const [entries, remittances, exclusions] = await Promise.all([
+      tx.consignadoBankCreditEntry.findMany({
+        where: { id: { in: entryIds } },
+        orderBy: [{ transactionDate: "asc" }, { id: "asc" }],
+      }),
+      tx.consignadoRemittance.findMany({
+        where: { id: { in: remittanceIds } },
+        include: { batch: { select: { status: true } } },
+        orderBy: [{ generatedAt: "asc" }, { id: "asc" }],
+      }),
+      tx.consignadoRemittanceExclusion.findMany({
+        where: { id: { in: exclusionIds } },
+        include: {
+          remittance: {
+            select: {
+              fundId: true,
+              status: true,
+              batch: { select: { status: true } },
+            },
+          },
+          differenceTitles: {
+            where: { reconciliation: { status: "ACTIVE" } },
+            select: { reconciliationId: true },
+          },
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      }),
+    ]);
+    assertBankReconciliationRecordsAvailable({
+      fundId: consignado.id,
+      entryIds,
+      remittanceIds,
+      exclusionIds,
+      entries,
+      remittances,
+      exclusions,
+    });
+    const entryBalances = entries.map((entry) => ({
+      id: entry.id,
+      remaining: entry.amount.sub(entry.allocatedAmount).sub(entry.adjustedAmount),
+    }));
+    const remittanceBalances = remittances.map((item) => ({
+      id: item.id,
+      remaining: item.totalAmount.sub(item.allocatedAmount).sub(item.adjustedAmount),
+    }));
+    const initialPlan = planConsignadoReconciliation({
+      entries: entryBalances,
+      remittances: remittanceBalances,
+    });
     const plan = planConsignadoReconciliation({
-      entries: entries.map((entry) => ({ id: entry.id, remaining: entry.amount.sub(entry.allocatedAmount).sub(entry.adjustedAmount) })),
-      remittances: remittances.map((item) => ({ id: item.id, remaining: item.totalAmount.sub(item.allocatedAmount).sub(item.adjustedAmount) })),
+      entries: entryBalances,
+      remittances: remittanceBalances,
+      differenceTitles: exclusions.map((item) => ({
+        id: item.id,
+        remittanceId: item.remittanceId,
+        amount: item.paidAmount,
+      })),
+      otherDifferences: input.otherDifferences.map((item) => ({
+        category: item.category,
+        direction: initialPlan.direction,
+        amount: new Prisma.Decimal(item.amount),
+        reason: item.reason,
+      })),
     });
     if (!plan.allocations.length) throw new Error("Não há saldo disponível entre os itens selecionados.");
-    const submittedDifferenceReason = input.differenceReason?.trim() || null;
-    const differenceReason = plan.difference.gt(0) ? submittedDifferenceReason : null;
-    if (plan.difference.gt(0) && (!differenceReason || differenceReason.length < 5)) {
-      throw new Error("Informe uma justificativa com ao menos 5 caracteres para conciliar a diferença.");
-    }
+    const differenceReason = plan.difference.gt(0)
+      ? [
+          plan.titleDifferenceTotal.gt(0)
+            ? `${exclusions.length} título(s) fora da remessa: ${plan.titleDifferenceTotal.toFixed(2)}`
+            : null,
+          plan.otherDifferenceTotal.gt(0)
+            ? `${input.otherDifferences.length} outro(s) ajuste(s): ${plan.otherDifferenceTotal.toFixed(2)}`
+            : null,
+        ].filter((item): item is string => Boolean(item)).join("; ")
+      : null;
     const reconciliation = await tx.consignadoBankReconciliation.create({ data: {
       createdByUserId: input.userId,
       totalAmount: plan.allocatedTotal,
@@ -92,6 +161,27 @@ export async function createBankReconciliation(input: { userId: string; entryIds
       note: input.note?.trim() || null,
     } });
     await tx.consignadoBankAllocation.createMany({ data: plan.allocations.map((allocation) => ({ reconciliationId: reconciliation.id, ...allocation })) });
+    if (exclusions.length) {
+      await tx.consignadoBankDifferenceTitle.createMany({
+        data: exclusions.map((item) => ({
+          reconciliationId: reconciliation.id,
+          remittanceExclusionId: item.id,
+          amount: item.paidAmount,
+        })),
+      });
+    }
+    if (input.otherDifferences.length) {
+      await tx.consignadoBankOtherDifference.createMany({
+        data: input.otherDifferences.map((item) => ({
+          reconciliationId: reconciliation.id,
+          createdByUserId: input.userId,
+          category: item.category,
+          direction: plan.direction,
+          amount: new Prisma.Decimal(item.amount),
+          reason: item.reason.trim(),
+        })),
+      });
+    }
     const adjustments = [
       ...plan.entryAdjustments.map((adjustment) => ({ reconciliationId: reconciliation.id, bankEntryId: adjustment.entityId, amount: adjustment.amount })),
       ...plan.remittanceAdjustments.map((adjustment) => ({ reconciliationId: reconciliation.id, remittanceId: adjustment.entityId, amount: adjustment.amount })),
@@ -111,14 +201,35 @@ export async function createBankReconciliation(input: { userId: string; entryIds
       await tx.consignadoRemittance.update({ where: { id: remittance.id }, data: { allocatedAmount: allocated, adjustedAmount: adjusted, status } });
       await tx.consignadoSettlementBatch.update({ where: { id: remittance.batchId }, data: { status: status === "RECONCILED" ? "RECONCILED" : "RECONCILING" } });
     }
-    await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "BANK_RECONCILIATION", entityId: reconciliation.id, toStatus: "ACTIVE", metadata: { allocatedTotal: plan.allocatedTotal.toString(), entryTotal: plan.entryTotal.toString(), remittanceTotal: plan.remittanceTotal.toString(), difference: plan.difference.toString(), differenceReason, entryIds, remittanceIds } } });
+    await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "BANK_RECONCILIATION", entityId: reconciliation.id, toStatus: "ACTIVE", metadata: {
+      allocatedTotal: plan.allocatedTotal.toString(),
+      entryTotal: plan.entryTotal.toString(),
+      remittanceTotal: plan.remittanceTotal.toString(),
+      signedDifference: plan.signedDifference.toString(),
+      difference: plan.difference.toString(),
+      direction: plan.direction,
+      titleDifferenceTotal: plan.titleDifferenceTotal.toString(),
+      otherDifferenceTotal: plan.otherDifferenceTotal.toString(),
+      differenceReason,
+      entryIds,
+      remittanceIds,
+      exclusionIds,
+    } } });
     return reconciliation;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export async function undoBankReconciliation(reconciliationId: string, userId: string) {
   return prisma.$transaction(async (tx) => {
-    const reconciliation = await tx.consignadoBankReconciliation.findFirstOrThrow({ where: { id: reconciliationId, status: "ACTIVE" }, include: { allocations: true, adjustments: true } });
+    const reconciliation = await tx.consignadoBankReconciliation.findFirstOrThrow({
+      where: { id: reconciliationId, status: "ACTIVE" },
+      include: {
+        allocations: true,
+        adjustments: true,
+        differenceTitles: true,
+        otherDifferences: true,
+      },
+    });
     const entryIds = Array.from(new Set([...reconciliation.allocations.map((item) => item.bankEntryId), ...reconciliation.adjustments.map((item) => item.bankEntryId).filter((id): id is string => Boolean(id))]));
     const remittanceIds = Array.from(new Set([...reconciliation.allocations.map((item) => item.remittanceId), ...reconciliation.adjustments.map((item) => item.remittanceId).filter((id): id is string => Boolean(id))]));
     const entries = await tx.consignadoBankCreditEntry.findMany({ where: { id: { in: entryIds } } });
@@ -139,8 +250,25 @@ export async function undoBankReconciliation(reconciliationId: string, userId: s
       await tx.consignadoRemittance.update({ where: { id: remittance.id }, data: { allocatedAmount: allocated, adjustedAmount: adjusted, status } });
       await tx.consignadoSettlementBatch.update({ where: { id: remittance.batchId }, data: { status: status === "GENERATED" ? "GENERATED" : status === "RECONCILED" ? "RECONCILED" : "RECONCILING" } });
     }
-    await tx.consignadoBankReconciliation.update({ where: { id: reconciliation.id }, data: { status: "UNDONE", undoneByUserId: userId, undoneAt: new Date() } });
-    await tx.consignadoStatusEvent.create({ data: { userId, entityType: "BANK_RECONCILIATION", entityId: reconciliation.id, fromStatus: "ACTIVE", toStatus: "UNDONE" } });
+    const undoneAt = new Date();
+    if (reconciliation.otherDifferences.length) {
+      await tx.consignadoBankOtherDifference.updateMany({
+        where: { reconciliationId: reconciliation.id },
+        data: { status: "CANCELLED", cancelledAt: undoneAt },
+      });
+    }
+    await tx.consignadoBankReconciliation.update({ where: { id: reconciliation.id }, data: { status: "UNDONE", undoneByUserId: userId, undoneAt } });
+    await tx.consignadoStatusEvent.create({ data: {
+      userId,
+      entityType: "BANK_RECONCILIATION",
+      entityId: reconciliation.id,
+      fromStatus: "ACTIVE",
+      toStatus: "UNDONE",
+      metadata: {
+        exclusionIds: reconciliation.differenceTitles.map((item) => item.remittanceExclusionId),
+        otherDifferenceIds: reconciliation.otherDifferences.map((item) => item.id),
+      },
+    } });
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
@@ -149,8 +277,54 @@ export async function getBankReconciliationWorkspace(input: { transactionDate?: 
   const openWhere = { fundId: consignado.id, status: { not: "RECONCILED" as const } };
   const [entries, remittances, reconciliations, imports, summaryAggregate] = await Promise.all([
     prisma.consignadoBankCreditEntry.findMany({ where: { ...openWhere, ...(input.transactionDate ? { transactionDate: parseDateOnly(input.transactionDate) } : {}) }, orderBy: [{ transactionDate: "asc" }, { createdAt: "asc" }] }),
-    prisma.consignadoRemittance.findMany({ where: { fundId: consignado.id, status: { in: ["GENERATED", "RECONCILING"] } }, include: { batch: { include: { originator: true } } }, orderBy: { generatedAt: "asc" } }),
-    prisma.consignadoBankReconciliation.findMany({ orderBy: { createdAt: "desc" }, take: 50, include: { createdBy: { select: { name: true } }, undoneBy: { select: { name: true } }, allocations: true, adjustments: true } }),
+    prisma.consignadoRemittance.findMany({
+      where: {
+        fundId: consignado.id,
+        status: { in: ["GENERATED", "RECONCILING"] },
+        batch: { status: { not: "CANCELLED" } },
+      },
+      include: {
+        batch: { include: { originator: true } },
+        exclusions: {
+          where: { differenceTitles: { none: { reconciliation: { status: "ACTIVE" } } } },
+          include: { settlementItem: true },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        },
+      },
+      orderBy: { generatedAt: "asc" },
+    }),
+    prisma.consignadoBankReconciliation.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      include: {
+        createdBy: { select: { name: true } },
+        undoneBy: { select: { name: true } },
+        allocations: true,
+        adjustments: true,
+        differenceTitles: {
+          include: {
+            remittanceExclusion: {
+              include: {
+                settlementItem: true,
+                remittance: {
+                  select: {
+                    id: true,
+                    fileName: true,
+                    batch: { select: { id: true, fileName: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        otherDifferences: {
+          include: {
+            createdBy: { select: { name: true } },
+            resolvedBy: { select: { name: true } },
+          },
+        },
+      },
+    }),
     prisma.consignadoBankStatementImport.findMany({ where: { fundId: consignado.id }, orderBy: { createdAt: "desc" }, take: 20, include: { importedBy: { select: { name: true } } } }),
     prisma.consignadoBankCreditEntry.aggregate({ where: openWhere, _count: { _all: true }, _sum: { amount: true, allocatedAmount: true, adjustedAmount: true } }),
   ]);
