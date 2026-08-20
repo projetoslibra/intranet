@@ -4,7 +4,12 @@ import { useMemo, useRef, useState, type FormEvent } from "react";
 import { Landmark, Link2, RotateCcw, UploadCloud, X } from "lucide-react";
 import { ConsignadoDifferenceComposer } from "./ConsignadoDifferenceComposer";
 import {
+  calculateDifferenceSelection,
   composeDifferenceState,
+  decimalAmountToCents,
+  formatCentsAsBRL,
+  normalizeOtherDifferencesForPayload,
+  recoverDifferenceCompositionAfterRejection,
   type DifferenceDirection,
   type EligibleExclusion,
   type OtherDifferenceDraft,
@@ -68,11 +73,16 @@ type Workspace = {
   summary: { openEntryCount: number; openEntryAmount: string };
 };
 
-function money(value: string | number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value)); }
+function cents(value: string) {
+  const parsed = decimalAmountToCents(value);
+  if (parsed === null) throw new Error(`Valor monetário inválido no workspace: ${value}`);
+  return parsed;
+}
+function money(value: string | bigint) { return formatCentsAsBRL(typeof value === "bigint" ? value : cents(value)); }
 function date(value: string | null) { return value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone: "UTC" }).format(new Date(value)) : "—"; }
 function dateTime(value: string) { return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" }).format(new Date(value)); }
-function entryBalance(entry: Entry) { return Number(entry.amount) - Number(entry.allocatedAmount) - Number(entry.adjustedAmount); }
-function remittanceBalance(remittance: Remittance) { return Number(remittance.totalAmount) - Number(remittance.allocatedAmount) - Number(remittance.adjustedAmount); }
+function entryBalance(entry: Entry) { return cents(entry.amount) - cents(entry.allocatedAmount) - cents(entry.adjustedAmount); }
+function remittanceBalance(remittance: Remittance) { return cents(remittance.totalAmount) - cents(remittance.allocatedAmount) - cents(remittance.adjustedAmount); }
 const exclusionCategoryLabel: Record<RemittanceExclusionCategory, string> = { NOT_FOUND_IN_STOCK: "Não encontrado no estoque", OPERATOR_EXCLUDED: "Excluído pelo operador", NOT_APPROVED: "Não aprovado", PDD_RECOVERY: "Recuperação de PDD", OTHER_DIVERGENCE: "Outra divergência" };
 const otherCategoryLabel: Record<string, string> = { BANK_FEE: "Tarifa bancária", UNIDENTIFIED_CREDIT: "Crédito não identificado", VALUE_DIFFERENCE: "Diferença de valor", ROUNDING: "Arredondamento", TIMING_DIFFERENCE: "Diferença de competência", OTHER: "Outro" };
 const differenceStatusLabel: Record<OtherDifferenceHistory["status"], string> = { OPEN: "Em aberto", RESOLVED: "Resolvido", CANCELLED: "Cancelado" };
@@ -88,10 +98,19 @@ export function ConsignadoBankReconciliationPanel({ initialWorkspace, canManage 
   const [showDifferenceBox, setShowDifferenceBox] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [pending, setPending] = useState(false);
-  const selectedEntryTotal = useMemo(() => workspace.entries.filter((item) => entryIds.includes(item.id)).reduce((sum, item) => sum + entryBalance(item), 0), [workspace.entries, entryIds]);
-  const selectedRemittanceTotal = useMemo(() => workspace.remittances.filter((item) => remittanceIds.includes(item.id)).reduce((sum, item) => sum + remittanceBalance(item), 0), [workspace.remittances, remittanceIds]);
-  const selectedDifference = Math.round(Math.abs(selectedEntryTotal - selectedRemittanceTotal) * 100) / 100;
-  const differenceDirection: DifferenceDirection = selectedEntryTotal >= selectedRemittanceTotal ? "ENTRY_EXCESS" : "REMITTANCE_EXCESS";
+  const selectedTotals = useMemo(() => calculateDifferenceSelection({
+    entries: workspace.entries.filter((item) => entryIds.includes(item.id)),
+    remittances: workspace.remittances.filter((item) => remittanceIds.includes(item.id)).map((item) => ({
+      amount: item.totalAmount,
+      allocatedAmount: item.allocatedAmount,
+      adjustedAmount: item.adjustedAmount,
+    })),
+  }), [entryIds, remittanceIds, workspace.entries, workspace.remittances]);
+  const selectedEntryTotal = selectedTotals.entryTotalCents;
+  const selectedRemittanceTotal = selectedTotals.remittanceTotalCents;
+  const selectedDifference = selectedTotals.difference;
+  const selectedDifferenceCents = selectedTotals.differenceCents;
+  const differenceDirection: DifferenceDirection = selectedTotals.direction;
   const eligibleExclusions = useMemo<EligibleExclusion[]>(() => workspace.remittances
     .filter((item) => remittanceIds.includes(item.id))
     .flatMap((remittance) => remittance.exclusions.map((item) => ({
@@ -125,9 +144,14 @@ export function ConsignadoBankReconciliationPanel({ initialWorkspace, canManage 
   }
 
   function resetDifferenceComposition() {
-    setSelectedExclusionIds([]);
-    setOtherDifferences([]);
-    setShowDifferenceBox(false);
+    const next = recoverDifferenceCompositionAfterRejection({
+      selectedIds: selectedExclusionIds,
+      otherDifferences,
+      showComposer: showDifferenceBox,
+    });
+    setSelectedExclusionIds(next.selectedIds);
+    setOtherDifferences(next.otherDifferences);
+    setShowDifferenceBox(next.showComposer);
   }
 
   function toggle(id: string, setter: React.Dispatch<React.SetStateAction<string[]>>) {
@@ -166,30 +190,34 @@ export function ConsignadoBankReconciliationPanel({ initialWorkspace, canManage 
   }
 
   function beginReconciliation() {
-    if (selectedDifference === 0) {
+    if (selectedDifferenceCents === BigInt(0)) {
       void submitReconciliation();
       return;
     }
     setSelectedExclusionIds([]);
-    setOtherDifferences(differenceDirection === "REMITTANCE_EXCESS" ? [{ category: "", amount: selectedDifference.toFixed(2), reason: "" }] : []);
+    setOtherDifferences(differenceDirection === "REMITTANCE_EXCESS" ? [{ category: "", amount: selectedDifference, reason: "" }] : []);
     setShowDifferenceBox(true);
   }
 
   async function submitReconciliation() {
-    if (selectedDifference > 0 && !differenceState.canSubmit) return;
+    if (selectedDifferenceCents > BigInt(0) && !differenceState.canSubmit) return;
     setPending(true); setFeedback("");
     try {
+      const normalizedOtherDifferences = normalizeOtherDifferencesForPayload(otherDifferences);
       const response = await fetch("/api/operacional/consignado/conciliacoes", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ entryIds, remittanceIds, exclusionIds: selectedExclusionIds, otherDifferences }),
+        body: JSON.stringify({ entryIds, remittanceIds, exclusionIds: selectedExclusionIds, otherDifferences: normalizedOtherDifferences }),
       });
       const payload = await response.json();
       setFeedback(payload.message);
-      if (payload.ok) {
-        setEntryIds([]); setRemittanceIds([]); resetDifferenceComposition();
-        await refresh();
+      if (!payload.ok) {
+        try { await refresh(); }
+        finally { resetDifferenceComposition(); }
+        return;
       }
+      setEntryIds([]); setRemittanceIds([]); resetDifferenceComposition();
+      await refresh();
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Erro ao conciliar.");
     } finally { setPending(false); }
@@ -213,7 +241,7 @@ export function ConsignadoBankReconciliationPanel({ initialWorkspace, canManage 
       </form>
     </section> : null}
 
-    {feedback ? <p className="rounded border border-slate-200 bg-white px-4 py-3 text-sm shadow-executive">{feedback}</p> : null}
+    <div aria-atomic="true" aria-live="polite" className={feedback ? "rounded border border-slate-200 bg-white px-4 py-3 text-sm shadow-executive" : "sr-only"} id="bank-reconciliation-feedback" role="status">{feedback}</div>
 
     <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
       <div className="flex flex-wrap items-end justify-between gap-5">
@@ -248,7 +276,7 @@ export function ConsignadoBankReconciliationPanel({ initialWorkspace, canManage 
     </div>
 
     {canManage ? <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
-      <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="font-semibold">Relacionar seleções</p><p className="mt-1 text-sm text-slate-500">Entradas: {money(selectedEntryTotal)} · Remessas: {money(selectedRemittanceTotal)} · Será alocado: {money(Math.min(selectedEntryTotal, selectedRemittanceTotal))} · Diferença: {money(selectedDifference)}</p></div><button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || showDifferenceBox || !entryIds.length || !remittanceIds.length} onClick={beginReconciliation} type="button"><Link2 className="h-4 w-4" />Conciliar selecionados</button></div>
+      <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="font-semibold">Relacionar seleções</p><p className="mt-1 text-sm text-slate-500">Entradas: {money(selectedEntryTotal)} · Remessas: {money(selectedRemittanceTotal)} · Será alocado: {money(selectedEntryTotal < selectedRemittanceTotal ? selectedEntryTotal : selectedRemittanceTotal)} · Diferença: {money(selectedDifference)}</p></div><button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || showDifferenceBox || !entryIds.length || !remittanceIds.length} onClick={beginReconciliation} type="button"><Link2 className="h-4 w-4" />Conciliar selecionados</button></div>
       {showDifferenceBox ? <div className="mt-5 rounded border border-amber-300 bg-amber-50 p-4">
         <div className="flex items-start justify-between gap-4"><div><h3 className="font-semibold text-amber-950">Compor diferença de {money(selectedDifference)}</h3><p className="mt-1 text-sm text-amber-800">Escolha títulos elegíveis e/ou registre Outros até explicar exatamente o valor. O servidor recalculará tudo antes de concluir.</p></div><button aria-label="Fechar" className="text-amber-800" onClick={resetDifferenceComposition} type="button"><X className="h-5 w-5" /></button></div>
         <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
@@ -257,21 +285,21 @@ export function ConsignadoBankReconciliationPanel({ initialWorkspace, canManage 
           <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Diferença</p><p className="mt-1 font-semibold">{money(selectedDifference)}</p></div>
           <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Títulos selecionados</p><p className="mt-1 font-semibold">{money(differenceState.titleTotal)}</p></div>
           <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Outros</p><p className="mt-1 font-semibold">{money(differenceState.otherTotal)}</p></div>
-          <div className={`rounded border bg-white p-3 ${differenceState.unexplained === 0 ? "border-emerald-300" : "border-red-300"}`}><p className="text-xs text-slate-500">Falta explicar</p><p className={`mt-1 font-semibold ${differenceState.unexplained === 0 ? "text-emerald-700" : "text-red-700"}`}>{money(differenceState.unexplained)}</p></div>
+          <div className={`rounded border bg-white p-3 ${differenceState.unexplainedCents === BigInt(0) ? "border-emerald-300" : "border-red-300"}`}><p className="text-xs text-slate-500">Falta explicar</p><p className={`mt-1 font-semibold ${differenceState.unexplainedCents === BigInt(0) ? "text-emerald-700" : "text-red-700"}`}>{money(differenceState.unexplainedCents)}</p></div>
         </div>
         <div className="mt-4"><ConsignadoDifferenceComposer difference={selectedDifference} direction={differenceDirection} disabled={pending} exclusions={eligibleExclusions} onOtherDifferencesChange={setOtherDifferences} onSelectedIdsChange={setSelectedExclusionIds} otherDifferences={otherDifferences} selectedIds={selectedExclusionIds} /></div>
-        <div className="mt-4 flex justify-end gap-2"><button className="h-9 rounded border border-slate-300 bg-white px-3 text-sm font-semibold" disabled={pending} onClick={resetDifferenceComposition} type="button">Cancelar</button><button className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || !differenceState.canSubmit} onClick={() => void submitReconciliation()} type="button">Concluir conciliação</button></div>
+        <div className="mt-4 flex justify-end gap-2"><button className="h-9 rounded border border-slate-300 bg-white px-3 text-sm font-semibold" disabled={pending} onClick={resetDifferenceComposition} type="button">Cancelar</button><button aria-describedby="difference-composer-status difference-composer-errors" className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || !differenceState.canSubmit} onClick={() => void submitReconciliation()} type="button">Concluir conciliação</button></div>
       </div> : null}
     </section> : null}
 
     <section className="overflow-hidden rounded border border-slate-200 bg-white shadow-executive">
       <div className="border-b border-slate-200 p-5"><h2 className="font-semibold">Histórico de conciliações</h2></div>
       {workspace.reconciliations.length ? <div className="divide-y">{workspace.reconciliations.map((item) => {
-        const titleTotal = item.differenceTitles.reduce((sum, title) => sum + Number(title.amount), 0);
-        const otherTotal = item.otherDifferences.reduce((sum, other) => sum + Number(other.amount), 0);
+        const titleTotal = item.differenceTitles.reduce((sum, title) => sum + cents(title.amount), BigInt(0));
+        const otherTotal = item.otherDifferences.reduce((sum, other) => sum + cents(other.amount), BigInt(0));
         return <div className="p-4" key={item.id}>
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <div><p className="text-sm font-semibold">{money(item.totalAmount)} · {item.allocations.length} alocações{item.adjustments.length ? ` · ${item.adjustments.length} ajustes contábeis` : ""}</p><p className="mt-1 text-xs text-slate-500">{dateTime(item.createdAt)} por {item.createdBy.name} · {item.status === "UNDONE" ? `Desfeita por ${item.undoneBy?.name ?? "usuário"}` : "Ativa"}</p>{Number(item.differenceAmount) > 0 ? <p className="mt-2 text-sm text-amber-800">Entradas {money(item.entryTotalAmount)} · Remessas {money(item.remittanceTotalAmount)} · Diferença {money(item.differenceAmount)}</p> : null}{item.differenceTitles.length || item.otherDifferences.length ? <p className="mt-1 text-xs text-slate-600">{item.differenceTitles.length} título(s): {money(titleTotal)} · {item.otherDifferences.length} Outro(s): {money(otherTotal)} ({item.otherDifferences.filter((other) => other.status === "OPEN").length} em aberto)</p> : item.differenceReason ? <p className="mt-1 text-xs text-slate-600">Histórico anterior: {item.differenceReason}</p> : null}</div>
+            <div><p className="text-sm font-semibold">{money(item.totalAmount)} · {item.allocations.length} alocações{item.adjustments.length ? ` · ${item.adjustments.length} ajustes contábeis` : ""}</p><p className="mt-1 text-xs text-slate-500">{dateTime(item.createdAt)} por {item.createdBy.name} · {item.status === "UNDONE" ? `Desfeita por ${item.undoneBy?.name ?? "usuário"}` : "Ativa"}</p>{cents(item.differenceAmount) > BigInt(0) ? <p className="mt-2 text-sm text-amber-800">Entradas {money(item.entryTotalAmount)} · Remessas {money(item.remittanceTotalAmount)} · Diferença {money(item.differenceAmount)}</p> : null}{item.differenceTitles.length || item.otherDifferences.length ? <p className="mt-1 text-xs text-slate-600">{item.differenceTitles.length} título(s): {money(titleTotal)} · {item.otherDifferences.length} Outro(s): {money(otherTotal)} ({item.otherDifferences.filter((other) => other.status === "OPEN").length} em aberto)</p> : item.differenceReason ? <p className="mt-1 text-xs text-slate-600">Histórico anterior: {item.differenceReason}</p> : null}</div>
             {canManage && item.status === "ACTIVE" ? <button className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm" onClick={() => void undo(item.id)} type="button"><RotateCcw className="h-4 w-4" />Desfazer</button> : null}
           </div>
           {item.differenceTitles.length || item.otherDifferences.length ? <details className="mt-3 rounded border border-slate-200 bg-slate-50 p-3"><summary className="cursor-pointer text-sm font-semibold">Ver explicação detalhada</summary>
