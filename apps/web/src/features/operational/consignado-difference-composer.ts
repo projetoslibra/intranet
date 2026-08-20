@@ -58,11 +58,37 @@ type ComposeDifferenceStateInput = {
 
 const ZERO_CENTS = BigInt(0);
 const HUNDRED_CENTS = BigInt(100);
+const TEN = BigInt(10);
+const MAX_DECIMAL_CENTS = BigInt("999999999999999999999999");
 
 export function decimalAmountToCents(value: string) {
-  const match = /^(0|[1-9]\d{0,21})(?:\.(\d{1,2}))?$/.exec(value.trim());
-  if (!match) return null;
-  return BigInt(match[1]) * HUNDRED_CENTS + BigInt((match[2] ?? "").padEnd(2, "0"));
+  const input = value.trim();
+  const expanded = /^(0|[1-9]\d{0,21})(?:\.(\d{1,2}))?$/.exec(input);
+  if (expanded) {
+    return BigInt(expanded[1]) * HUNDRED_CENTS + BigInt((expanded[2] ?? "").padEnd(2, "0"));
+  }
+
+  const scientific = /^(0|[1-9]\d*)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(input);
+  if (!scientific) return null;
+  const fraction = scientific[2] ?? "";
+  const coefficientDigits = `${scientific[1]}${fraction}`.replace(/^0+/, "");
+  if (!coefficientDigits) return ZERO_CENTS;
+
+  const coefficient = BigInt(coefficientDigits);
+  const exponent = BigInt(scientific[3]);
+  const centShift = exponent - BigInt(fraction.length) + BigInt(2);
+  let cents: bigint;
+  if (centShift >= ZERO_CENTS) {
+    if (BigInt(coefficientDigits.length) + centShift > BigInt(24)) return null;
+    cents = coefficient * (TEN ** centShift);
+  } else {
+    const divisorPower = -centShift;
+    if (divisorPower > BigInt(coefficientDigits.length)) return null;
+    const divisor = TEN ** divisorPower;
+    if (coefficient % divisor !== ZERO_CENTS) return null;
+    cents = coefficient / divisor;
+  }
+  return cents <= MAX_DECIMAL_CENTS ? cents : null;
 }
 
 export function centsToDecimalAmount(value: bigint) {

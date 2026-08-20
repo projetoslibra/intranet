@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Prisma } from "@prisma/client";
 import {
   calculateDifferenceSelection,
   centsToDecimalAmount,
@@ -55,6 +56,35 @@ test("preserva um centavo no limite seguro e acima dele", () => {
   assert.equal(formatCentsAsBRL(BigInt("9007199254740992")), "R$\u00a090.071.992.547.409,92");
 });
 
+test("converte exatamente snapshots científicos produzidos pelo Prisma", () => {
+  const serializedPower = JSON.parse(JSON.stringify(new Prisma.Decimal("1000000000000000000000.00"))) as string;
+  const serializedMaximum = JSON.parse(JSON.stringify(new Prisma.Decimal("9999999999999999999999.99"))) as string;
+
+  assert.equal(serializedPower, "1e+21");
+  assert.equal(serializedMaximum, "9.99999999999999999999999e+21");
+  assert.equal(decimalAmountToCents(serializedPower), BigInt("100000000000000000000000"));
+  assert.equal(decimalAmountToCents(serializedMaximum), BigInt("999999999999999999999999"));
+  assert.equal(decimalAmountToCents("1.5e+1"), BigInt("1500"));
+  assert.equal(decimalAmountToCents("1.2e-1"), BigInt("12"));
+  assert.equal(decimalAmountToCents("1e-2"), BigInt("1"));
+});
+
+test("rejeita notação científica subcentavo, fora de Decimal(24,2) ou malformada", () => {
+  for (const value of [
+    "1e-3",
+    "1.001e+0",
+    "9.999999999999999999999999e+21",
+    "1e+22",
+    "1e+999",
+    "1e",
+    "e+2",
+    "NaN",
+    "Infinity",
+  ]) {
+    assert.equal(decimalAmountToCents(value), null, value);
+  }
+});
+
 test("calcula diferença de um centavo sem converter snapshots do workspace para Number", () => {
   const selection = calculateDifferenceSelection({
     entries: [{ amount: "90071992547409.91", allocatedAmount: "0.00", adjustedAmount: "0.00" }],
@@ -90,7 +120,7 @@ test("normaliza valores monetários pt-BR para o payload canônico", () => {
 });
 
 test("rejeita entradas monetárias ambíguas ou além de centavos", () => {
-  for (const input of ["15,", "1,234.56", "12.34,56", "1.234,567", "1.234.56", "-1,00", "abc", ""]) {
+  for (const input of ["15,", "1,234.56", "12.34,56", "1.234,567", "1.234.56", "1e+3", "-1,00", "abc", ""]) {
     assert.equal(normalizePtBrMoneyInput(input), null, input);
   }
 });
