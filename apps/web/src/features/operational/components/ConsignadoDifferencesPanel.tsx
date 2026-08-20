@@ -14,6 +14,10 @@ import {
   differenceStatusLabels,
 } from "@/server/operational/consignado-difference-report";
 import { decimalAmountToCents, formatCentsAsBRL } from "../consignado-difference-composer";
+import {
+  applyDifferenceResolutionToReport,
+  retryFiltersWithoutInvalidCursor,
+} from "../consignado-difference-resolution";
 
 function money(value: string) {
   const cents = decimalAmountToCents(value);
@@ -67,15 +71,27 @@ export function ConsignadoDifferencesPanel({ initialState, canManage }: { initia
     setPending(true);
     if (clearFeedback) setFeedback("");
     try {
-      const response = await fetch(`/api/operacional/consignado/diferencas?${paramsFrom(nextFilters)}`, { cache: "no-store" });
-      const payload = await response.json();
+      const requestReport = async (requestedFilters: DifferenceReportFilters) => {
+        const response = await fetch(`/api/operacional/consignado/diferencas?${paramsFrom(requestedFilters)}`, { cache: "no-store" });
+        return { response, payload: await response.json() };
+      };
+      let requestedFilters = nextFilters;
+      let { response, payload } = await requestReport(requestedFilters);
+      const retryFilters = !payload.ok ? retryFiltersWithoutInvalidCursor(requestedFilters, response.status, payload.message) : null;
+      if (retryFilters) {
+        requestedFilters = retryFilters;
+        setFilters(retryFilters);
+        setCursorHistory([]);
+        ({ response, payload } = await requestReport(requestedFilters));
+      }
       if (!payload.ok) throw new Error(payload.message);
       setReport(payload.report);
       setFilters(payload.report.filters);
-      return true;
+      return { ok: true as const };
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Erro ao consultar diferenças bancárias.");
-      return false;
+      const message = error instanceof Error ? error.message : "Erro ao consultar diferenças bancárias.";
+      setFeedback(message);
+      return { ok: false as const, message };
     } finally { setPending(false); }
   }
 
@@ -124,9 +140,10 @@ export function ConsignadoDifferencesPanel({ initialState, canManage }: { initia
         if (response.status === 409) await load(filters, false);
         throw new Error(payload.message);
       }
+      setReport((current) => current ? applyDifferenceResolutionToReport(current, payload.result) : current);
       setNotes((current) => { const next = { ...current }; delete next[item.id]; return next; });
-      await load(filters, false);
-      setFeedback(payload.message);
+      const refreshed = await load(filters, false);
+      setFeedback(refreshed.ok ? payload.message : `${payload.message} Não foi possível atualizar a lista: ${refreshed.message}`);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Erro ao resolver diferença bancária.");
     } finally { setResolvingId(null); }

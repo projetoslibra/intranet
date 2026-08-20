@@ -21,7 +21,7 @@ function queryFrom(searchParams: PageProps["searchParams"]) {
 export default async function ConsignadoDifferencesPage({ searchParams }: PageProps) {
   if (!(await hasPermission("operational.view"))) return <section className="rounded border border-slate-200 bg-white p-6">Sem permissão para visualizar diferenças bancárias.</section>;
   const [canManage, initialState] = await Promise.all([
-    hasPermission("operational.manage"),
+    hasPermission("operational.finance.manage"),
     loadInitialDifferenceReport(queryFrom(searchParams), getDifferenceReport),
   ]);
   return <div className="space-y-6">

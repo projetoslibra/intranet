@@ -94,10 +94,11 @@ export function ConsignadoBankReconciliationPanel({
 }: {
   initialWorkspace: Workspace;
   canManage: boolean;
-  openDifferences: { count: number; amount: string };
+  openDifferences: { count: number; amount: string } | null;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [workspace, setWorkspace] = useState(initialWorkspace);
+  const [openDifferenceOverview, setOpenDifferenceOverview] = useState(openDifferences);
   const [entryIds, setEntryIds] = useState<string[]>([]);
   const [remittanceIds, setRemittanceIds] = useState<string[]>([]);
   const [transactionDate, setTransactionDate] = useState("");
@@ -149,6 +150,7 @@ export function ConsignadoBankReconciliationPanel({
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.message);
     setWorkspace(payload.workspace);
+    setOpenDifferenceOverview(payload.openDifferences ?? null);
   }
 
   function resetDifferenceComposition() {
@@ -242,7 +244,7 @@ export function ConsignadoBankReconciliationPanel({
   return <div className="space-y-6">
     <section className="flex flex-wrap items-center justify-between gap-4 rounded border border-slate-200 bg-white px-5 py-4 shadow-executive">
       <div><h2 className="font-semibold">Acompanhamento das diferenças</h2><p className="mt-1 text-sm text-slate-500">Consulte e resolva os ajustes “Outro” sem sair do fluxo bancário.</p></div>
-      <a className="inline-flex items-center gap-2 rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" href="/dashboard/operacional/financeiro/conciliacao/consignado/conciliacao-bancaria/diferencas">Diferenças e ajustes<span className={openDifferences.count ? "rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800" : "rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600"}>{openDifferences.count.toLocaleString("pt-BR")} · {money(openDifferences.amount)}</span></a>
+      <a className="inline-flex items-center gap-2 rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" href="/dashboard/operacional/financeiro/conciliacao/consignado/conciliacao-bancaria/diferencas">Diferenças e ajustes{openDifferenceOverview ? <span className={openDifferenceOverview.count ? "rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800" : "rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600"}>{openDifferenceOverview.count.toLocaleString("pt-BR")} · {money(openDifferenceOverview.amount)}</span> : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500">indisponível</span>}</a>
     </section>
 
     {canManage ? <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">

@@ -63,6 +63,7 @@ type DifferenceRecord = {
     status: string;
     createdAt: Date;
     allocations: ReadonlyArray<{ bankEntry: EntryRecord; remittance: RemittanceRecord }>;
+    adjustments: ReadonlyArray<{ bankEntry: EntryRecord | null; remittance: RemittanceRecord | null }>;
   };
 };
 
@@ -217,12 +218,18 @@ function normalized(value: unknown) {
 function uniqueEntries(record: DifferenceRecord) {
   const entries = new Map<string, EntryRecord>();
   record.reconciliation.allocations.forEach((allocation) => entries.set(allocation.bankEntry.id, allocation.bankEntry));
+  record.reconciliation.adjustments.forEach((adjustment) => {
+    if (adjustment.bankEntry) entries.set(adjustment.bankEntry.id, adjustment.bankEntry);
+  });
   return [...entries.values()];
 }
 
 function uniqueRemittances(record: DifferenceRecord) {
   const remittances = new Map<string, RemittanceRecord>();
   record.reconciliation.allocations.forEach((allocation) => remittances.set(allocation.remittance.id, allocation.remittance));
+  record.reconciliation.adjustments.forEach((adjustment) => {
+    if (adjustment.remittance) remittances.set(adjustment.remittance.id, adjustment.remittance);
+  });
   return [...remittances.values()];
 }
 
@@ -311,11 +318,27 @@ const differenceSelect = {
       bankEntry: { select: { id: true, transactionDate: true, description: true, document: true } },
       remittance: { select: { id: true, fileName: true, batch: { select: { id: true, fileName: true } } } },
     } },
+    adjustments: { select: {
+      bankEntry: { select: { id: true, transactionDate: true, description: true, document: true } },
+      remittance: { select: { id: true, fileName: true, batch: { select: { id: true, fileName: true } } } },
+    } },
   } },
 } satisfies Prisma.ConsignadoBankOtherDifferenceSelect;
 
+function saoPauloCivilDayIndex(value: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((item) => item.type === type)?.value);
+  return Math.floor(Date.UTC(part("year"), part("month") - 1, part("day")) / 86_400_000);
+}
+
 function mapRecord(record: DifferenceRecord, now: Date): DifferenceReportItem {
-  const elapsedMilliseconds = Math.max(0, now.getTime() - record.createdAt.getTime());
+  const terminalAt = record.resolvedAt ?? record.cancelledAt ?? now;
+  const ageDays = Math.max(0, saoPauloCivilDayIndex(terminalAt) - saoPauloCivilDayIndex(record.createdAt));
   return {
     id: record.id,
     reconciliationId: record.reconciliation.id,
@@ -331,7 +354,7 @@ function mapRecord(record: DifferenceRecord, now: Date): DifferenceReportItem {
     resolvedBy: record.resolvedBy,
     resolutionNote: record.resolutionNote,
     cancelledAt: record.cancelledAt?.toISOString() ?? null,
-    ageDays: Math.floor(elapsedMilliseconds / 86_400_000),
+    ageDays,
     entries: uniqueEntries(record).map((entry) => ({ ...entry, transactionDate: entry.transactionDate.toISOString() })),
     remittances: uniqueRemittances(record).map((remittance) => ({
       id: remittance.id,
@@ -592,6 +615,16 @@ export const differenceResolutionSchema = z.object({
   resolutionNote: z.string().trim().min(5, "A nota de resolução deve possuir ao menos 5 caracteres.").max(500, "A nota de resolução deve possuir no máximo 500 caracteres."),
 }).strict();
 
+export async function parseDifferenceResolutionRequest(request: Pick<Request, "json">) {
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    throw new DifferenceReportInputError("JSON inválido no corpo da resolução.");
+  }
+  return differenceResolutionSchema.parse(payload);
+}
+
 export function transitionOtherDifference(status: string, note: string, userId: string, now: Date) {
   if (status === "RESOLVED") throw new DifferenceReportConflictError("Esta diferença já foi resolvida.");
   if (status === "CANCELLED") throw new DifferenceReportConflictError("Esta diferença foi cancelada e permanece apenas no histórico.");
@@ -604,6 +637,11 @@ type ResolutionDatabase = {
   $transaction<T>(operation: (tx: any) => Promise<T>, options?: unknown): Promise<T>;
 };
 type ResolutionDependencies = { database: ResolutionDatabase; now: () => Date };
+const RESOLUTION_TRANSACTION_MAX_ATTEMPTS = 3;
+
+function isSerializationConflict(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
+}
 
 export async function resolveOtherDifference(id: string, userId: string, note: string) {
   const { prisma } = await import("@/lib/prisma");
@@ -615,7 +653,7 @@ export async function resolveOtherDifference(id: string, userId: string, note: s
 
 export async function resolveOtherDifferenceWithDependencies(id: string, userId: string, note: string, dependencies: ResolutionDependencies) {
   const resolutionNote = differenceResolutionSchema.parse({ resolutionNote: note }).resolutionNote;
-  return dependencies.database.$transaction(async (tx) => {
+  const runTransaction = () => dependencies.database.$transaction(async (tx) => {
     const current = await tx.consignadoBankOtherDifference.findUnique({
       where: { id },
       select: {
@@ -656,6 +694,14 @@ export async function resolveOtherDifferenceWithDependencies(id: string, userId:
     } });
     return { ...current, ...transition };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  for (let attempt = 1; attempt <= RESOLUTION_TRANSACTION_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await runTransaction();
+    } catch (error) {
+      if (!isSerializationConflict(error) || attempt === RESOLUTION_TRANSACTION_MAX_ATTEMPTS) throw error;
+    }
+  }
+  throw new Error("Limite de tentativas transacionais inalcançável.");
 }
 
 export function differenceReportAccessFailure(userId: string | null | undefined, allowed: boolean) {
@@ -667,10 +713,10 @@ export function differenceReportAccessFailure(userId: string | null | undefined,
 export async function resolveDifferenceReportAccess(
   userId: string | null | undefined,
   mode: "view" | "manage",
-  checkPermission: (permission: "operational.view" | "operational.manage") => Promise<boolean>,
+  checkPermission: (permission: "operational.view" | "operational.finance.manage") => Promise<boolean>,
 ) {
   if (!userId) return differenceReportAccessFailure(userId, false);
-  const permission = mode === "view" ? "operational.view" : "operational.manage";
+  const permission = mode === "view" ? "operational.view" : "operational.finance.manage";
   return differenceReportAccessFailure(userId, await checkPermission(permission));
 }
 

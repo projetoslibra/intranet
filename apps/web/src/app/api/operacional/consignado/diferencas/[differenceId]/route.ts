@@ -4,7 +4,7 @@ import { hasPermission } from "@/lib/permissions";
 import {
   DIFFERENCE_REPORT_CACHE_CONTROL,
   classifyDifferenceReportError,
-  differenceResolutionSchema,
+  parseDifferenceResolutionRequest,
   resolveDifferenceReportAccess,
   resolveOtherDifference,
 } from "@/server/operational/consignado-difference-report";
@@ -19,9 +19,15 @@ export async function PATCH(request: NextRequest, { params }: { params: { differ
     headers: { "cache-control": DIFFERENCE_REPORT_CACHE_CONTROL },
   });
   try {
-    const input = differenceResolutionSchema.parse(await request.json());
+    const input = await parseDifferenceResolutionRequest(request);
     const result = await resolveOtherDifference(params.differenceId, session!.user!.id!, input.resolutionNote);
-    return NextResponse.json({ ok: true, result, message: "Diferença resolvida e auditada." }, {
+    return NextResponse.json({ ok: true, result: {
+      id: result.id,
+      status: result.status,
+      resolvedAt: result.resolvedAt.toISOString(),
+      resolutionNote: result.resolutionNote,
+      resolvedBy: { id: session!.user!.id!, name: session!.user!.name ?? "Usuário" },
+    }, message: "Diferença resolvida e auditada." }, {
       headers: { "cache-control": DIFFERENCE_REPORT_CACHE_CONTROL },
     });
   } catch (error) {

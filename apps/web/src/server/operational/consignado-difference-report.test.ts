@@ -16,6 +16,7 @@ import {
   getOpenDifferenceOverviewWithDependencies,
   loadInitialDifferenceReport,
   parseDifferenceReportFilters,
+  parseDifferenceResolutionRequest,
   resolveDifferenceReportAccess,
   resolveOtherDifferenceWithDependencies,
   transitionOtherDifference,
@@ -38,6 +39,7 @@ const baseReconciliation = {
       batch: { id: "batch-alpha", fileName: "BAIXA_ALFA.csv" },
     },
   }],
+  adjustments: [],
 } as const;
 
 const fixtures = [
@@ -383,6 +385,36 @@ test("registro cancelado ou OPEN de conciliação desfeita permanece histórico 
   }
 });
 
+test("repete P2034 com a transação inteira, relê o vencedor e retorna conflito sem auditoria duplicada", async () => {
+  const state = createResolutionDatabase("OPEN");
+  let attempts = 0;
+  const database = {
+    $transaction: async <T>(operation: (tx: any) => Promise<T>, options: unknown): Promise<T> => {
+      attempts += 1;
+      if (attempts === 1) {
+        Object.assign(state.record(), {
+          status: "RESOLVED",
+          resolvedAt: new Date("2026-08-21T17:59:00.000Z"),
+          resolvedByUserId: "user-winner",
+          resolutionNote: "Resolvida pela tentativa concorrente",
+        });
+        throw new Prisma.PrismaClientKnownRequestError("write conflict", { code: "P2034", clientVersion: "6.19.0" });
+      }
+      return state.database.$transaction(operation, options);
+    },
+  };
+
+  await assert.rejects(
+    resolveOtherDifferenceWithDependencies("open-fee", "user-loser", "Tentativa concorrente", {
+      database,
+      now: () => new Date("2026-08-21T18:00:00.000Z"),
+    }),
+    (error: unknown) => error instanceof DifferenceReportConflictError && /já foi resolvida/.test(error.message),
+  );
+  assert.equal(attempts, 2);
+  assert.equal(state.events.length, 0);
+});
+
 test("boundaries usam permissões exatas, cache privado e política de erros públicos", async () => {
   const checked: string[] = [];
   const check = async (permission: string) => { checked.push(permission); return true; };
@@ -390,7 +422,7 @@ test("boundaries usam permissões exatas, cache privado e política de erros pú
   assert.deepEqual(checked, []);
   assert.equal(await resolveDifferenceReportAccess("user-1", "view", check), null);
   assert.equal(await resolveDifferenceReportAccess("user-1", "manage", check), null);
-  assert.deepEqual(checked, ["operational.view", "operational.manage"]);
+  assert.deepEqual(checked, ["operational.view", "operational.finance.manage"]);
   assert.equal(DIFFERENCE_REPORT_CACHE_CONTROL, "private, no-store, max-age=0");
   assert.deepEqual(classifyDifferenceReportError(new DifferenceReportInputError("Filtro inválido.")), { status: 400, message: "Filtro inválido.", internal: false });
   assert.deepEqual(classifyDifferenceReportError(new DifferenceReportConflictError("Registro alterado.")), { status: 409, message: "Registro alterado.", internal: false });
@@ -445,5 +477,121 @@ test("carregamento inicial recupera erro público, remove cursor e propaga falha
   await assert.rejects(
     loadInitialDifferenceReport(new URLSearchParams(), async () => { throw internal; }),
     (error) => error === internal,
+  );
+});
+
+test("origens unem e deduplicam allocations e adjustments nos filtros, tabela e Excel", async () => {
+  const mainAllocation = baseReconciliation.allocations[0];
+  const entryResidual = {
+    ...fixtures[0],
+    id: "entry-residual-only-adjustment",
+    reason: "Excesso pertencente à segunda entrada",
+    reconciliation: {
+      ...baseReconciliation,
+      id: "reconciliation-entry-residual",
+      adjustments: [
+        { bankEntry: mainAllocation.bankEntry, remittance: null },
+        {
+          bankEntry: {
+            id: "entry-residual",
+            transactionDate: new Date("2026-08-21T00:00:00.000Z"),
+            description: "Crédito residual ajuste",
+            document: "DOC-RESIDUAL",
+          },
+          remittance: null,
+        },
+      ],
+    },
+  };
+  const remittanceResidual = {
+    ...fixtures[0],
+    id: "remittance-residual-only-adjustment",
+    direction: "REMITTANCE_EXCESS",
+    reason: "Excesso pertencente à segunda remessa",
+    reconciliation: {
+      ...baseReconciliation,
+      id: "reconciliation-remittance-residual",
+      adjustments: [
+        { bankEntry: null, remittance: mainAllocation.remittance },
+        {
+          bankEntry: null,
+          remittance: {
+            id: "remittance-residual",
+            fileName: "REM_RESIDUAL.REM",
+            batch: { id: "batch-residual", fileName: "BAIXA_RESIDUAL.csv" },
+          },
+        },
+      ],
+    },
+  };
+  const rows = [entryResidual, remittanceResidual];
+
+  const byEntry = await getDifferenceReportWithDependencies(
+    parseDifferenceReportFilters(new URLSearchParams({ entry: "credito residual ajuste" })),
+    { database: createReportDatabase(rows), now: () => new Date("2026-08-22T03:00:00.000Z") },
+  );
+  assert.deepEqual(byEntry.items.map((item) => item.id), ["entry-residual-only-adjustment"]);
+  assert.deepEqual(byEntry.items[0]?.entries.map((item) => item.id), ["entry-alpha", "entry-residual"]);
+
+  const byRemittance = await getDifferenceReportWithDependencies(
+    parseDifferenceReportFilters(new URLSearchParams({ remittance: "rem_residual" })),
+    { database: createReportDatabase(rows), now: () => new Date("2026-08-22T03:00:00.000Z") },
+  );
+  assert.deepEqual(byRemittance.items.map((item) => item.id), ["remittance-residual-only-adjustment"]);
+  assert.deepEqual(byRemittance.items[0]?.remittances.map((item) => item.id), ["remittance-alpha", "remittance-residual"]);
+
+  const report = await getDifferenceExportReportWithDependencies(
+    parseDifferenceReportFilters(new URLSearchParams()),
+    { database: createReportDatabase(rows), now: () => new Date("2026-08-22T03:00:00.000Z") },
+  );
+  const workbook = XLSX.read(buildDifferenceWorkbook(report), { type: "buffer" });
+  const details = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets.Diferencas, { raw: true });
+  assert.match(String(details[0]?.Entrada), /Crédito cliente Álfa.*Crédito residual ajuste/);
+  assert.equal(String(details[0]?.Entrada).match(/Crédito cliente Álfa/g)?.length, 1);
+  assert.match(String(details[1]?.Remessa), /REM_ÁLFA\.REM.*REM_RESIDUAL\.REM/);
+  assert.equal(String(details[1]?.Remessa).match(/REM_ÁLFA\.REM/g)?.length, 1);
+});
+
+test("idade usa dias civis de São Paulo e para no primeiro evento terminal", async () => {
+  const rows = [
+    {
+      ...fixtures[0],
+      id: "open-midnight",
+      createdAt: new Date("2026-08-20T02:30:00.000Z"),
+    },
+    {
+      ...fixtures[2],
+      id: "resolved-terminal",
+      createdAt: new Date("2026-08-18T02:30:00.000Z"),
+      resolvedAt: new Date("2026-08-20T03:30:00.000Z"),
+    },
+    {
+      ...fixtures[3],
+      id: "cancelled-terminal",
+      createdAt: new Date("2026-08-18T03:30:00.000Z"),
+      cancelledAt: new Date("2026-08-19T02:30:00.000Z"),
+    },
+  ];
+  const report = await getDifferenceReportWithDependencies(
+    parseDifferenceReportFilters(new URLSearchParams()),
+    { database: createReportDatabase(rows), now: () => new Date("2026-08-30T03:30:00.000Z") },
+  );
+  const ageById = Object.fromEntries(report.items.map((item) => [item.id, item.ageDays]));
+  assert.deepEqual(ageById, {
+    "open-midnight": 11,
+    "resolved-terminal": 3,
+    "cancelled-terminal": 0,
+  });
+});
+
+test("corpo PATCH malformado é erro público de entrada", async () => {
+  const request = new Request("https://intranet.test/api/diferencas/difference-1", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: '{"resolutionNote":',
+  });
+  await assert.rejects(
+    parseDifferenceResolutionRequest(request),
+    (error: unknown) => error instanceof DifferenceReportInputError && /JSON inválido/.test(error.message),
   );
 });

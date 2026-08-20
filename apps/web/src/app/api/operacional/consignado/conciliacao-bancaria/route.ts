@@ -2,12 +2,21 @@ import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
 import { getBankReconciliationWorkspace, importBradescoStatement } from "@/server/operational/consignado-bank-service";
+import { loadBankReconciliationView } from "@/server/operational/consignado-bank-overview";
+import { getOpenDifferenceOverview } from "@/server/operational/consignado-difference-report";
 
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ ok: false, message: "Sessão expirada." }, { status: 401 });
   if (!(await hasPermission("operational.view"))) return NextResponse.json({ ok: false, message: "Sem permissão." }, { status: 403 });
-  try { return NextResponse.json({ ok: true, workspace: await getBankReconciliationWorkspace({ transactionDate: request.nextUrl.searchParams.get("transactionDate") || undefined }) }); }
+  try {
+    const result = await loadBankReconciliationView(
+      () => getBankReconciliationWorkspace({ transactionDate: request.nextUrl.searchParams.get("transactionDate") || undefined }),
+      getOpenDifferenceOverview,
+      (error) => console.error("[consignado-bank-overview] Falha ao atualizar badge.", error),
+    );
+    return NextResponse.json({ ok: true, ...result });
+  }
   catch (error) { return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Erro ao consultar conciliação." }, { status: 500 }); }
 }
 
