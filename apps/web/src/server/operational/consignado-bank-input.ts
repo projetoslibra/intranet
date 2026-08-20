@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 
 const bankDifferenceCategorySchema = z.enum([
   "BANK_FEE",
@@ -10,8 +11,15 @@ const bankDifferenceCategorySchema = z.enum([
 ]);
 
 const positiveCentAmountSchema = z.string()
-  .regex(/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/, "Informe um valor monetário válido.")
-  .refine((amount) => Number(amount) > 0, "O valor deve ser positivo.");
+  .regex(/^(?:0|[1-9]\d{0,21})(?:\.\d{1,2})?$/, "Informe um valor monetário válido.")
+  .refine((amount) => {
+    try {
+      const decimal = new Prisma.Decimal(amount);
+      return decimal.isFinite() && decimal.gt(0);
+    } catch {
+      return false;
+    }
+  }, "O valor deve ser positivo.");
 
 export const bankReconciliationInputSchema = z.object({
   entryIds: z.array(z.string().min(1)).min(1),

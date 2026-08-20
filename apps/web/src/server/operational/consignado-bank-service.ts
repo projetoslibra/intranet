@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { parseBradescoStatement } from "./consignado-parsers";
@@ -72,9 +72,22 @@ function remittanceStatus(amount: Prisma.Decimal, allocated: Prisma.Decimal, adj
 }
 
 export async function createBankReconciliation(input: BankReconciliationInput & { userId: string }) {
+  return createBankReconciliationWithDependencies(input, {
+    database: prisma,
+    createId: randomUUID,
+  });
+}
+
+export async function createBankReconciliationWithDependencies(
+  input: BankReconciliationInput & { userId: string },
+  dependencies: {
+    database: Pick<typeof prisma, "$transaction">;
+    createId: () => string;
+  },
+) {
   const { entryIds, remittanceIds, exclusionIds } = normalizeBankReconciliationSelection(input);
   if (!entryIds.length || !remittanceIds.length) throw new Error("Selecione ao menos uma entrada e uma remessa.");
-  return prisma.$transaction(async (tx) => {
+  return dependencies.database.$transaction(async (tx) => {
     const consignado = await fund(tx);
     const [entries, remittances, exclusions] = await Promise.all([
       tx.consignadoBankCreditEntry.findMany({
@@ -151,6 +164,10 @@ export async function createBankReconciliation(input: BankReconciliationInput & 
             : null,
         ].filter((item): item is string => Boolean(item)).join("; ")
       : null;
+    const identifiedOtherDifferences = input.otherDifferences.map((item) => ({
+      ...item,
+      id: dependencies.createId(),
+    }));
     const reconciliation = await tx.consignadoBankReconciliation.create({ data: {
       createdByUserId: input.userId,
       totalAmount: plan.allocatedTotal,
@@ -170,9 +187,10 @@ export async function createBankReconciliation(input: BankReconciliationInput & 
         })),
       });
     }
-    if (input.otherDifferences.length) {
+    if (identifiedOtherDifferences.length) {
       await tx.consignadoBankOtherDifference.createMany({
-        data: input.otherDifferences.map((item) => ({
+        data: identifiedOtherDifferences.map((item) => ({
+          id: item.id,
           reconciliationId: reconciliation.id,
           createdByUserId: input.userId,
           category: item.category,
@@ -214,13 +232,28 @@ export async function createBankReconciliation(input: BankReconciliationInput & 
       entryIds,
       remittanceIds,
       exclusionIds,
+      otherDifferenceIds: identifiedOtherDifferences.map((item) => item.id),
     } } });
     return reconciliation;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export async function undoBankReconciliation(reconciliationId: string, userId: string) {
-  return prisma.$transaction(async (tx) => {
+  return undoBankReconciliationWithDependencies(reconciliationId, userId, {
+    database: prisma,
+    now: () => new Date(),
+  });
+}
+
+export async function undoBankReconciliationWithDependencies(
+  reconciliationId: string,
+  userId: string,
+  dependencies: {
+    database: Pick<typeof prisma, "$transaction">;
+    now: () => Date;
+  },
+) {
+  return dependencies.database.$transaction(async (tx) => {
     const reconciliation = await tx.consignadoBankReconciliation.findFirstOrThrow({
       where: { id: reconciliationId, status: "ACTIVE" },
       include: {
@@ -250,7 +283,7 @@ export async function undoBankReconciliation(reconciliationId: string, userId: s
       await tx.consignadoRemittance.update({ where: { id: remittance.id }, data: { allocatedAmount: allocated, adjustedAmount: adjusted, status } });
       await tx.consignadoSettlementBatch.update({ where: { id: remittance.batchId }, data: { status: status === "GENERATED" ? "GENERATED" : status === "RECONCILED" ? "RECONCILED" : "RECONCILING" } });
     }
-    const undoneAt = new Date();
+    const undoneAt = dependencies.now();
     if (reconciliation.otherDifferences.length) {
       await tx.consignadoBankOtherDifference.updateMany({
         where: { reconciliationId: reconciliation.id },
@@ -273,11 +306,28 @@ export async function undoBankReconciliation(reconciliationId: string, userId: s
 }
 
 export async function getBankReconciliationWorkspace(input: { transactionDate?: string } = {}) {
-  const consignado = await fund();
+  return getBankReconciliationWorkspaceWithDependencies(input, { database: prisma });
+}
+
+export async function getBankReconciliationWorkspaceWithDependencies(
+  input: { transactionDate?: string },
+  dependencies: {
+    database: Pick<
+      typeof prisma,
+      | "fund"
+      | "consignadoBankCreditEntry"
+      | "consignadoRemittance"
+      | "consignadoBankReconciliation"
+      | "consignadoBankStatementImport"
+    >;
+  },
+) {
+  const { database } = dependencies;
+  const consignado = await fund(database);
   const openWhere = { fundId: consignado.id, status: { not: "RECONCILED" as const } };
   const [entries, remittances, reconciliations, imports, summaryAggregate] = await Promise.all([
-    prisma.consignadoBankCreditEntry.findMany({ where: { ...openWhere, ...(input.transactionDate ? { transactionDate: parseDateOnly(input.transactionDate) } : {}) }, orderBy: [{ transactionDate: "asc" }, { createdAt: "asc" }] }),
-    prisma.consignadoRemittance.findMany({
+    database.consignadoBankCreditEntry.findMany({ where: { ...openWhere, ...(input.transactionDate ? { transactionDate: parseDateOnly(input.transactionDate) } : {}) }, orderBy: [{ transactionDate: "asc" }, { createdAt: "asc" }] }),
+    database.consignadoRemittance.findMany({
       where: {
         fundId: consignado.id,
         status: { in: ["GENERATED", "RECONCILING"] },
@@ -293,7 +343,7 @@ export async function getBankReconciliationWorkspace(input: { transactionDate?: 
       },
       orderBy: { generatedAt: "asc" },
     }),
-    prisma.consignadoBankReconciliation.findMany({
+    database.consignadoBankReconciliation.findMany({
       orderBy: { createdAt: "desc" },
       take: 50,
       include: {
@@ -325,8 +375,8 @@ export async function getBankReconciliationWorkspace(input: { transactionDate?: 
         },
       },
     }),
-    prisma.consignadoBankStatementImport.findMany({ where: { fundId: consignado.id }, orderBy: { createdAt: "desc" }, take: 20, include: { importedBy: { select: { name: true } } } }),
-    prisma.consignadoBankCreditEntry.aggregate({ where: openWhere, _count: { _all: true }, _sum: { amount: true, allocatedAmount: true, adjustedAmount: true } }),
+    database.consignadoBankStatementImport.findMany({ where: { fundId: consignado.id }, orderBy: { createdAt: "desc" }, take: 20, include: { importedBy: { select: { name: true } } } }),
+    database.consignadoBankCreditEntry.aggregate({ where: openWhere, _count: { _all: true }, _sum: { amount: true, allocatedAmount: true, adjustedAmount: true } }),
   ]);
   const openEntryAmount = (summaryAggregate._sum.amount ?? new Prisma.Decimal(0))
     .sub(summaryAggregate._sum.allocatedAmount ?? 0)

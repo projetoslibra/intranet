@@ -39,6 +39,25 @@ test("rejeita valores não positivos ou com fração de centavo", () => {
   }
 });
 
+test("aceita o limite de Decimal(24,2) e rejeita overflow inteiro", () => {
+  assert.ok(reconciliationInputSchema, "bankReconciliationInputSchema ainda não foi implementado");
+
+  assert.equal(reconciliationInputSchema.safeParse({
+    ...validPayload,
+    otherDifferences: [{
+      ...validPayload.otherDifferences[0],
+      amount: "9999999999999999999999.99",
+    }],
+  }).success, true);
+  assert.equal(reconciliationInputSchema.safeParse({
+    ...validPayload,
+    otherDifferences: [{
+      ...validPayload.otherDifferences[0],
+      amount: "10000000000000000000000.00",
+    }],
+  }).success, false);
+});
+
 test("rejeita justificativa de outro ajuste com menos de cinco caracteres", () => {
   assert.ok(reconciliationInputSchema, "bankReconciliationInputSchema ainda não foi implementado");
   assert.equal(reconciliationInputSchema.safeParse({
