@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test:operational": "tsx --test src/server/operational/consignado-reconciliation.test.ts src/server/operational/consignado-date.test.ts src/server/operational/consignado-batch-log.test.ts"
+    "test:operational": "tsx --test src/server/operational/consignado-reconciliation.test.ts src/server/operational/consignado-date.test.ts src/server/operational/consignado-batch-log.test.ts src/server/operational/consignado-remittance-exclusions.test.ts"
   },
   "dependencies": {
     "@prisma/client": "6.19.0",

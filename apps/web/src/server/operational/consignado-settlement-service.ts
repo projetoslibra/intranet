@@ -7,6 +7,7 @@ import { summarizeBatchReconciliation } from "./consignado-reconciliation";
 import { parseBmpCnab, parseUy3Workbook, type ParsedSettlementItem } from "./consignado-parsers";
 import { classifyPddMatch, getConsignadoPddSummary, loadConsignadoPddTitles } from "./consignado-pdd-service";
 import { saoPauloDayRange } from "./consignado-date";
+import { buildRemittanceExclusions } from "./consignado-remittance-exclusions";
 
 const CONSIGNADO_CNPJ = "54842157000193";
 export const BULK_UNDERPAID_LIMIT_PERCENT = 10;
@@ -298,7 +299,7 @@ export async function approveUnderpaid77InBulk(input: { userId: string; batchId:
 
 export async function generateSettlementRemittance(batchId: string, userId: string) {
   const batch = await prisma.consignadoSettlementBatch.findUniqueOrThrow({ where: { id: batchId }, include: {
-    originator: true, remittances: true, items: { where: { approved: true, matchedStockPositionId: { not: null }, status: { in: ["FULL_MATCH", "PARTIAL_MATCH", "MANUALLY_MATCHED", "DIVERGENT"] } }, include: { matchedStockPosition: true } },
+    originator: true, remittances: true, items: { include: { matchedStockPosition: true } },
   }});
   if (batch.remittances.some((item) => item.status !== "CANCELLED")) throw new Error("Este lote já possui uma remessa ativa.");
   const items = batch.items.filter((item): item is typeof item & { matchedStockPosition: NonNullable<typeof item.matchedStockPosition> } =>
@@ -315,8 +316,11 @@ export async function generateSettlementRemittance(batchId: string, userId: stri
       await tx.consignadoSettlementItem.updateMany({ where: { batchId, approved: false, status: { notIn: ["EXCLUDED", "PDD_RECOVERY"] } }, data: { status: "EXCLUDED", exclusionReason: "Não incluído na remessa aprovada." } });
       const remittance = await tx.consignadoRemittance.create({ data: { batchId, fundId: batch.fundId, generatedByUserId: userId, fileName, storageKey, fileHash: generated.hash, totalItems: items.length, totalAmount } });
       await tx.consignadoRemittanceItem.createMany({ data: items.map((item) => ({ remittanceId: remittance.id, settlementItemId: item.id, stockPositionId: item.matchedStockPosition.id, yourNumber: item.matchedStockPosition.yourNumber, documentNumber: item.matchedStockPosition.documentNumber, debtorDocument: item.matchedStockPosition.debtorDocument, amount: item.paidAmount, occurrence: item.occurrence ?? "77" })) });
+      const exclusions = buildRemittanceExclusions(remittance.id, batch.items, new Set(items.map((item) => item.id)));
+      if (exclusions.length) await tx.consignadoRemittanceExclusion.createMany({ data: exclusions, skipDuplicates: true });
       await tx.consignadoSettlementBatch.update({ where: { id: batchId }, data: { status: "GENERATED" } });
-      await tx.consignadoStatusEvent.create({ data: { userId, entityType: "REMITTANCE", entityId: remittance.id, toStatus: "GENERATED", metadata: { fileName, totalItems: items.length, totalAmount: totalAmount.toString() } } });
+      const excludedPaidAmount = exclusions.reduce((sum, exclusion) => sum.add(exclusion.paidAmount), new Prisma.Decimal(0));
+      await tx.consignadoStatusEvent.create({ data: { userId, entityType: "REMITTANCE", entityId: remittance.id, toStatus: "GENERATED", metadata: { fileName, totalItems: items.length, totalAmount: totalAmount.toString(), excludedItems: exclusions.length, excludedPaidAmount: excludedPaidAmount.toString() } } });
       return remittance;
     });
   } catch (error) { await del(storageKey).catch(() => undefined); throw error; }
