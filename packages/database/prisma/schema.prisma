@@ -143,6 +143,34 @@ enum BankReconciliationStatus {
   UNDONE
 }
 
+enum RemittanceExclusionCategory {
+  NOT_FOUND_IN_STOCK
+  OPERATOR_EXCLUDED
+  NOT_APPROVED
+  PDD_RECOVERY
+  OTHER_DIVERGENCE
+}
+
+enum BankDifferenceCategory {
+  BANK_FEE
+  UNIDENTIFIED_CREDIT
+  VALUE_DIFFERENCE
+  ROUNDING
+  TIMING_DIFFERENCE
+  OTHER
+}
+
+enum BankDifferenceDirection {
+  ENTRY_EXCESS
+  REMITTANCE_EXCESS
+}
+
+enum BankDifferenceStatus {
+  OPEN
+  RESOLVED
+  CANCELLED
+}
+
 model User {
   id                        String                          @id @default(cuid())
   name                      String
@@ -162,6 +190,8 @@ model User {
   bankStatementImports      ConsignadoBankStatementImport[]
   bankReconciliations       ConsignadoBankReconciliation[]  @relation("BankReconciliationCreatedBy")
   undoneBankReconciliations ConsignadoBankReconciliation[]  @relation("BankReconciliationUndoneBy")
+  createdBankOtherDifferences ConsignadoBankOtherDifference[] @relation("BankOtherDifferenceCreatedBy")
+  resolvedBankOtherDifferences ConsignadoBankOtherDifference[] @relation("BankOtherDifferenceResolvedBy")
   operationalStatusEvents   ConsignadoStatusEvent[]
   pddImports                ConsignadoPddImport[]
 
@@ -609,6 +639,7 @@ model ConsignadoSettlementItem {
   matchedPddTitle        ConsignadoPddTitle?          @relation(fields: [matchedPddTitleId], references: [id], onDelete: Restrict)
   corrections            ConsignadoManualCorrection[]
   remittanceItem         ConsignadoRemittanceItem?
+  remittanceExclusions   ConsignadoRemittanceExclusion[]
 
   @@unique([batchId, sourceRow])
   @@index([batchId, status])
@@ -730,6 +761,7 @@ model ConsignadoRemittance {
   items               ConsignadoRemittanceItem[]
   bankAllocations     ConsignadoBankAllocation[]
   bankAdjustments     ConsignadoBankAdjustment[]
+  exclusions          ConsignadoRemittanceExclusion[]
 
   @@unique([batchId])
   @@unique([storageKey])
@@ -819,6 +851,8 @@ model ConsignadoBankReconciliation {
   undoneBy              User?                      @relation("BankReconciliationUndoneBy", fields: [undoneByUserId], references: [id], onDelete: Restrict)
   allocations           ConsignadoBankAllocation[]
   adjustments           ConsignadoBankAdjustment[]
+  differenceTitles     ConsignadoBankDifferenceTitle[]
+  otherDifferences     ConsignadoBankOtherDifference[]
 
   @@index([status, createdAt])
   @@map("consignado_bank_reconciliations")
@@ -855,6 +889,62 @@ model ConsignadoBankAdjustment {
   @@index([bankEntryId])
   @@index([remittanceId])
   @@map("consignado_bank_adjustments")
+}
+
+model ConsignadoRemittanceExclusion {
+  id               String                      @id @default(cuid())
+  remittanceId     String                      @map("remittance_id")
+  settlementItemId String                      @map("settlement_item_id")
+  category         RemittanceExclusionCategory
+  reason           String
+  paidAmount       Decimal                     @map("paid_amount") @db.Decimal(24, 2)
+  titleAmount      Decimal                     @map("title_amount") @db.Decimal(24, 2)
+  createdAt        DateTime                    @default(now()) @map("created_at")
+  remittance       ConsignadoRemittance        @relation(fields: [remittanceId], references: [id], onDelete: Cascade)
+  settlementItem   ConsignadoSettlementItem    @relation(fields: [settlementItemId], references: [id], onDelete: Restrict)
+  differenceTitles ConsignadoBankDifferenceTitle[]
+
+  @@unique([remittanceId, settlementItemId])
+  @@index([remittanceId, category])
+  @@index([settlementItemId])
+  @@map("consignado_remittance_exclusions")
+}
+
+model ConsignadoBankDifferenceTitle {
+  id                    String                        @id @default(cuid())
+  reconciliationId      String                        @map("reconciliation_id")
+  remittanceExclusionId String                        @map("remittance_exclusion_id")
+  amount                Decimal                       @db.Decimal(24, 2)
+  createdAt             DateTime                      @default(now()) @map("created_at")
+  reconciliation        ConsignadoBankReconciliation  @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+  remittanceExclusion   ConsignadoRemittanceExclusion @relation(fields: [remittanceExclusionId], references: [id], onDelete: Restrict)
+
+  @@unique([reconciliationId, remittanceExclusionId])
+  @@index([remittanceExclusionId])
+  @@map("consignado_bank_difference_titles")
+}
+
+model ConsignadoBankOtherDifference {
+  id                String                       @id @default(cuid())
+  reconciliationId  String                       @map("reconciliation_id")
+  createdByUserId   String                       @map("created_by_user_id")
+  resolvedByUserId  String?                      @map("resolved_by_user_id")
+  category          BankDifferenceCategory
+  direction         BankDifferenceDirection
+  amount            Decimal                      @db.Decimal(24, 2)
+  reason            String
+  status            BankDifferenceStatus         @default(OPEN)
+  createdAt         DateTime                     @default(now()) @map("created_at")
+  resolvedAt        DateTime?                    @map("resolved_at")
+  resolutionNote    String?                      @map("resolution_note")
+  cancelledAt       DateTime?                    @map("cancelled_at")
+  reconciliation    ConsignadoBankReconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+  createdBy         User                         @relation("BankOtherDifferenceCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  resolvedBy        User?                        @relation("BankOtherDifferenceResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([reconciliationId, status])
+  @@index([status, category, createdAt])
+  @@map("consignado_bank_other_differences")
 }
 
 model ConsignadoStatusEvent {
