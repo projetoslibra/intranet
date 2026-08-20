@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { permissionSetHas } from "@/lib/permission-keys";
 
 /**
  * Carrega o conjunto de chaves de permissão (`cash.view`, `cash.manage`, ...)
@@ -43,5 +44,5 @@ export async function getCurrentUserPermissions(): Promise<Set<string>> {
 
 export async function hasPermission(key: string): Promise<boolean> {
   const permissions = await getCurrentUserPermissions();
-  return permissions.has(key);
+  return permissionSetHas(permissions, key);
 }
