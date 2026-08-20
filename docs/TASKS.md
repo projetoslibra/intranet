@@ -40,6 +40,7 @@
 ---
 
 ## 🟢 Concluídas (recentes)
+- [x] **[2026-08-20] Conciliação por títulos fora da remessa (Consignado)** — snapshot idempotente dos títulos excluídos por remessa, composição `entrada = remessa + títulos + Outros` em transação `Serializable`, pendências "Outros" auditáveis com resolução/desfazimento, relatórios com filtros e Excel para títulos excluídos e diferenças — implementação e documentação concluídas; migration `20260820000000_add_consignado_remittance_exclusions` e homologação PostgreSQL (ver checklist de rollout em `docs/OPERACIONAL-CONSIGNADO.md`) ainda pendentes antes do merge — _Juan_ · branch `feat/conciliacao-titulos-excluidos`.
 - [x] **[2026-08-19] Log financeiro dos lotes do Consignado** — resumo recolhido com valor pago, valor da remessa, estado da conciliação e entradas bancárias vinculadas; manutenção da base PDD movida para aba secundária — _Juan_ · branch `feat/log-lotes-consignado`.
 - [x] **[2026-08-19] Importação automática Singulare** — cron diário no Vercel para reprocessar carteira e caixa dos últimos 3 dias úteis, mantendo o botão manual para datas específicas — _João_ · branch `feat/singulare-importacao-automatica`.
 - [x] **[2026-08-19] Tela PDD dos fundos** — nova tela com indicadores, viradas futuras, matriz cedente/sacado por data, ordenações, filtro de viradas no mês, histórico passado e exportação para Excel numérico — _João_ · branch `feat/tela-pdd`.
