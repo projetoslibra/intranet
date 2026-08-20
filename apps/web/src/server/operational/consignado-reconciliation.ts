@@ -16,11 +16,29 @@ export type PlannedAdjustment = {
   amount: Prisma.Decimal;
 };
 
+export type DifferenceTitleInput = {
+  id: string;
+  remittanceId: string;
+  amount: Prisma.Decimal;
+};
+
+export type OtherDifferenceInput = {
+  category: "BANK_FEE" | "UNIDENTIFIED_CREDIT" | "VALUE_DIFFERENCE" | "ROUNDING" | "TIMING_DIFFERENCE" | "OTHER";
+  direction: "ENTRY_EXCESS" | "REMITTANCE_EXCESS";
+  amount: Prisma.Decimal;
+  reason: string;
+};
+
 export type ReconciliationPlan = {
   entryTotal: Prisma.Decimal;
   remittanceTotal: Prisma.Decimal;
   allocatedTotal: Prisma.Decimal;
+  signedDifference: Prisma.Decimal;
   difference: Prisma.Decimal;
+  direction: "ENTRY_EXCESS" | "REMITTANCE_EXCESS";
+  titleDifferenceTotal: Prisma.Decimal;
+  otherDifferenceTotal: Prisma.Decimal;
+  unexplainedDifference: Prisma.Decimal;
   allocations: PlannedAllocation[];
   entryAdjustments: PlannedAdjustment[];
   remittanceAdjustments: PlannedAdjustment[];
@@ -110,14 +128,71 @@ function total(items: ReconciliationBalance[]) {
   return items.reduce((sum, item) => sum.add(item.remaining), ZERO);
 }
 
+function totalDifferenceTitles(items: DifferenceTitleInput[]) {
+  return items.reduce((sum, item) => sum.add(item.amount), ZERO);
+}
+
+function totalOtherDifferences(items: OtherDifferenceInput[]) {
+  return items.reduce((sum, item) => sum.add(item.amount), ZERO);
+}
+
 export function planConsignadoReconciliation(input: {
   entries: ReconciliationBalance[];
   remittances: ReconciliationBalance[];
+  differenceTitles?: DifferenceTitleInput[];
+  otherDifferences?: OtherDifferenceInput[];
 }): ReconciliationPlan {
   const entries = input.entries.map((item) => ({ ...item, remaining: new Prisma.Decimal(item.remaining) }));
   const remittances = input.remittances.map((item) => ({ ...item, remaining: new Prisma.Decimal(item.remaining) }));
   const entryTotal = total(entries);
   const remittanceTotal = total(remittances);
+  const signedDifference = entryTotal.sub(remittanceTotal);
+  const direction = signedDifference.gte(0) ? "ENTRY_EXCESS" : "REMITTANCE_EXCESS";
+  const difference = signedDifference.abs();
+  const differenceTitles = input.differenceTitles ?? [];
+  const otherDifferences = input.otherDifferences ?? [];
+  const titleDifferenceTotal = totalDifferenceTitles(differenceTitles);
+  const otherDifferenceTotal = totalOtherDifferences(otherDifferences);
+  const unexplainedDifference = difference.sub(titleDifferenceTotal).sub(otherDifferenceTotal);
+  const selectedRemittanceIds = new Set(remittances.map((item) => item.id));
+  const differenceTitleIds = new Set<string>();
+
+  for (const title of differenceTitles) {
+    if (!selectedRemittanceIds.has(title.remittanceId)) {
+      throw new Error("Título pertence a uma remessa não selecionada.");
+    }
+    if (differenceTitleIds.has(title.id)) {
+      throw new Error("Título não pode ser usado mais de uma vez.");
+    }
+    if (new Prisma.Decimal(title.amount).lte(0)) {
+      throw new Error("Título deve ter valor positivo.");
+    }
+    differenceTitleIds.add(title.id);
+  }
+
+  if (direction === "REMITTANCE_EXCESS" && differenceTitles.length > 0) {
+    throw new Error("Títulos só podem explicar excedente da entrada.");
+  }
+
+  for (const adjustment of otherDifferences) {
+    if (adjustment.direction !== direction) {
+      throw new Error("Outro ajuste possui direção incorreta.");
+    }
+    if (new Prisma.Decimal(adjustment.amount).lte(0)) {
+      throw new Error("Outro ajuste deve ter valor positivo.");
+    }
+    if (adjustment.reason.trim().length < 5) {
+      throw new Error("Justificativa deve ter pelo menos 5 caracteres.");
+    }
+  }
+
+  const hasDifferenceComposition = input.differenceTitles !== undefined || input.otherDifferences !== undefined;
+  if (hasDifferenceComposition && unexplainedDifference.lt(0)) {
+    throw new Error("A explicação excede a diferença.");
+  }
+  if (hasDifferenceComposition && !unexplainedDifference.eq(0)) {
+    throw new Error("Falta explicar a diferença.");
+  }
   const allocations: PlannedAllocation[] = [];
 
   for (const entry of entries) {
@@ -143,7 +218,12 @@ export function planConsignadoReconciliation(input: {
     entryTotal,
     remittanceTotal,
     allocatedTotal,
-    difference: entryTotal.sub(remittanceTotal).abs(),
+    signedDifference,
+    difference,
+    direction,
+    titleDifferenceTotal,
+    otherDifferenceTotal,
+    unexplainedDifference,
     allocations,
     entryAdjustments,
     remittanceAdjustments,
