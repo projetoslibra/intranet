@@ -1,6 +1,6 @@
-import type { Prisma, RemittanceExclusionCategory, SettlementItemStatus } from "@prisma/client";
+import { Prisma, type RemittanceExclusionCategory, type SettlementItemStatus } from "@prisma/client";
 
-type MoneySnapshot = Prisma.Decimal | string | number;
+type MoneySnapshot = Prisma.Decimal;
 type RemittanceExclusionSnapshot = Omit<Prisma.ConsignadoRemittanceExclusionCreateManyInput, "paidAmount" | "titleAmount"> & {
   paidAmount: MoneySnapshot;
   titleAmount: MoneySnapshot;
@@ -16,6 +16,25 @@ export type RemittanceExclusionItem = {
   paidAmount: MoneySnapshot;
   titleAmount: MoneySnapshot;
 };
+
+export type RemittanceSelectionItem = RemittanceExclusionItem & {
+  occurrence: string | null;
+  matchedStockPosition: { nominalValue: Prisma.Decimal } | null;
+};
+
+const MATCHABLE_STATUSES = new Set<SettlementItemStatus>(["FULL_MATCH", "PARTIAL_MATCH", "MANUALLY_MATCHED"]);
+
+function isUnderpaid77(item: RemittanceSelectionItem) {
+  if (item.occurrence !== "77" || item.status !== "DIVERGENT" || !item.matchedStockPosition) return false;
+  const nominal = item.matchedStockPosition.nominalValue;
+  return nominal.gt(0) && item.paidAmount.gt(0) && item.paidAmount.lt(nominal);
+}
+
+export function selectRemittanceItems<T extends RemittanceSelectionItem>(items: T[]) {
+  return items.filter((item): item is T & { matchedStockPosition: NonNullable<T["matchedStockPosition"]> } =>
+    item.approved && Boolean(item.matchedStockPosition) && (MATCHABLE_STATUSES.has(item.status) || isUnderpaid77(item))
+  );
+}
 
 function isPddRecovery(status: SettlementItemStatus) {
   return status === "PDD_RECOVERY" || status === "PDD_REVIEW";
@@ -52,4 +71,23 @@ export function buildRemittanceExclusions(
       paidAmount: item.paidAmount,
       titleAmount: item.titleAmount,
     }));
+}
+
+export function buildRemittanceExclusionPersistence(
+  remittanceId: string,
+  allItems: RemittanceExclusionItem[],
+  includedItems: Array<Pick<RemittanceExclusionItem, "id">>,
+) {
+  const includedIds = new Set(includedItems.map((item) => item.id));
+  const exclusions = buildRemittanceExclusions(remittanceId, allItems, includedIds);
+  const excludedPaidAmount = exclusions.reduce((sum, exclusion) => sum.add(exclusion.paidAmount), new Prisma.Decimal(0));
+  const excludedItems = exclusions.length;
+
+  return {
+    includedIds,
+    exclusions,
+    excludedItems,
+    excludedPaidAmount,
+    metadata: { excludedItems, excludedPaidAmount: excludedPaidAmount.toString() },
+  };
 }
