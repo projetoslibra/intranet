@@ -1,6 +1,7 @@
 import { ConsignadoExcludedTitlesPanel } from "@/features/operational/components/ConsignadoExcludedTitlesPanel";
 import { hasPermission } from "@/lib/permissions";
-import { getExclusionReport, parseExclusionReportFilters } from "@/server/operational/consignado-exclusion-report";
+import { getExclusionReport } from "@/server/operational/consignado-exclusion-report";
+import { loadInitialExclusionReport } from "@/server/operational/consignado-exclusion-report-page";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,7 @@ function queryFrom(searchParams: PageProps["searchParams"]) {
 
 export default async function ConsignadoExcludedTitlesPage({ searchParams }: PageProps) {
   if (!(await hasPermission("operational.view"))) return <section className="rounded border border-slate-200 bg-white p-6">Sem permissão para visualizar títulos fora da remessa.</section>;
-  const report = await getExclusionReport(parseExclusionReportFilters(queryFrom(searchParams)));
+  const initialState = await loadInitialExclusionReport(queryFrom(searchParams), getExclusionReport);
   return <div className="space-y-6">
     <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -25,6 +26,6 @@ export default async function ConsignadoExcludedTitlesPage({ searchParams }: Pag
         <a className="rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" href="/dashboard/operacional/financeiro/conciliacao/consignado/baixas">Voltar para baixas</a>
       </div>
     </section>
-    <ConsignadoExcludedTitlesPanel initialReport={report} />
+    <ConsignadoExcludedTitlesPanel initialState={initialState} />
   </div>;
 }

@@ -8,6 +8,7 @@ import type {
   ExclusionReportFilters,
   ExclusionSituation,
 } from "@/server/operational/consignado-exclusion-report";
+import type { InitialExclusionReportState } from "@/server/operational/consignado-exclusion-report-page";
 
 const categoryLabels: Record<ExclusionCategory, string> = {
   NOT_FOUND_IN_STOCK: "Não encontrado no estoque",
@@ -41,13 +42,13 @@ function paramsFrom(filters: ExclusionReportFilters) {
   return params;
 }
 
-export function ConsignadoExcludedTitlesPanel({ initialReport }: { initialReport: ExclusionReport }) {
-  const [report, setReport] = useState(initialReport);
-  const [filters, setFilters] = useState<ExclusionReportFilters>(initialReport.filters);
+export function ConsignadoExcludedTitlesPanel({ initialState }: { initialState: InitialExclusionReportState }) {
+  const [report, setReport] = useState<ExclusionReport | null>(initialState.report);
+  const [filters, setFilters] = useState<ExclusionReportFilters>(initialState.filters);
   const [pending, setPending] = useState(false);
-  const [feedback, setFeedback] = useState("");
+  const [feedback, setFeedback] = useState(initialState.message ?? "");
   const [cursorHistory, setCursorHistory] = useState<string[]>([]);
-  const exportHref = useMemo(() => `/api/operacional/consignado/titulos-fora-remessa/export?${paramsFrom({ ...report.filters, cursor: undefined })}`, [report.filters]);
+  const exportHref = useMemo(() => report ? `/api/operacional/consignado/titulos-fora-remessa/export?${paramsFrom({ ...report.filters, cursor: undefined })}` : null, [report]);
   const hasScopedLink = Boolean(filters.batchId || filters.remittanceId);
 
   function change<Key extends keyof ExclusionReportFilters>(key: Key, value: ExclusionReportFilters[Key]) {
@@ -89,7 +90,7 @@ export function ConsignadoExcludedTitlesPanel({ initialReport }: { initialReport
   }
 
   async function nextPage() {
-    if (!report.page.nextCursor) return;
+    if (!report?.page.nextCursor) return;
     setCursorHistory((current) => [...current, filters.cursor ?? ""]);
     await load({ ...filters, cursor: report.page.nextCursor });
   }
@@ -123,6 +124,7 @@ export function ConsignadoExcludedTitlesPanel({ initialReport }: { initialReport
       {feedback ? <p aria-live="polite" className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{feedback}</p> : null}
     </section>
 
+    {report ? <>
     <section className="grid gap-3 sm:grid-cols-3">
       {[['Títulos', report.summary.total.count.toLocaleString('pt-BR')], ['Valor de face', money(report.summary.total.titleAmount)], ['Valor pago', money(report.summary.total.paidAmount)]].map(([label, value]) => <div className="rounded border border-slate-200 bg-white p-4 shadow-executive" key={label}><p className="text-xs text-slate-500">{label}</p><p className="mt-1 text-lg font-semibold text-slate-950">{value}</p></div>)}
     </section>
@@ -135,9 +137,10 @@ export function ConsignadoExcludedTitlesPanel({ initialReport }: { initialReport
     <section className="rounded border border-slate-200 bg-white shadow-executive">
       <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 p-5">
         <div><h2 className="font-semibold">Resultado</h2><p className="mt-1 text-sm text-slate-500">Valores de face e pago preservam os snapshots da geração da remessa.</p></div>
-        <a className="inline-flex h-10 items-center gap-2 rounded border border-slate-300 px-3 text-sm font-semibold" href={exportHref}><Download className="h-4 w-4" />Exportar Excel</a>
+        <a className="inline-flex h-10 items-center gap-2 rounded border border-slate-300 px-3 text-sm font-semibold" href={exportHref ?? undefined}><Download className="h-4 w-4" />Exportar Excel</a>
       </div>
       {report.items.length ? <><div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-xs text-slate-600"><tr><th className="px-3 py-3 text-left">Remessa / lote</th><th className="px-3 py-3 text-left">Título</th><th className="px-3 py-3 text-left">Sacado</th><th className="px-3 py-3 text-left">Categoria / motivo</th><th className="px-3 py-3 text-right">Face</th><th className="px-3 py-3 text-right">Pago</th><th className="px-3 py-3 text-left">Situação</th></tr></thead><tbody>{report.items.map((item) => <tr className="border-t border-slate-200 align-top" key={item.id}><td className="px-3 py-3"><p className="font-medium">{item.remittanceFile}</p><p className="mt-1 text-xs text-slate-500">{dateTime(item.generatedAt)} · {item.source} · {item.originator}</p><p className="mt-1 max-w-64 break-all text-xs text-slate-500">{item.batchFile}</p></td><td className="px-3 py-3"><p className="font-medium">{item.contractNumber ?? item.yourNumber ?? "—"}</p><p className="mt-1 text-xs text-slate-500">Documento {item.documentNumber ?? "—"} · linha {item.sourceRow} · vence {date(item.dueDate)}</p></td><td className="px-3 py-3"><p>{item.debtorName ?? "—"}</p><p className="mt-1 text-xs text-slate-500">{item.debtorDocument ?? "—"}</p></td><td className="max-w-72 px-3 py-3"><p className="font-medium">{categoryLabels[item.category]}</p><p className="mt-1 text-xs text-slate-500">{item.reason}</p></td><td className="px-3 py-3 text-right font-medium">{money(item.titleAmount)}</td><td className="px-3 py-3 text-right font-medium">{money(item.paidAmount)}</td><td className="px-3 py-3"><p className="font-medium">{situationLabels[item.situation]}</p>{item.reconciliationDate ? <p className="mt-1 text-xs text-slate-500">Conciliado em {dateTime(item.reconciliationDate)}{item.bankEntry ? ` · ${item.bankEntry}` : ""}</p> : null}</td></tr>)}</tbody></table></div><div className="flex items-center justify-between gap-3 border-t border-slate-200 px-5 py-3"><p className="text-xs text-slate-500">Página com até {report.page.limit} itens · {report.summary.total.count.toLocaleString("pt-BR")} no conjunto filtrado</p><div className="flex gap-2"><button className="h-9 rounded border border-slate-300 px-3 text-sm font-semibold disabled:opacity-50" disabled={pending || !cursorHistory.length} onClick={() => void previousPage()} type="button">Anterior</button><button className="h-9 rounded border border-slate-300 px-3 text-sm font-semibold disabled:opacity-50" disabled={pending || !report.page.hasMore} onClick={() => void nextPage()} type="button">Próxima</button></div></div></> : <div className="p-8 text-center text-sm text-slate-500">Nenhum título fora da remessa encontrado para os filtros aplicados.</div>}
     </section>
+    </> : <section className="rounded border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900 shadow-executive"><h2 className="font-semibold">Refine a consulta para carregar o relatório</h2><p className="mt-1">Ajuste o período ou os demais filtros acima e selecione Filtrar.</p></section>}
   </div>;
 }
