@@ -236,6 +236,7 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
     <nav className="flex flex-wrap gap-2 rounded border border-slate-200 bg-white p-2 shadow-executive" aria-label="Áreas de baixas do Consignado">
       <button className={`rounded px-4 py-2 text-sm font-semibold ${activeSection === "LOTS" ? "bg-primary text-white" : "text-slate-600 hover:bg-slate-50"}`} onClick={() => setActiveSection("LOTS")} type="button">Baixas e remessas</button>
       <button className={`rounded px-4 py-2 text-sm font-semibold ${activeSection === "PDD" ? "bg-primary text-white" : "text-slate-600 hover:bg-slate-50"}`} onClick={() => setActiveSection("PDD")} type="button">Base histórica PDD</button>
+      <a className="rounded px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50" href="/dashboard/operacional/financeiro/conciliacao/consignado/baixas/titulos-fora-remessa">Títulos fora da remessa</a>
     </nav>
 
     {activeSection === "PDD" ? <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
@@ -250,7 +251,6 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
       <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 p-5">
         <div><h2 className="font-semibold">Lotes de baixa</h2><p className="mt-1 text-sm text-slate-500">Resultado, divergências, correções e remessas geradas.</p></div>
         <div className="flex flex-wrap items-end gap-3">
-          <a className="inline-flex h-9 items-center rounded border border-slate-300 px-3 text-sm font-semibold text-slate-700" href="/dashboard/operacional/financeiro/conciliacao/consignado/baixas/titulos-fora-remessa">Títulos fora da remessa</a>
           <form className="flex flex-wrap items-end gap-2" onSubmit={filterBatches}>
             <label className="text-sm">Processado em<input className="mt-1 block h-9 rounded border border-slate-200 px-3" onChange={(event) => setCreatedDate(event.target.value)} type="date" value={createdDate} /></label>
             <button className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-60" disabled={pending || !createdDate} type="submit">Filtrar</button>

@@ -375,7 +375,7 @@ test("gera workbook relível com resumo e colunas operacionais dos títulos", as
   const detailRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets.Titulos, { raw: true });
   assert.equal(detailRows[0]?.Contrato, "94608325001");
   assert.equal(detailRows[0]?.["Valor pago"], 99.24);
-  assert.equal(detailRows[0]?.Situação, "Disponível");
+  assert.equal(detailRows[0]?.Situação, "Pendente");
   assert.deepEqual(Object.keys(detailRows[0] ?? {}), [
     "Data da remessa", "Fluxo", "Originador", "Lote", "Remessa", "Linha", "Contrato",
     "Documento", "Sacado", "CPF", "Vencimento", "Valor de face", "Valor pago", "Categoria",
@@ -383,7 +383,7 @@ test("gera workbook relível com resumo e colunas operacionais dos títulos", as
   ]);
   const summaryRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets.Resumo, { raw: true });
   assert.deepEqual(summaryRows.slice(0, 4), [
-    { Indicador: "Situação", Valor: "Disponível" },
+    { Indicador: "Situação", Valor: "Pendente" },
     { Indicador: "Quantidade", Valor: 1 },
     { Indicador: "Valor de face", Valor: 100 },
     { Indicador: "Valor pago", Valor: 99.24 },

@@ -19,7 +19,7 @@ const categoryLabels: Record<ExclusionCategory, string> = {
 };
 
 const situationLabels: Record<ExclusionSituation, string> = {
-  AVAILABLE: "Disponível",
+  AVAILABLE: "Pendente",
   ACTIVE_RECONCILIATION: "Usado em conciliação ativa",
   UNDONE_HISTORY: "Histórico desfeito",
 };

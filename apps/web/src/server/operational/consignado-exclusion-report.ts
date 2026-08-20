@@ -73,7 +73,7 @@ const categoryLabels: Record<ExclusionCategory, string> = {
   NOT_APPROVED: "Não aprovado", PDD_RECOVERY: "Recuperação de PDD", OTHER_DIVERGENCE: "Outra divergência",
 };
 const situationLabels: Record<ExclusionSituation, string> = {
-  AVAILABLE: "Disponível", ACTIVE_RECONCILIATION: "Usado em conciliação ativa", UNDONE_HISTORY: "Histórico desfeito",
+  AVAILABLE: "Pendente", ACTIVE_RECONCILIATION: "Usado em conciliação ativa", UNDONE_HISTORY: "Histórico desfeito",
 };
 const filterLabels: Array<[Exclude<keyof ExclusionReportFilters, "limit" | "cursor">, string]> = [
   ["generatedFrom", "Remessa gerada desde"], ["generatedTo", "Remessa gerada até"], ["source", "Fluxo"],
