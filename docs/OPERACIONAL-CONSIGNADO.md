@@ -240,7 +240,7 @@ Classificações previstas:
 - ✅ OC-12B — revisão de antecipações por faixas, recorrência do sacado e totais monetários.
 - ✅ OC-12C — base histórica de PDD, importação idempotente, matching secundário e filtro de recuperações.
 - ✅ OC-12D — filtros de lotes/entradas, cancelamento lógico de lotes e conciliação com diferença justificada.
-- ✅ Conciliação por títulos excluídos — implementação e documentação concluídas na branch; migration e homologação PostgreSQL ainda dependem do rollout controlado abaixo.
+- ✅ Conciliação por títulos excluídos — implementação, documentação e migration `20260820000000_add_consignado_remittance_exclusions` aplicada no schema `OSHER` em 2026-08-20; checklist pós-migration validado. Falta o checklist de concorrência real (duas conciliações simultâneas) antes do merge.
 - ✅ Navegação estrutural — breadcrumbs e retorno entre todas as páginas internas do Operacional.
 - ⏳ OC-13 e OC-14 — indicadores consolidados e homologação final ainda pendentes.
 
