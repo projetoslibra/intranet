@@ -37,7 +37,7 @@ function dateTime(value: string | null) {
 
 function paramsFrom(filters: ExclusionReportFilters) {
   const params = new URLSearchParams();
-  Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+  Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, String(value)); });
   return params;
 }
 
@@ -46,11 +46,13 @@ export function ConsignadoExcludedTitlesPanel({ initialReport }: { initialReport
   const [filters, setFilters] = useState<ExclusionReportFilters>(initialReport.filters);
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState("");
-  const exportHref = useMemo(() => `/api/operacional/consignado/titulos-fora-remessa/export?${paramsFrom(report.filters)}`, [report.filters]);
+  const [cursorHistory, setCursorHistory] = useState<string[]>([]);
+  const exportHref = useMemo(() => `/api/operacional/consignado/titulos-fora-remessa/export?${paramsFrom({ ...report.filters, cursor: undefined })}`, [report.filters]);
   const hasScopedLink = Boolean(filters.batchId || filters.remittanceId);
 
   function change<Key extends keyof ExclusionReportFilters>(key: Key, value: ExclusionReportFilters[Key]) {
-    setFilters((current) => ({ ...current, [key]: value || undefined }));
+    setFilters((current) => ({ ...current, [key]: value || undefined, cursor: undefined }));
+    setCursorHistory([]);
   }
 
   async function load(nextFilters: ExclusionReportFilters) {
@@ -60,6 +62,7 @@ export function ConsignadoExcludedTitlesPanel({ initialReport }: { initialReport
       const payload = await response.json();
       if (!payload.ok) throw new Error(payload.message);
       setReport(payload.report);
+      setFilters(payload.report.filters);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Erro ao consultar títulos fora da remessa.");
     } finally { setPending(false); }
@@ -67,18 +70,35 @@ export function ConsignadoExcludedTitlesPanel({ initialReport }: { initialReport
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    await load(filters);
+    setCursorHistory([]);
+    await load({ ...filters, cursor: undefined });
   }
 
   async function clear() {
-    setFilters({});
-    await load({});
+    const next = { limit: 50 };
+    setFilters(next);
+    setCursorHistory([]);
+    await load(next);
   }
 
   async function clearScope() {
-    const next = { ...filters, batchId: undefined, remittanceId: undefined };
+    const next = { ...filters, batchId: undefined, remittanceId: undefined, cursor: undefined };
     setFilters(next);
+    setCursorHistory([]);
     await load(next);
+  }
+
+  async function nextPage() {
+    if (!report.page.nextCursor) return;
+    setCursorHistory((current) => [...current, filters.cursor ?? ""]);
+    await load({ ...filters, cursor: report.page.nextCursor });
+  }
+
+  async function previousPage() {
+    const previous = cursorHistory.at(-1);
+    if (previous === undefined) return;
+    setCursorHistory((current) => current.slice(0, -1));
+    await load({ ...filters, cursor: previous || undefined });
   }
 
   return <div className="space-y-5">
@@ -92,7 +112,8 @@ export function ConsignadoExcludedTitlesPanel({ initialReport }: { initialReport
         <label className="text-sm">Arquivo da remessa<input className="mt-1 h-10 w-full rounded border border-slate-200 px-3" value={filters.remittanceFile ?? ""} onChange={(event) => change("remittanceFile", event.target.value)} /></label>
         <label className="text-sm">Categoria<select className="mt-1 h-10 w-full rounded border border-slate-200 px-3" value={filters.category ?? ""} onChange={(event) => change("category", event.target.value as ExclusionReportFilters["category"])}><option value="">Todas</option>{Object.entries(categoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className="text-sm">Situação<select className="mt-1 h-10 w-full rounded border border-slate-200 px-3" value={filters.situation ?? ""} onChange={(event) => change("situation", event.target.value as ExclusionReportFilters["situation"])}><option value="">Todas</option>{Object.entries(situationLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="text-sm md:col-span-2 xl:col-span-3">Contrato, sacado ou CPF<input className="mt-1 h-10 w-full rounded border border-slate-200 px-3" value={filters.search ?? ""} onChange={(event) => change("search", event.target.value)} /></label>
+        <label className="text-sm md:col-span-2">Contrato, sacado ou CPF<input className="mt-1 h-10 w-full rounded border border-slate-200 px-3" value={filters.search ?? ""} onChange={(event) => change("search", event.target.value)} /></label>
+        <label className="text-sm">Itens por página<select className="mt-1 h-10 w-full rounded border border-slate-200 px-3" value={filters.limit} onChange={(event) => change("limit", Number(event.target.value))}><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label>
         <div className="flex flex-wrap items-end gap-2">
           <button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60" disabled={pending} type="submit">{pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}Filtrar</button>
           <button className="h-10 rounded border border-slate-300 px-3 text-sm font-semibold disabled:opacity-60" disabled={pending} onClick={() => void clear()} type="button">Limpar</button>
@@ -116,7 +137,7 @@ export function ConsignadoExcludedTitlesPanel({ initialReport }: { initialReport
         <div><h2 className="font-semibold">Resultado</h2><p className="mt-1 text-sm text-slate-500">Valores de face e pago preservam os snapshots da geração da remessa.</p></div>
         <a className="inline-flex h-10 items-center gap-2 rounded border border-slate-300 px-3 text-sm font-semibold" href={exportHref}><Download className="h-4 w-4" />Exportar Excel</a>
       </div>
-      {report.items.length ? <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-xs text-slate-600"><tr><th className="px-3 py-3 text-left">Remessa / lote</th><th className="px-3 py-3 text-left">Título</th><th className="px-3 py-3 text-left">Sacado</th><th className="px-3 py-3 text-left">Categoria / motivo</th><th className="px-3 py-3 text-right">Face</th><th className="px-3 py-3 text-right">Pago</th><th className="px-3 py-3 text-left">Situação</th></tr></thead><tbody>{report.items.map((item) => <tr className="border-t border-slate-200 align-top" key={item.id}><td className="px-3 py-3"><p className="font-medium">{item.remittanceFile}</p><p className="mt-1 text-xs text-slate-500">{dateTime(item.generatedAt)} · {item.source} · {item.originator}</p><p className="mt-1 max-w-64 break-all text-xs text-slate-500">{item.batchFile}</p></td><td className="px-3 py-3"><p className="font-medium">{item.contractNumber ?? item.yourNumber ?? "—"}</p><p className="mt-1 text-xs text-slate-500">Documento {item.documentNumber ?? "—"} · linha {item.sourceRow} · vence {date(item.dueDate)}</p></td><td className="px-3 py-3"><p>{item.debtorName ?? "—"}</p><p className="mt-1 text-xs text-slate-500">{item.debtorDocument ?? "—"}</p></td><td className="max-w-72 px-3 py-3"><p className="font-medium">{categoryLabels[item.category]}</p><p className="mt-1 text-xs text-slate-500">{item.reason}</p></td><td className="px-3 py-3 text-right font-medium">{money(item.titleAmount)}</td><td className="px-3 py-3 text-right font-medium">{money(item.paidAmount)}</td><td className="px-3 py-3"><p className="font-medium">{situationLabels[item.situation]}</p>{item.reconciliationDate ? <p className="mt-1 text-xs text-slate-500">Conciliado em {dateTime(item.reconciliationDate)}{item.bankEntry ? ` · ${item.bankEntry}` : ""}</p> : null}</td></tr>)}</tbody></table></div> : <div className="p-8 text-center text-sm text-slate-500">Nenhum título fora da remessa encontrado para os filtros aplicados.</div>}
+      {report.items.length ? <><div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-xs text-slate-600"><tr><th className="px-3 py-3 text-left">Remessa / lote</th><th className="px-3 py-3 text-left">Título</th><th className="px-3 py-3 text-left">Sacado</th><th className="px-3 py-3 text-left">Categoria / motivo</th><th className="px-3 py-3 text-right">Face</th><th className="px-3 py-3 text-right">Pago</th><th className="px-3 py-3 text-left">Situação</th></tr></thead><tbody>{report.items.map((item) => <tr className="border-t border-slate-200 align-top" key={item.id}><td className="px-3 py-3"><p className="font-medium">{item.remittanceFile}</p><p className="mt-1 text-xs text-slate-500">{dateTime(item.generatedAt)} · {item.source} · {item.originator}</p><p className="mt-1 max-w-64 break-all text-xs text-slate-500">{item.batchFile}</p></td><td className="px-3 py-3"><p className="font-medium">{item.contractNumber ?? item.yourNumber ?? "—"}</p><p className="mt-1 text-xs text-slate-500">Documento {item.documentNumber ?? "—"} · linha {item.sourceRow} · vence {date(item.dueDate)}</p></td><td className="px-3 py-3"><p>{item.debtorName ?? "—"}</p><p className="mt-1 text-xs text-slate-500">{item.debtorDocument ?? "—"}</p></td><td className="max-w-72 px-3 py-3"><p className="font-medium">{categoryLabels[item.category]}</p><p className="mt-1 text-xs text-slate-500">{item.reason}</p></td><td className="px-3 py-3 text-right font-medium">{money(item.titleAmount)}</td><td className="px-3 py-3 text-right font-medium">{money(item.paidAmount)}</td><td className="px-3 py-3"><p className="font-medium">{situationLabels[item.situation]}</p>{item.reconciliationDate ? <p className="mt-1 text-xs text-slate-500">Conciliado em {dateTime(item.reconciliationDate)}{item.bankEntry ? ` · ${item.bankEntry}` : ""}</p> : null}</td></tr>)}</tbody></table></div><div className="flex items-center justify-between gap-3 border-t border-slate-200 px-5 py-3"><p className="text-xs text-slate-500">Página com até {report.page.limit} itens · {report.summary.total.count.toLocaleString("pt-BR")} no conjunto filtrado</p><div className="flex gap-2"><button className="h-9 rounded border border-slate-300 px-3 text-sm font-semibold disabled:opacity-50" disabled={pending || !cursorHistory.length} onClick={() => void previousPage()} type="button">Anterior</button><button className="h-9 rounded border border-slate-300 px-3 text-sm font-semibold disabled:opacity-50" disabled={pending || !report.page.hasMore} onClick={() => void nextPage()} type="button">Próxima</button></div></div></> : <div className="p-8 text-center text-sm text-slate-500">Nenhum título fora da remessa encontrado para os filtros aplicados.</div>}
     </section>
   </div>;
 }

@@ -1,7 +1,13 @@
 import { type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
-import { buildExclusionWorkbook, getExclusionReport, parseExclusionReportFilters } from "@/server/operational/consignado-exclusion-report";
+import { buildExclusionWorkbook, getExclusionExportReport } from "@/server/operational/consignado-exclusion-report";
+import {
+  EXCLUSION_REPORT_CACHE_CONTROL,
+  classifyExclusionReportError,
+  parseExclusionReportRequest,
+  resolveExclusionReportAccess,
+} from "@/server/operational/consignado-exclusion-report-http";
 
 export const runtime = "nodejs";
 
@@ -16,18 +22,27 @@ function todayInSaoPaulo() {
 
 export async function GET(request: NextRequest) {
   const session = await auth();
-  if (!session?.user?.id) return new Response("Sessão expirada.", { status: 401 });
-  if (!(await hasPermission("operational.view"))) return new Response("Sem permissão.", { status: 403 });
+  const accessFailure = await resolveExclusionReportAccess(session?.user?.id, hasPermission);
+  if (accessFailure) return new Response(accessFailure.message, {
+    status: accessFailure.status,
+    headers: { "cache-control": EXCLUSION_REPORT_CACHE_CONTROL },
+  });
   try {
-    const filters = parseExclusionReportFilters(request.nextUrl.searchParams);
-    const workbook = buildExclusionWorkbook(await getExclusionReport(filters));
+    const filters = parseExclusionReportRequest(request.nextUrl);
+    const workbook = buildExclusionWorkbook(await getExclusionExportReport(filters));
     return new Response(new Uint8Array(workbook), {
       headers: {
+        "cache-control": EXCLUSION_REPORT_CACHE_CONTROL,
         "content-disposition": `attachment; filename="titulos-fora-remessa-${todayInSaoPaulo()}.xlsx"`,
         "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       },
     });
   } catch (error) {
-    return new Response(error instanceof Error ? error.message : "Erro ao exportar títulos fora da remessa.", { status: 400 });
+    const failure = classifyExclusionReportError(error);
+    if (failure.internal) console.error("[consignado-exclusion-report] Falha na exportação XLSX.", error);
+    return new Response(failure.message, {
+      status: failure.status,
+      headers: { "cache-control": EXCLUSION_REPORT_CACHE_CONTROL },
+    });
   }
 }
