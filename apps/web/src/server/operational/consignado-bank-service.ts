@@ -71,6 +71,13 @@ function remittanceStatus(amount: Prisma.Decimal, allocated: Prisma.Decimal, adj
   return "GENERATED" as const;
 }
 
+export function describeBankReconciliationError(error: unknown) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+    return "Outro usuário concluiu ou alterou um dos itens selecionados neste instante. A tela foi atualizada — revise a seleção e tente novamente.";
+  }
+  return error instanceof Error ? error.message : "Erro ao processar a conciliação.";
+}
+
 export async function createBankReconciliation(input: BankReconciliationInput & { userId: string }) {
   return createBankReconciliationWithDependencies(input, {
     database: prisma,
@@ -235,7 +242,7 @@ export async function createBankReconciliationWithDependencies(
       otherDifferenceIds: identifiedOtherDifferences.map((item) => item.id),
     } } });
     return reconciliation;
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 15_000 });
 }
 
 export async function undoBankReconciliation(reconciliationId: string, userId: string) {
@@ -302,7 +309,7 @@ export async function undoBankReconciliationWithDependencies(
         otherDifferenceIds: reconciliation.otherDifferences.map((item) => item.id),
       },
     } });
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 15_000 });
 }
 
 export async function getBankReconciliationWorkspace(input: { transactionDate?: string } = {}) {

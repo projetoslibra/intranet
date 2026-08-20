@@ -240,7 +240,7 @@ Classificações previstas:
 - ✅ OC-12B — revisão de antecipações por faixas, recorrência do sacado e totais monetários.
 - ✅ OC-12C — base histórica de PDD, importação idempotente, matching secundário e filtro de recuperações.
 - ✅ OC-12D — filtros de lotes/entradas, cancelamento lógico de lotes e conciliação com diferença justificada.
-- ✅ Conciliação por títulos excluídos — implementação, documentação e migration `20260820000000_add_consignado_remittance_exclusions` aplicada no schema `OSHER` em 2026-08-20; checklist pós-migration validado. Falta o checklist de concorrência real (duas conciliações simultâneas) antes do merge.
+- ✅ Conciliação por títulos excluídos — implementação, documentação e migration `20260820000000_add_consignado_remittance_exclusions` aplicada no schema `OSHER` em 2026-08-20; checklist pós-migration e checklist de concorrência real validados (duas conciliações `Serializable` disputando o mesmo título contra o Postgres do Railway: uma venceu, a outra foi rejeitada por conflito de escrita, título liberado após desfazer). Achado corrigido nesse teste: as transações de criar/desfazer conciliação usavam o timeout padrão do Prisma (5s), curto demais para o número de passos sequenciais da transação somado à latência real de rede — subiram para `maxWait: 5s` / `timeout: 15s`; o erro de conflito de serialização (`P2034`) agora vira mensagem amigável na API em vez do texto cru do Prisma.
 - ✅ Navegação estrutural — breadcrumbs e retorno entre todas as páginas internas do Operacional.
 - ⏳ OC-13 e OC-14 — indicadores consolidados e homologação final ainda pendentes.
 
