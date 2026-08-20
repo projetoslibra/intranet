@@ -107,6 +107,56 @@ test("rejeita direção diferente da diferença calculada", () => {
   }), /direção incorreta/);
 });
 
+test("rejeita categoria inválida para outro ajuste", () => {
+  assert.throws(() => planConsignadoReconciliation({
+    entries: [balance("e1", "1000.00")],
+    remittances: [balance("r1", "900.00")],
+    differenceTitles: [],
+    otherDifferences: [{
+      amount: new Prisma.Decimal("100.00"),
+      category: "INVALID_CATEGORY" as never,
+      direction: "ENTRY_EXCESS",
+      reason: "Ajuste válido no restante",
+    }],
+  }), /categoria inválida/);
+});
+
+test("rejeita saldo de entrada com fração de centavo", () => {
+  assert.throws(() => planConsignadoReconciliation({
+    entries: [balance("e1", "1000.001")],
+    remittances: [balance("r1", "900.00")],
+    differenceTitles: [],
+    otherDifferences: [other("100.001", "VALUE_DIFFERENCE", "Ajuste complementar")],
+  }), /duas casas decimais/);
+});
+
+test("rejeita saldo de remessa com fração de centavo", () => {
+  assert.throws(() => planConsignadoReconciliation({
+    entries: [balance("e1", "1000.00")],
+    remittances: [balance("r1", "900.001")],
+    differenceTitles: [],
+    otherDifferences: [other("99.999", "VALUE_DIFFERENCE", "Ajuste complementar")],
+  }), /duas casas decimais/);
+});
+
+test("rejeita título de diferença com fração de centavo", () => {
+  assert.throws(() => planConsignadoReconciliation({
+    entries: [balance("e1", "1000.00")],
+    remittances: [balance("r1", "900.00")],
+    differenceTitles: [differenceTitle("x1", "r1", "100.001")],
+    otherDifferences: [],
+  }), /duas casas decimais/);
+});
+
+test("rejeita outro ajuste com fração de centavo", () => {
+  assert.throws(() => planConsignadoReconciliation({
+    entries: [balance("e1", "1000.00")],
+    remittances: [balance("r1", "900.00")],
+    differenceTitles: [],
+    otherDifferences: [other("100.001", "VALUE_DIFFERENCE", "Ajuste complementar")],
+  }), /duas casas decimais/);
+});
+
 test("ajusta o excedente da entrada", () => {
   const plan = planConsignadoReconciliation({ entries: [balance("e1", "53.00")], remittances: [balance("r1", "52.90")] });
 

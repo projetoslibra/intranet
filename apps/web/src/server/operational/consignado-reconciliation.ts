@@ -83,6 +83,15 @@ export type BatchReconciliationSummary = {
 };
 
 const ZERO = new Prisma.Decimal(0);
+const CENT = new Prisma.Decimal("0.01");
+const BANK_DIFFERENCE_CATEGORIES = new Set<OtherDifferenceInput["category"]>([
+  "BANK_FEE",
+  "UNIDENTIFIED_CREDIT",
+  "VALUE_DIFFERENCE",
+  "ROUNDING",
+  "TIMING_DIFFERENCE",
+  "OTHER",
+]);
 
 export function summarizeBatchReconciliation(input: BatchReconciliationInput): BatchReconciliationSummary {
   const remittances = input.remittances.filter((remittance) => remittance.status !== "CANCELLED");
@@ -136,6 +145,12 @@ function totalOtherDifferences(items: OtherDifferenceInput[]) {
   return items.reduce((sum, item) => sum.add(item.amount), ZERO);
 }
 
+function assertCentPrecision(amount: Prisma.Decimal, label: string) {
+  if (!amount.mod(CENT).eq(0)) {
+    throw new Error(`${label} deve ter no máximo duas casas decimais.`);
+  }
+}
+
 export function planConsignadoReconciliation(input: {
   entries: ReconciliationBalance[];
   remittances: ReconciliationBalance[];
@@ -144,6 +159,8 @@ export function planConsignadoReconciliation(input: {
 }): ReconciliationPlan {
   const entries = input.entries.map((item) => ({ ...item, remaining: new Prisma.Decimal(item.remaining) }));
   const remittances = input.remittances.map((item) => ({ ...item, remaining: new Prisma.Decimal(item.remaining) }));
+  entries.forEach((item) => assertCentPrecision(item.remaining, "Saldo da entrada"));
+  remittances.forEach((item) => assertCentPrecision(item.remaining, "Saldo da remessa"));
   const entryTotal = total(entries);
   const remittanceTotal = total(remittances);
   const signedDifference = entryTotal.sub(remittanceTotal);
@@ -167,6 +184,7 @@ export function planConsignadoReconciliation(input: {
     if (new Prisma.Decimal(title.amount).lte(0)) {
       throw new Error("Título deve ter valor positivo.");
     }
+    assertCentPrecision(new Prisma.Decimal(title.amount), "Título");
     differenceTitleIds.add(title.id);
   }
 
@@ -175,12 +193,16 @@ export function planConsignadoReconciliation(input: {
   }
 
   for (const adjustment of otherDifferences) {
+    if (!BANK_DIFFERENCE_CATEGORIES.has(adjustment.category)) {
+      throw new Error("Outro ajuste possui categoria inválida.");
+    }
     if (adjustment.direction !== direction) {
       throw new Error("Outro ajuste possui direção incorreta.");
     }
     if (new Prisma.Decimal(adjustment.amount).lte(0)) {
       throw new Error("Outro ajuste deve ter valor positivo.");
     }
+    assertCentPrecision(new Prisma.Decimal(adjustment.amount), "Outro ajuste");
     if (adjustment.reason.trim().length < 5) {
       throw new Error("Justificativa deve ter pelo menos 5 caracteres.");
     }
