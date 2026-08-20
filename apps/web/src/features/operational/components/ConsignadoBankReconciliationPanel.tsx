@@ -2,9 +2,45 @@
 
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { Landmark, Link2, RotateCcw, UploadCloud, X } from "lucide-react";
+import { ConsignadoDifferenceComposer } from "./ConsignadoDifferenceComposer";
+import {
+  composeDifferenceState,
+  type DifferenceDirection,
+  type EligibleExclusion,
+  type OtherDifferenceDraft,
+  type RemittanceExclusionCategory,
+} from "../consignado-difference-composer";
 
 type Entry = { id: string; transactionDate: string; description: string; document: string | null; amount: string; allocatedAmount: string; adjustedAmount: string; status: string };
-type Remittance = { id: string; fileName: string; totalAmount: string; allocatedAmount: string; adjustedAmount: string; generatedAt: string; status: string; batch: { source: string; originator: { name: string } | null } };
+type RemittanceExclusion = {
+  id: string;
+  remittanceId: string;
+  category: RemittanceExclusionCategory;
+  reason: string;
+  paidAmount: string;
+  titleAmount: string;
+  settlementItem: { contractNumber: string | null; debtorName: string | null; debtorDocument: string | null; dueDate: string | null };
+};
+type Remittance = { id: string; fileName: string; totalAmount: string; allocatedAmount: string; adjustedAmount: string; generatedAt: string; status: string; batch: { fileName: string; source: string; originator: { name: string } | null }; exclusions: RemittanceExclusion[] };
+type DifferenceTitleHistory = {
+  id: string;
+  amount: string;
+  remittanceExclusion: RemittanceExclusion & { remittance: { id: string; fileName: string; batch: { id: string; fileName: string } } };
+};
+type OtherDifferenceHistory = {
+  id: string;
+  category: string;
+  direction: DifferenceDirection;
+  amount: string;
+  reason: string;
+  status: "OPEN" | "RESOLVED" | "CANCELLED";
+  createdAt: string;
+  resolvedAt: string | null;
+  resolutionNote: string | null;
+  cancelledAt: string | null;
+  createdBy: { name: string };
+  resolvedBy: { name: string } | null;
+};
 type Reconciliation = {
   id: string;
   status: "ACTIVE" | "UNDONE";
@@ -20,6 +56,8 @@ type Reconciliation = {
   undoneBy: { name: string } | null;
   allocations: Array<{ id: string; amount: string }>;
   adjustments: Array<{ id: string; amount: string }>;
+  differenceTitles: DifferenceTitleHistory[];
+  otherDifferences: OtherDifferenceHistory[];
 };
 type StatementImport = { id: string; fileName: string; importedRows: number; duplicateRows: number; ignoredRows: number; createdAt: string; importedBy: { name: string } };
 type Workspace = {
@@ -31,10 +69,13 @@ type Workspace = {
 };
 
 function money(value: string | number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value)); }
-function date(value: string) { return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone: "UTC" }).format(new Date(value)); }
+function date(value: string | null) { return value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone: "UTC" }).format(new Date(value)) : "—"; }
 function dateTime(value: string) { return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" }).format(new Date(value)); }
 function entryBalance(entry: Entry) { return Number(entry.amount) - Number(entry.allocatedAmount) - Number(entry.adjustedAmount); }
 function remittanceBalance(remittance: Remittance) { return Number(remittance.totalAmount) - Number(remittance.allocatedAmount) - Number(remittance.adjustedAmount); }
+const exclusionCategoryLabel: Record<RemittanceExclusionCategory, string> = { NOT_FOUND_IN_STOCK: "Não encontrado no estoque", OPERATOR_EXCLUDED: "Excluído pelo operador", NOT_APPROVED: "Não aprovado", PDD_RECOVERY: "Recuperação de PDD", OTHER_DIVERGENCE: "Outra divergência" };
+const otherCategoryLabel: Record<string, string> = { BANK_FEE: "Tarifa bancária", UNIDENTIFIED_CREDIT: "Crédito não identificado", VALUE_DIFFERENCE: "Diferença de valor", ROUNDING: "Arredondamento", TIMING_DIFFERENCE: "Diferença de competência", OTHER: "Outro" };
+const differenceStatusLabel: Record<OtherDifferenceHistory["status"], string> = { OPEN: "Em aberto", RESOLVED: "Resolvido", CANCELLED: "Cancelado" };
 
 export function ConsignadoBankReconciliationPanel({ initialWorkspace, canManage }: { initialWorkspace: Workspace; canManage: boolean }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -42,13 +83,38 @@ export function ConsignadoBankReconciliationPanel({ initialWorkspace, canManage 
   const [entryIds, setEntryIds] = useState<string[]>([]);
   const [remittanceIds, setRemittanceIds] = useState<string[]>([]);
   const [transactionDate, setTransactionDate] = useState("");
-  const [differenceReason, setDifferenceReason] = useState("");
+  const [selectedExclusionIds, setSelectedExclusionIds] = useState<string[]>([]);
+  const [otherDifferences, setOtherDifferences] = useState<OtherDifferenceDraft[]>([]);
   const [showDifferenceBox, setShowDifferenceBox] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [pending, setPending] = useState(false);
   const selectedEntryTotal = useMemo(() => workspace.entries.filter((item) => entryIds.includes(item.id)).reduce((sum, item) => sum + entryBalance(item), 0), [workspace.entries, entryIds]);
   const selectedRemittanceTotal = useMemo(() => workspace.remittances.filter((item) => remittanceIds.includes(item.id)).reduce((sum, item) => sum + remittanceBalance(item), 0), [workspace.remittances, remittanceIds]);
   const selectedDifference = Math.round(Math.abs(selectedEntryTotal - selectedRemittanceTotal) * 100) / 100;
+  const differenceDirection: DifferenceDirection = selectedEntryTotal >= selectedRemittanceTotal ? "ENTRY_EXCESS" : "REMITTANCE_EXCESS";
+  const eligibleExclusions = useMemo<EligibleExclusion[]>(() => workspace.remittances
+    .filter((item) => remittanceIds.includes(item.id))
+    .flatMap((remittance) => remittance.exclusions.map((item) => ({
+      id: item.id,
+      remittanceId: item.remittanceId,
+      remittanceFileName: remittance.fileName,
+      batchFileName: remittance.batch.fileName,
+      contractNumber: item.settlementItem.contractNumber,
+      debtorName: item.settlementItem.debtorName,
+      debtorDocument: item.settlementItem.debtorDocument,
+      dueDate: item.settlementItem.dueDate,
+      titleAmount: item.titleAmount,
+      paidAmount: item.paidAmount,
+      category: item.category,
+      reason: item.reason,
+    }))), [remittanceIds, workspace.remittances]);
+  const differenceState = composeDifferenceState({
+    difference: selectedDifference,
+    direction: differenceDirection,
+    exclusions: eligibleExclusions,
+    selectedIds: selectedExclusionIds,
+    otherDifferences,
+  });
 
   async function refresh(dateFilter = transactionDate) {
     const query = dateFilter ? `?transactionDate=${encodeURIComponent(dateFilter)}` : "";
@@ -58,7 +124,14 @@ export function ConsignadoBankReconciliationPanel({ initialWorkspace, canManage 
     setWorkspace(payload.workspace);
   }
 
+  function resetDifferenceComposition() {
+    setSelectedExclusionIds([]);
+    setOtherDifferences([]);
+    setShowDifferenceBox(false);
+  }
+
   function toggle(id: string, setter: React.Dispatch<React.SetStateAction<string[]>>) {
+    resetDifferenceComposition();
     setter((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
@@ -79,38 +152,46 @@ export function ConsignadoBankReconciliationPanel({ initialWorkspace, canManage 
 
   async function filterEntries(event: FormEvent) {
     event.preventDefault();
-    setPending(true); setFeedback(""); setEntryIds([]);
+    setPending(true); setFeedback(""); setEntryIds([]); resetDifferenceComposition();
     try { await refresh(transactionDate); }
     catch (error) { setFeedback(error instanceof Error ? error.message : "Erro ao filtrar entradas."); }
     finally { setPending(false); }
   }
 
   async function showAllOpenEntries() {
-    setTransactionDate(""); setEntryIds([]); setPending(true); setFeedback("");
+    setTransactionDate(""); setEntryIds([]); resetDifferenceComposition(); setPending(true); setFeedback("");
     try { await refresh(""); }
     catch (error) { setFeedback(error instanceof Error ? error.message : "Erro ao consultar entradas."); }
     finally { setPending(false); }
   }
 
-  async function reconcile(reason?: string) {
-    if (selectedDifference > 0 && !reason) {
-      setDifferenceReason("");
-      setShowDifferenceBox(true);
+  function beginReconciliation() {
+    if (selectedDifference === 0) {
+      void submitReconciliation();
       return;
     }
+    setSelectedExclusionIds([]);
+    setOtherDifferences(differenceDirection === "REMITTANCE_EXCESS" ? [{ category: "", amount: selectedDifference.toFixed(2), reason: "" }] : []);
+    setShowDifferenceBox(true);
+  }
+
+  async function submitReconciliation() {
+    if (selectedDifference > 0 && !differenceState.canSubmit) return;
     setPending(true); setFeedback("");
     try {
       const response = await fetch("/api/operacional/consignado/conciliacoes", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ entryIds, remittanceIds, differenceReason: reason || undefined }),
+        body: JSON.stringify({ entryIds, remittanceIds, exclusionIds: selectedExclusionIds, otherDifferences }),
       });
       const payload = await response.json();
       setFeedback(payload.message);
       if (payload.ok) {
-        setEntryIds([]); setRemittanceIds([]); setDifferenceReason(""); setShowDifferenceBox(false);
+        setEntryIds([]); setRemittanceIds([]); resetDifferenceComposition();
         await refresh();
       }
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Erro ao conciliar.");
     } finally { setPending(false); }
   }
 
@@ -167,20 +248,38 @@ export function ConsignadoBankReconciliationPanel({ initialWorkspace, canManage 
     </div>
 
     {canManage ? <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
-      <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="font-semibold">Relacionar seleções</p><p className="mt-1 text-sm text-slate-500">Entradas: {money(selectedEntryTotal)} · Remessas: {money(selectedRemittanceTotal)} · Será alocado: {money(Math.min(selectedEntryTotal, selectedRemittanceTotal))} · Diferença: {money(selectedDifference)}</p></div><button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || !entryIds.length || !remittanceIds.length} onClick={() => void reconcile()} type="button"><Link2 className="h-4 w-4" />Conciliar selecionados</button></div>
+      <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="font-semibold">Relacionar seleções</p><p className="mt-1 text-sm text-slate-500">Entradas: {money(selectedEntryTotal)} · Remessas: {money(selectedRemittanceTotal)} · Será alocado: {money(Math.min(selectedEntryTotal, selectedRemittanceTotal))} · Diferença: {money(selectedDifference)}</p></div><button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || showDifferenceBox || !entryIds.length || !remittanceIds.length} onClick={beginReconciliation} type="button"><Link2 className="h-4 w-4" />Conciliar selecionados</button></div>
       {showDifferenceBox ? <div className="mt-5 rounded border border-amber-300 bg-amber-50 p-4">
-        <div className="flex items-start justify-between gap-4"><div><h3 className="font-semibold text-amber-950">Justificar diferença de {money(selectedDifference)}</h3><p className="mt-1 text-sm text-amber-800">A conciliação encerrará as entradas e remessas selecionadas e registrará esta diferença como ajuste auditável.</p></div><button aria-label="Fechar" className="text-amber-800" onClick={() => setShowDifferenceBox(false)} type="button"><X className="h-5 w-5" /></button></div>
-        <label className="mt-4 block text-sm font-medium text-amber-950">Motivo da diferença<textarea className="mt-1 min-h-24 w-full rounded border border-amber-300 bg-white p-3 text-sm" maxLength={500} onChange={(event) => setDifferenceReason(event.target.value)} placeholder="Explique por que os valores não se zeram" value={differenceReason} /></label>
-        <div className="mt-3 flex justify-end gap-2"><button className="h-9 rounded border border-slate-300 bg-white px-3 text-sm font-semibold" onClick={() => setShowDifferenceBox(false)} type="button">Cancelar</button><button className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || differenceReason.trim().length < 5} onClick={() => void reconcile(differenceReason.trim())} type="button">Conciliar com justificativa</button></div>
+        <div className="flex items-start justify-between gap-4"><div><h3 className="font-semibold text-amber-950">Compor diferença de {money(selectedDifference)}</h3><p className="mt-1 text-sm text-amber-800">Escolha títulos elegíveis e/ou registre Outros até explicar exatamente o valor. O servidor recalculará tudo antes de concluir.</p></div><button aria-label="Fechar" className="text-amber-800" onClick={resetDifferenceComposition} type="button"><X className="h-5 w-5" /></button></div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
+          <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Entradas</p><p className="mt-1 font-semibold">{money(selectedEntryTotal)}</p></div>
+          <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Remessas</p><p className="mt-1 font-semibold">{money(selectedRemittanceTotal)}</p></div>
+          <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Diferença</p><p className="mt-1 font-semibold">{money(selectedDifference)}</p></div>
+          <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Títulos selecionados</p><p className="mt-1 font-semibold">{money(differenceState.titleTotal)}</p></div>
+          <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Outros</p><p className="mt-1 font-semibold">{money(differenceState.otherTotal)}</p></div>
+          <div className={`rounded border bg-white p-3 ${differenceState.unexplained === 0 ? "border-emerald-300" : "border-red-300"}`}><p className="text-xs text-slate-500">Falta explicar</p><p className={`mt-1 font-semibold ${differenceState.unexplained === 0 ? "text-emerald-700" : "text-red-700"}`}>{money(differenceState.unexplained)}</p></div>
+        </div>
+        <div className="mt-4"><ConsignadoDifferenceComposer difference={selectedDifference} direction={differenceDirection} disabled={pending} exclusions={eligibleExclusions} onOtherDifferencesChange={setOtherDifferences} onSelectedIdsChange={setSelectedExclusionIds} otherDifferences={otherDifferences} selectedIds={selectedExclusionIds} /></div>
+        <div className="mt-4 flex justify-end gap-2"><button className="h-9 rounded border border-slate-300 bg-white px-3 text-sm font-semibold" disabled={pending} onClick={resetDifferenceComposition} type="button">Cancelar</button><button className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || !differenceState.canSubmit} onClick={() => void submitReconciliation()} type="button">Concluir conciliação</button></div>
       </div> : null}
     </section> : null}
 
     <section className="overflow-hidden rounded border border-slate-200 bg-white shadow-executive">
       <div className="border-b border-slate-200 p-5"><h2 className="font-semibold">Histórico de conciliações</h2></div>
-      {workspace.reconciliations.length ? <div className="divide-y">{workspace.reconciliations.map((item) => <div className="flex flex-wrap items-center justify-between gap-4 p-4" key={item.id}>
-        <div><p className="text-sm font-semibold">{money(item.totalAmount)} · {item.allocations.length} alocações{item.adjustments.length ? ` · ${item.adjustments.length} ajustes` : ""}</p><p className="mt-1 text-xs text-slate-500">{dateTime(item.createdAt)} por {item.createdBy.name} · {item.status === "UNDONE" ? `Desfeita por ${item.undoneBy?.name ?? "usuário"}` : "Ativa"}</p>{Number(item.differenceAmount) > 0 ? <p className="mt-2 text-sm text-amber-800">Entradas {money(item.entryTotalAmount)} · Remessas {money(item.remittanceTotalAmount)} · Diferença justificada {money(item.differenceAmount)}: {item.differenceReason}</p> : null}</div>
-        {canManage && item.status === "ACTIVE" ? <button className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm" onClick={() => void undo(item.id)} type="button"><RotateCcw className="h-4 w-4" />Desfazer</button> : null}
-      </div>)}</div> : <div className="p-8 text-center text-sm text-slate-500"><Landmark className="mx-auto mb-2 h-5 w-5" />Nenhuma conciliação registrada.</div>}
+      {workspace.reconciliations.length ? <div className="divide-y">{workspace.reconciliations.map((item) => {
+        const titleTotal = item.differenceTitles.reduce((sum, title) => sum + Number(title.amount), 0);
+        const otherTotal = item.otherDifferences.reduce((sum, other) => sum + Number(other.amount), 0);
+        return <div className="p-4" key={item.id}>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div><p className="text-sm font-semibold">{money(item.totalAmount)} · {item.allocations.length} alocações{item.adjustments.length ? ` · ${item.adjustments.length} ajustes contábeis` : ""}</p><p className="mt-1 text-xs text-slate-500">{dateTime(item.createdAt)} por {item.createdBy.name} · {item.status === "UNDONE" ? `Desfeita por ${item.undoneBy?.name ?? "usuário"}` : "Ativa"}</p>{Number(item.differenceAmount) > 0 ? <p className="mt-2 text-sm text-amber-800">Entradas {money(item.entryTotalAmount)} · Remessas {money(item.remittanceTotalAmount)} · Diferença {money(item.differenceAmount)}</p> : null}{item.differenceTitles.length || item.otherDifferences.length ? <p className="mt-1 text-xs text-slate-600">{item.differenceTitles.length} título(s): {money(titleTotal)} · {item.otherDifferences.length} Outro(s): {money(otherTotal)} ({item.otherDifferences.filter((other) => other.status === "OPEN").length} em aberto)</p> : item.differenceReason ? <p className="mt-1 text-xs text-slate-600">Histórico anterior: {item.differenceReason}</p> : null}</div>
+            {canManage && item.status === "ACTIVE" ? <button className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm" onClick={() => void undo(item.id)} type="button"><RotateCcw className="h-4 w-4" />Desfazer</button> : null}
+          </div>
+          {item.differenceTitles.length || item.otherDifferences.length ? <details className="mt-3 rounded border border-slate-200 bg-slate-50 p-3"><summary className="cursor-pointer text-sm font-semibold">Ver explicação detalhada</summary>
+            {item.differenceTitles.length ? <div className="mt-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Títulos fora da remessa</p><div className="mt-2 space-y-2">{item.differenceTitles.map((title) => <div className="rounded border border-slate-200 bg-white p-3 text-xs" key={title.id}><div className="flex flex-wrap justify-between gap-2"><p className="font-semibold text-slate-900">{title.remittanceExclusion.settlementItem.debtorName ?? "Sacado não informado"} · Contrato {title.remittanceExclusion.settlementItem.contractNumber ?? "—"}</p><strong>{money(title.amount)}</strong></div><p className="mt-1 text-slate-500">CPF {title.remittanceExclusion.settlementItem.debtorDocument ?? "—"} · Vencimento {date(title.remittanceExclusion.settlementItem.dueDate)} · Baixa {title.remittanceExclusion.remittance.batch.fileName} · Remessa {title.remittanceExclusion.remittance.fileName}</p><p className="mt-1 text-amber-800">{exclusionCategoryLabel[title.remittanceExclusion.category]}: {title.remittanceExclusion.reason}</p></div>)}</div></div> : null}
+            {item.otherDifferences.length ? <div className="mt-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Outros ajustes</p><div className="mt-2 space-y-2">{item.otherDifferences.map((other) => <div className="rounded border border-slate-200 bg-white p-3 text-xs" key={other.id}><div className="flex flex-wrap justify-between gap-2"><p className="font-semibold text-slate-900">{otherCategoryLabel[other.category] ?? other.category} · {other.direction === "ENTRY_EXCESS" ? "Excesso de entrada" : "Excesso de remessa"}</p><div className="text-right"><strong>{money(other.amount)}</strong><p className={other.status === "OPEN" ? "text-amber-700" : other.status === "RESOLVED" ? "text-emerald-700" : "text-slate-500"}>{differenceStatusLabel[other.status]}</p></div></div><p className="mt-1 text-slate-600">{other.reason}</p><p className="mt-1 text-slate-500">Criado por {other.createdBy.name} em {dateTime(other.createdAt)}{other.resolvedAt ? ` · Resolvido por ${other.resolvedBy?.name ?? "usuário"} em ${dateTime(other.resolvedAt)}` : ""}{other.cancelledAt ? ` · Cancelado em ${dateTime(other.cancelledAt)}` : ""}</p>{other.resolutionNote ? <p className="mt-1 text-emerald-700">Resolução: {other.resolutionNote}</p> : null}</div>)}</div></div> : null}
+          </details> : null}
+        </div>;
+      })}</div> : <div className="p-8 text-center text-sm text-slate-500"><Landmark className="mx-auto mb-2 h-5 w-5" />Nenhuma conciliação registrada.</div>}
     </section>
 
     <details className="rounded border border-slate-200 bg-white p-5 shadow-executive"><summary className="cursor-pointer font-semibold">Histórico de importações bancárias</summary><div className="mt-4 divide-y">{workspace.imports.map((item) => <div className="flex justify-between gap-3 py-3 text-sm" key={item.id}><span>{item.fileName} · {item.importedBy.name}</span><span className="text-slate-500">{item.importedRows} novas · {item.duplicateRows} repetidas · {item.ignoredRows} ignoradas</span></div>)}</div></details>
