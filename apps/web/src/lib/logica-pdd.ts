@@ -15,6 +15,15 @@ export type PddReversalSimulation = {
   affectedDebtors: number;
 };
 
+export const PDD_RANGES = [
+  { code: "A", maxDaysLate: 5, rate: 0, label: "A - até 5 dias" },
+  { code: "B", maxDaysLate: 30, rate: 0.0143, label: "B - 6 a 30 dias" },
+  { code: "C", maxDaysLate: 60, rate: 0.1406, label: "C - 31 a 60 dias" },
+  { code: "D", maxDaysLate: 90, rate: 0.4659, label: "D - 61 a 90 dias" },
+  { code: "E", maxDaysLate: 120, rate: 0.8031, label: "E - 91 a 120 dias" },
+  { code: "F", maxDaysLate: Number.POSITIVE_INFINITY, rate: 1, label: "F - acima de 120 dias" },
+] as const;
+
 function parseDateKey(value: string) {
   return new Date(`${value}T00:00:00.000Z`);
 }
@@ -26,27 +35,14 @@ export function pddDebtorKey(
 }
 
 export function pddRateForDelay(daysLate: number) {
-  if (daysLate <= 5) {
-    return 0;
-  }
+  return PDD_RANGES.find((range) => daysLate <= range.maxDaysLate)?.rate ?? 1;
+}
 
-  if (daysLate <= 30) {
-    return 0.0118;
-  }
-
-  if (daysLate <= 60) {
-    return 0.1455;
-  }
-
-  if (daysLate <= 90) {
-    return 0.3475;
-  }
-
-  if (daysLate <= 120) {
-    return 0.6654;
-  }
-
-  return 1;
+export function pddRangeLabelForDelay(daysLate: number) {
+  return (
+    PDD_RANGES.find((range) => daysLate <= range.maxDaysLate)?.label ??
+    PDD_RANGES[PDD_RANGES.length - 1].label
+  );
 }
 
 export function pddDaysLate(referenceDate: string, dueDate: string) {

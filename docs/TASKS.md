@@ -22,6 +22,7 @@
 | Task | Responsável | Branch | Início | Notas |
 |------|-------------|--------|--------|-------|
 | Validar DRE/Variação contra cálculos manuais | João | `chore/validacao-dre` | 2026-08-19 | Conferir valores da aba DRE/Variação com a planilha/cálculo manual antes de mexer em metodologia |
+| Previsões: Viradas, Reversão e Líquido PDD | João | `feat/previsoes-viradas-reversao-pdd` | 2026-08-24 | Adicionar colunas de PDD projetada e atualizar a régua oficial para A-F |
 
 ---
 
@@ -35,7 +36,7 @@
 - [ ] **Módulo Relatórios** (`/dashboard/relatorios`) — exportações (placeholder; deixar para o final)
 - [ ] **Validar média CUSTO x RECEITA da Previsões** — reconciliar médias usadas na Previsões com os cálculos manuais e com as linhas-base da DRE/Variação
 - [ ] **Refinar metodologia de Previsões** — revisar premissas de receita, custo, PDD, cota e impacto diário para deixar a previsão mais precisa
-- [ ] **Previsões: colunas Viradas, Reversão e Líquido PDD** — adicionar Viradas da tela PDD, Reversão das baixas simuladas e Líquido PDD = Viradas - Reversão, removendo viradas futuras quando o título/sacado for baixado na simulação
+- [ ] **Tela de LOG** — criar uma tela no OSHER para consultar eventos, importações, execuções automáticas e ações relevantes do sistema
 
 ---
 

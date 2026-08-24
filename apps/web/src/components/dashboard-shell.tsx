@@ -39,12 +39,6 @@ const navigation = [
     icon: LayoutDashboard,
   },
   {
-    title: "Fundos",
-    href: "/dashboard/fundos",
-    permissionKey: "funds.view",
-    icon: Building2,
-  },
-  {
     title: "DRE",
     href: "/dashboard/dre",
     permissionKey: "dre.view",
@@ -91,6 +85,12 @@ const navigation = [
     href: "/dashboard/usuarios",
     permissionKey: "users.manage",
     icon: Users,
+  },
+  {
+    title: "Fundos",
+    href: "/dashboard/fundos",
+    permissionKey: "funds.view",
+    icon: Building2,
   },
 ];
 

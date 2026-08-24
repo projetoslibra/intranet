@@ -1,5 +1,10 @@
 import type { Prisma } from "@prisma/client";
-import { pddDaysLate, pddDebtorKey, pddRateForDelay } from "@/lib/logica-pdd";
+import {
+  pddDaysLate,
+  pddDebtorKey,
+  pddRangeLabelForDelay,
+  pddRateForDelay,
+} from "@/lib/logica-pdd";
 import { prisma } from "@/lib/prisma";
 
 type StockTitle = {
@@ -87,16 +92,6 @@ function normalizeText(value: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toUpperCase();
-}
-
-function pddRangeLabel(daysLate: number) {
-  if (daysLate <= 5) return "0 a 5 dias";
-  if (daysLate <= 30) return "6 a 30 dias";
-  if (daysLate <= 60) return "31 a 60 dias";
-  if (daysLate <= 90) return "61 a 90 dias";
-  if (daysLate <= 120) return "91 a 120 dias";
-
-  return "121+ dias";
 }
 
 function roundMoney(value: number) {
@@ -314,8 +309,8 @@ function buildTurnovers(referenceDate: string, titles: StockTitle[]) {
           cedente: item.cedente,
           sacado: item.sacado,
           documentoSacado: item.documentoSacado,
-          faixaAnterior: pddRangeLabel(previousDelay),
-          faixaNova: pddRangeLabel(nextDelay),
+          faixaAnterior: pddRangeLabelForDelay(previousDelay),
+          faixaNova: pddRangeLabelForDelay(nextDelay),
           valorPresente: roundMoney(item.valorPresente),
           valorVirada: roundMoney(item.valorPresente * deltaRate),
         });
