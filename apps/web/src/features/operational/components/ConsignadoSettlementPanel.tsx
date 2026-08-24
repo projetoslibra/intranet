@@ -6,12 +6,12 @@ import { AlertTriangle, CheckCircle2, Download, FileCheck2, Loader2, Search, Tra
 type Candidate = { id: string; yourNumber: string | null; documentNumber: string | null; debtorName: string; debtorDocument: string; nominalValue: string; originalDueDate: string | null; adjustedDueDate: string | null; cedentName: string };
 type PddTitle = { id: string; remittanceFile: string | null; generatedAt: string | null; yourNumberUsed: string | null; documentNumber: string | null; debtorName: string | null; debtorDocument: string | null; nominalValue: string | null; pddValue: string | null; dueDate: string | null; writeOffType: string | null; originator: string | null };
 type SettlementItem = { id: string; sourceRow: number; occurrence: string | null; contractNumber: string | null; yourNumber: string | null; debtorName: string | null; debtorDocument: string | null; titleAmount: string; paidAmount: string; status: string; statusReason: string | null; approved: boolean; exclusionReason: string | null; matchedStockPosition: Candidate | null; matchedPddTitle: PddTitle | null; corrections: Array<{ id: string; justification: string; replacementYourNumber: string | null; createdAt: string }> };
-type Remittance = { id: string; fileName: string; status: string; stockStatus: string; totalItems: number; totalAmount: string; allocatedAmount: string; generatedAt: string };
+type Remittance = { id: string; fileName: string; status: string; stockStatus: string; totalItems: number; totalAmount: string; allocatedAmount: string; generatedAt: string; downloadEligibility: { allowed: boolean; reason: string | null } };
 type FinancialEntry = { id: string; transactionDate: string; description: string; document: string | null; amount: string; allocatedAmount: string; reconciliationId: string; reconciledAt: string };
 type FinancialSummary = { paidAmount: string; remittanceAmount: string; reconciliationStatus: "NO_REMITTANCE" | "NOT_RECONCILED" | "PARTIALLY_RECONCILED" | "RECONCILED"; entries: FinancialEntry[] };
 type Batch = { id: string; source: "BMP" | "UY3"; fileName: string; referenceDate: string; status: string; totalItems: number; fullItems: number; partialItems: number; issueItems: number; receivedAmount: string; matchedAmount: string; excludedAmount: string; createdAt: string; originator: { code: string; name: string } | null; stockBatch: { referenceDate: string | null; version: number }; items: SettlementItem[]; remittances: Remittance[]; financialSummary: FinancialSummary };
 type Workspace = { originators: Array<{ id: string; code: string; name: string; source: "BMP" | "UY3" }>; batches: Batch[]; pddSummary: { titleCount: number; lastImport: { id: string; fileName: string; totalRows: number; importedRows: number; duplicateRows: number; invalidRows: number; createdAt: string } | null } };
-type IssueFilter = "UNDERPAID" | "PDD" | "NOT_FOUND" | "OTHER";
+type IssueFilter = "UNDERPAID" | "PDD" | "ALREADY_REMITTED" | "NOT_FOUND" | "OTHER";
 type WorkspaceSection = "LOTS" | "PDD";
 
 const statusLabel: Record<string, string> = { FULL_MATCH: "Baixa completa", PARTIAL_MATCH: "Baixa parcial", NOT_FOUND: "Não encontrado", AMBIGUOUS: "Ambíguo", DIVERGENT: "Divergente", DUPLICATE: "Duplicado", MANUALLY_MATCHED: "Corrigido manualmente", EXCLUDED: "Excluído" };
@@ -105,25 +105,16 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
     if (!file) return;
     setPending(true); setFeedback("");
     try {
-      const processFile = async (allowDuplicate: boolean): Promise<void> => {
-        const form = new FormData();
-        form.set("file", file);
-        form.set("source", source);
-        form.set("allowDuplicate", String(allowDuplicate));
-        if (source === "BMP") form.set("originator", originator);
-        const response = await fetch("/api/operacional/consignado/baixas", { method: "POST", body: form });
-        const payload = await response.json();
-        if (!payload.ok) throw new Error(payload.message);
-        if (payload.result?.requiresConfirmation) {
-          if (window.confirm(payload.message)) await processFile(true);
-          else setFeedback("Reprocessamento cancelado. O lote anterior foi mantido sem alterações.");
-          return;
-        }
-        setFeedback(payload.message);
-        fileRef.current!.value = "";
-        await refresh();
-      };
-      await processFile(false);
+      const form = new FormData();
+      form.set("file", file);
+      form.set("source", source);
+      if (source === "BMP") form.set("originator", originator);
+      const response = await fetch("/api/operacional/consignado/baixas", { method: "POST", body: form });
+      const payload = await response.json();
+      if (!payload.ok) throw new Error(payload.message);
+      setFeedback(payload.message);
+      fileRef.current!.value = "";
+      await refresh();
     } catch (error) { setFeedback(error instanceof Error ? error.message : "Erro ao processar arquivo."); }
     finally { setPending(false); }
   }
@@ -194,6 +185,7 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
 
   function renderIssueItem(batch: Batch, item: SettlementItem, allowUnderpaidApproval = false) {
     const underpaid = underpaid77(item);
+    const alreadyRemitted = item.status === "DUPLICATE" && item.statusReason?.startsWith("Título já baixado via OSHER");
     return <div className="rounded border border-slate-200 bg-white p-4" key={item.id}>
       <div className="flex flex-wrap justify-between gap-3">
         <div>
@@ -211,7 +203,8 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
         {allowUnderpaidApproval ? <button className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white" onClick={() => void approve(item.id)} type="button">Liberar este título</button> : null}
         <button className="h-9 rounded border border-red-200 px-3 text-sm text-red-700" onClick={() => void exclude(item.id)} type="button">Seguir sem este título</button>
       </div> : null}
-      {canManage && !underpaid ? <div className="mt-3 flex flex-wrap gap-2">
+      {alreadyRemitted ? <div className="mt-3 rounded border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-800">⚠ Título já baixado via OSHER. A substituição por outra parcela foi bloqueada. {item.statusReason}</div> : null}
+      {canManage && !underpaid && !alreadyRemitted ? <div className="mt-3 flex flex-wrap gap-2">
         <input className="h-9 min-w-64 flex-1 rounded border border-slate-200 px-3 text-sm" placeholder="Contrato, CPF, nome ou título correto" value={searches[item.id] ?? ""} onChange={(event) => setSearches((current) => ({ ...current, [item.id]: event.target.value }))} />
         <button className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm" onClick={() => void search(batch.id, item.id, item.debtorDocument ?? item.debtorName ?? undefined)} type="button"><Search className="h-4 w-4" />{item.status === "NOT_FOUND" ? "Abrir títulos do sacado" : "Pesquisar"}</button>
         <button className="h-9 rounded border border-red-200 px-3 text-sm text-red-700" onClick={() => void exclude(item.id)} type="button">Seguir sem este título</button>
@@ -230,7 +223,7 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
         <label className="text-sm">Arquivo<input className="mt-1 block h-10 w-full rounded border border-slate-200 px-3 py-2 text-sm" accept={source === "BMP" ? ".rem,.txt" : ".xlsx"} ref={fileRef} required type="file" /></label>
         <button className="inline-flex h-10 items-center justify-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60" disabled={pending}><UploadCloud className="h-4 w-4" />{pending ? "Processando..." : "Processar"}</button>
       </form>
-      {feedback ? <p className="mt-4 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm">{feedback}</p> : null}
+      {feedback ? <p className={`mt-4 rounded border px-3 py-2 text-sm ${/já foi processado|bloqueado/i.test(feedback) ? "border-red-300 bg-red-50 font-semibold text-red-800" : "border-slate-200 bg-slate-50"}`}>{feedback}</p> : null}
     </section> : null}
 
     <nav className="flex flex-wrap gap-2 rounded border border-slate-200 bg-white p-2 shadow-executive" aria-label="Áreas de baixas do Consignado">
@@ -268,9 +261,10 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
         const groupedAboveLimit = underpaidItems.filter((item) => { const key = debtorKey(item); return (underpaid77(item)?.percentage ?? 0) > 10 && Boolean(key && (debtorCounts.get(key) ?? 0) > 1); });
         const individualAboveLimit = underpaidItems.filter((item) => { const key = debtorKey(item); return (underpaid77(item)?.percentage ?? 0) > 10 && (!key || (debtorCounts.get(key) ?? 0) <= 1); });
         const notFoundItems = issues.filter((item) => item.status === "NOT_FOUND");
+        const alreadyRemittedItems = issues.filter((item) => item.status === "DUPLICATE" && item.statusReason?.startsWith("Título já baixado via OSHER"));
         const pddItems = batch.items.filter((item) => ["PDD_RECOVERY", "PDD_REVIEW"].includes(item.status));
-        const otherItems = issues.filter((item) => !underpaid77(item) && !["NOT_FOUND", "PDD_RECOVERY", "PDD_REVIEW"].includes(item.status));
-        const activeFilter = issueFilters[batch.id] ?? (underpaidItems.length ? "UNDERPAID" : pddItems.length ? "PDD" : notFoundItems.length ? "NOT_FOUND" : "OTHER");
+        const otherItems = issues.filter((item) => !underpaid77(item) && !["NOT_FOUND", "PDD_RECOVERY", "PDD_REVIEW"].includes(item.status) && !alreadyRemittedItems.some((duplicate) => duplicate.id === item.id));
+        const activeFilter = issueFilters[batch.id] ?? (alreadyRemittedItems.length ? "ALREADY_REMITTED" : underpaidItems.length ? "UNDERPAID" : pddItems.length ? "PDD" : notFoundItems.length ? "NOT_FOUND" : "OTHER");
         const totals = underpaidTotals(underpaidItems);
         const canCancel = !batch.remittances.some((remittance) => remittance.status !== "CANCELLED");
         const financial = batch.financialSummary;
@@ -296,7 +290,7 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
             {issues.length || pddItems.length ? <section className="rounded border border-amber-200 bg-amber-50/30 p-4">
               <h3 className="font-semibold text-amber-900">Classificação dos títulos</h3>
               <div className="mt-4 flex flex-wrap gap-2">
-                {[["UNDERPAID", "Pagos abaixo do valor de face", underpaidItems], ["PDD", "Baixados anteriormente por PDD", pddItems], ["NOT_FOUND", "Não encontrados no estoque", notFoundItems], ["OTHER", "Outras divergências", otherItems]].map(([filter, label, items]) => <button className={`rounded border px-3 py-2 text-sm font-semibold ${activeFilter === filter ? "border-primary bg-primary text-white" : "border-slate-300 bg-white text-slate-700"}`} key={String(filter)} onClick={() => setIssueFilters((current) => ({ ...current, [batch.id]: filter as IssueFilter }))} type="button">{String(label)} ({(items as SettlementItem[]).length} · {money(paidTotal(items as SettlementItem[]))})</button>)}
+                {[["UNDERPAID", "Pagos abaixo do valor de face", underpaidItems], ["PDD", "Baixados anteriormente por PDD", pddItems], ["ALREADY_REMITTED", "Já baixados via OSHER", alreadyRemittedItems], ["NOT_FOUND", "Não encontrados no estoque", notFoundItems], ["OTHER", "Outras divergências", otherItems]].map(([filter, label, items]) => <button className={`rounded border px-3 py-2 text-sm font-semibold ${activeFilter === filter ? "border-primary bg-primary text-white" : "border-slate-300 bg-white text-slate-700"}`} key={String(filter)} onClick={() => setIssueFilters((current) => ({ ...current, [batch.id]: filter as IssueFilter }))} type="button">{String(label)} ({(items as SettlementItem[]).length} · {money(paidTotal(items as SettlementItem[]))})</button>)}
               </div>
               {activeFilter === "UNDERPAID" ? <div className="mt-4 space-y-4">
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -322,9 +316,10 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
                 {!pddItems.length ? <p className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-500">Nenhuma recuperação de PDD identificada.</p> : null}
               </div> : null}
               {activeFilter === "NOT_FOUND" ? <div className="mt-4 space-y-3">{notFoundItems.length ? notFoundItems.map((item) => renderIssueItem(batch, item)) : <p className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-500">Nenhum título não encontrado.</p>}</div> : null}
+              {activeFilter === "ALREADY_REMITTED" ? <div className="mt-4 space-y-3">{alreadyRemittedItems.map((item) => renderIssueItem(batch, item))}</div> : null}
               {activeFilter === "OTHER" ? <div className="mt-4 space-y-3">{otherItems.length ? otherItems.map((item) => renderIssueItem(batch, item)) : <p className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-500">Nenhuma outra divergência.</p>}</div> : null}
             </section> : <div className="flex items-center gap-2 rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><CheckCircle2 className="h-4 w-4" />Todos os títulos estão aptos.</div>}
-            {batch.remittances.length ? <div className="space-y-2">{batch.remittances.map((remittance) => <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-slate-200 p-3" key={remittance.id}><div><p className="text-sm font-semibold">{remittance.fileName}</p><p className="text-xs text-slate-500">{remittance.totalItems} títulos · {money(remittance.totalAmount)} · {stockStatusLabel[remittance.stockStatus] ?? remittance.stockStatus}</p></div><div className="flex flex-wrap items-center gap-2"><a className="inline-flex h-9 items-center rounded border border-slate-300 px-3 text-sm font-semibold" href={`/dashboard/operacional/financeiro/conciliacao/consignado/baixas/titulos-fora-remessa?remittanceId=${encodeURIComponent(remittance.id)}`}>Ver títulos fora</a><a className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm font-semibold" href={`/api/operacional/consignado/titulos-fora-remessa/export?remittanceId=${encodeURIComponent(remittance.id)}`}><Download className="h-4 w-4" />Exportar Excel</a><a className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm font-semibold" href={`/api/operacional/consignado/remessas/${remittance.id}/download`}><Download className="h-4 w-4" />Baixar REM</a></div></div>)}</div> : canManage ? <button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60" disabled={pending || batch.items.every((item) => !item.approved)} onClick={() => void generate(batch.id)} type="button">{pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}Gerar remessa com aptos</button> : null}
+            {batch.remittances.length ? <div className="space-y-2">{batch.remittances.map((remittance) => <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-slate-200 p-3" key={remittance.id}><div><p className="text-sm font-semibold">{remittance.fileName}</p><p className="text-xs text-slate-500">{remittance.totalItems} títulos · {money(remittance.totalAmount)} · {stockStatusLabel[remittance.stockStatus] ?? remittance.stockStatus}</p></div><div className="flex flex-wrap items-center gap-2"><a className="inline-flex h-9 items-center rounded border border-slate-300 px-3 text-sm font-semibold" href={`/dashboard/operacional/financeiro/conciliacao/consignado/baixas/titulos-fora-remessa?remittanceId=${encodeURIComponent(remittance.id)}`}>Ver títulos fora</a><a className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm font-semibold" href={`/api/operacional/consignado/titulos-fora-remessa/export?remittanceId=${encodeURIComponent(remittance.id)}`}><Download className="h-4 w-4" />Exportar Excel</a>{remittance.downloadEligibility.allowed ? <a className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm font-semibold" href={`/api/operacional/consignado/remessas/${remittance.id}/download`}><Download className="h-4 w-4" />Baixar REM</a> : <span className="inline-flex h-9 cursor-not-allowed items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-700" title={remittance.downloadEligibility.reason ?? undefined}><AlertTriangle className="h-4 w-4" />Aguardando conciliação</span>}</div></div>)}</div> : canManage ? <button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60" disabled={pending || batch.items.every((item) => !item.approved)} onClick={() => void generate(batch.id)} type="button">{pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}Gerar remessa com aptos</button> : null}
           </div>
         </details>;
       })}</div> : <div className="p-8 text-center text-sm text-slate-500"><AlertTriangle className="mx-auto mb-2 h-5 w-5" />{createdDate ? "Nenhum lote processado nesta data." : "Nenhum lote processado."}</div>}

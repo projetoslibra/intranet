@@ -8,10 +8,12 @@ import { parseBmpCnab, parseUy3Workbook, type ParsedSettlementItem } from "./con
 import { classifyPddMatch, getConsignadoPddSummary, loadConsignadoPddTitles } from "./consignado-pdd-service";
 import { saoPauloDayRange } from "./consignado-date";
 import { buildRemittanceExclusionPersistence, selectRemittanceItems } from "./consignado-remittance-exclusions";
+import { DuplicateSettlementFileError, findPreviouslyRemittedTitle, remittanceDownloadEligibility, RemittanceDownloadBlockedError, type PreviousRemittanceTitle } from "./consignado-settlement-safety";
 
 const CONSIGNADO_CNPJ = "54842157000193";
 export const BULK_UNDERPAID_LIMIT_PERCENT = 10;
 const MATCHABLE = new Set<SettlementItemStatus>(["FULL_MATCH", "PARTIAL_MATCH", "MANUALLY_MATCHED"]);
+const ALREADY_REMITTED_REASON = "Título já baixado via OSHER";
 
 function digits(value: unknown) { return String(value ?? "").replace(/\D/g, ""); }
 function normalized(value: unknown) {
@@ -74,6 +76,25 @@ async function loadCandidates(stockBatchId: string, items: ParsedSettlementItem[
   return Array.from(all.values());
 }
 
+async function loadPreviouslyRemittedTitles(fundId: string, items: ParsedSettlementItem[]): Promise<PreviousRemittanceTitle[]> {
+  const rows = new Map<string, PreviousRemittanceTitle>();
+  for (let offset = 0; offset < items.length; offset += 150) {
+    const clauses: Prisma.ConsignadoRemittanceItemWhereInput[] = [];
+    items.slice(offset, offset + 150).forEach((item) => {
+      if (item.yourNumber) clauses.push({ yourNumber: item.yourNumber });
+      if (item.documentNumber) clauses.push({ documentNumber: item.documentNumber });
+      if (item.debtorDocument) clauses.push({ debtorDocument: { contains: digits(item.debtorDocument) } });
+    });
+    if (!clauses.length) continue;
+    const found = await prisma.consignadoRemittanceItem.findMany({
+      where: { remittance: { fundId, status: { not: "CANCELLED" } }, OR: clauses },
+      select: { id: true, yourNumber: true, documentNumber: true, debtorDocument: true, amount: true, settlementItem: { select: { contractNumber: true, installmentNumber: true } }, remittance: { select: { id: true, fileName: true, status: true, generatedAt: true, batch: { select: { source: true, originator: { select: { code: true } } } } } } },
+    });
+    found.forEach((item) => rows.set(item.id, { id: item.id, source: item.remittance.batch.source, originatorCode: item.remittance.batch.originator?.code ?? null, yourNumber: item.yourNumber, documentNumber: item.documentNumber, contractNumber: item.settlementItem.contractNumber, installmentNumber: item.settlementItem.installmentNumber, debtorDocument: item.debtorDocument, amount: Number(item.amount), remittanceId: item.remittance.id, remittanceFileName: item.remittance.fileName, remittanceStatus: item.remittance.status, generatedAt: item.remittance.generatedAt }));
+  }
+  return Array.from(rows.values()).sort((left, right) => right.generatedAt.getTime() - left.generatedAt.getTime());
+}
+
 function sourceMatches(source: OperationalFlowSource, candidate: StockCandidate) {
   const cedent = normalized(candidate.cedentName);
   return source === "UY3" ? cedent.includes("UY3") : cedent.includes("BMP") || cedent.includes("MONEY PLUS");
@@ -115,7 +136,7 @@ export async function listConsignadoOriginators() {
   return prisma.consignadoOriginator.findMany({ where: { active: true }, orderBy: { code: "asc" } });
 }
 
-export async function importSettlementBatch(input: { userId: string; source: OperationalFlowSource; originatorCode?: string; fileName: string; buffer: Buffer; allowDuplicate?: boolean }) {
+export async function importSettlementBatch(input: { userId: string; source: OperationalFlowSource; originatorCode?: string; fileName: string; buffer: Buffer }) {
   const fund = await consignadoFund();
   const stock = await activeStock(fund.id);
   if (input.source === "BMP" && !["GIBB", "JUCA", "BANKERIZE"].includes(input.originatorCode ?? "")) {
@@ -129,19 +150,19 @@ export async function importSettlementBatch(input: { userId: string; source: Ope
   const existing = await prisma.consignadoSettlementBatch.findFirst({
     where: { fundId: fund.id, source: input.source, fileHash },
     orderBy: { createdAt: "desc" },
-    select: { id: true, createdAt: true },
+    select: { id: true, fileName: true, createdAt: true },
   });
-  if (existing && !input.allowDuplicate) return {
-    batchId: existing.id,
-    duplicate: true,
-    requiresConfirmation: true,
-    previousCreatedAt: existing.createdAt.toISOString(),
-  };
+  if (existing) {
+    await prisma.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_DUPLICATE_ATTEMPT", entityId: existing.id, fromStatus: "BLOCKED", toStatus: "BLOCKED", metadata: { attemptedFileName: input.fileName, originalFileName: existing.fileName, fileHash } } });
+    throw new DuplicateSettlementFileError({ batchId: existing.id, fileName: existing.fileName, processedAt: existing.createdAt });
+  }
 
   const parsed = input.source === "BMP" ? parseBmpCnab(input.buffer) : parseUy3Workbook(input.buffer);
-  const [candidates, pddTitles] = await Promise.all([loadCandidates(stock.id, parsed), loadConsignadoPddTitles(fund.id)]);
+  const [candidates, pddTitles, remittedTitles] = await Promise.all([loadCandidates(stock.id, parsed), loadConsignadoPddTitles(fund.id), loadPreviouslyRemittedTitles(fund.id, parsed)]);
   const usedPositions = new Set<string>();
   const matched = parsed.map((item) => {
+    const previous = findPreviouslyRemittedTitle({ source: input.source, originatorCode: originator.code, yourNumber: item.yourNumber, documentNumber: item.documentNumber, contractNumber: item.contractNumber, installmentNumber: item.installmentNumber, debtorDocument: item.debtorDocument, paidAmount: Number(item.paidAmount) }, remittedTitles);
+    if (previous) return { item, status: "DUPLICATE" as SettlementItemStatus, reason: `${ALREADY_REMITTED_REASON} na remessa ${previous.remittanceFileName}, gerada em ${previous.generatedAt.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}.`, candidate: null, pddTitle: null };
     let result: ReturnType<typeof chooseCandidate> | (ReturnType<typeof classifyPddMatch> & { candidate: null }) = chooseCandidate(input.source, item, candidates);
     if (result.status === "NOT_FOUND") {
       const pddMatch = classifyPddMatch(input.source, { ...item, titleAmount: Number(item.titleAmount) }, pddTitles);
@@ -178,10 +199,10 @@ export async function importSettlementBatch(input: { userId: string; source: Ope
         dueDate: item.dueDate, titleAmount: new Prisma.Decimal(item.titleAmount), paidAmount: new Prisma.Decimal(item.paidAmount),
         status, statusReason: reason, matchedStockPositionId: candidate?.id ?? null, matchedPddTitleId: pddTitle?.id ?? null, approved: MATCHABLE.has(status),
       })) });
-      await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_BATCH", entityId: created.id, toStatus: created.status, metadata: { stockBatchId: stock.id, originator: originator.code, repeatedFileOfBatchId: existing?.id ?? null } } });
+      await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_BATCH", entityId: created.id, toStatus: created.status, metadata: { stockBatchId: stock.id, originator: originator.code } } });
       return created;
     });
-    return { batchId: batch.id, duplicate: Boolean(existing), requiresConfirmation: false, previousCreatedAt: existing?.createdAt.toISOString() ?? null };
+    return { batchId: batch.id };
   } catch (error) {
     await del(storageKey).catch(() => undefined);
     throw error;
@@ -222,6 +243,7 @@ export async function searchStockCandidates(batchId: string, query: string) {
 export async function correctSettlementItem(input: { userId: string; itemId: string; replacementPositionId: string; justification: string }) {
   const item = await prisma.consignadoSettlementItem.findUniqueOrThrow({ where: { id: input.itemId }, include: { batch: true } });
   if (item.batch.status === "GENERATED") throw new Error("O lote já possui remessa gerada.");
+  if (item.status === "DUPLICATE" && item.statusReason?.startsWith(ALREADY_REMITTED_REASON)) throw new Error("Título já baixado via OSHER não pode ser substituído por outra parcela.");
   const replacement = await prisma.receivableStockPosition.findFirst({ where: { id: input.replacementPositionId, batchId: item.batch.stockBatchId } });
   if (!replacement) throw new Error("Título substituto não pertence ao estoque utilizado pelo lote.");
   const reused = await prisma.consignadoRemittanceItem.findFirst({ where: { stockPositionId: replacement.id, remittance: { status: { not: "CANCELLED" } }, settlementItemId: { not: item.id } } });
@@ -239,6 +261,7 @@ export async function correctSettlementItem(input: { userId: string; itemId: str
 export async function setSettlementItemDecision(input: { userId: string; itemId: string; action: "APPROVE" | "EXCLUDE"; reason?: string }) {
   const item = await prisma.consignadoSettlementItem.findUniqueOrThrow({ where: { id: input.itemId }, include: { batch: true, matchedStockPosition: { select: { nominalValue: true } } } });
   if (item.batch.status === "GENERATED") throw new Error("O lote já possui remessa gerada.");
+  if (input.action === "APPROVE" && item.status === "DUPLICATE" && item.statusReason?.startsWith(ALREADY_REMITTED_REASON)) throw new Error("Título já baixado via OSHER não pode ser liberado novamente.");
   const underpaid77 = underpaid77Difference(item);
   if (input.action === "APPROVE" && (!item.matchedStockPositionId || (!MATCHABLE.has(item.status) && !underpaid77))) throw new Error("Resolva a divergência antes de aprovar este título.");
   if (input.action === "APPROVE" && item.matchedStockPositionId) {
@@ -324,7 +347,9 @@ export async function generateSettlementRemittance(batchId: string, userId: stri
 }
 
 export async function getRemittanceDownload(remittanceId: string) {
-  const remittance = await prisma.consignadoRemittance.findUniqueOrThrow({ where: { id: remittanceId }, select: { fileName: true, storageKey: true } });
+  const remittance = await prisma.consignadoRemittance.findUniqueOrThrow({ where: { id: remittanceId }, select: { fileName: true, storageKey: true, status: true, totalAmount: true, allocatedAmount: true, adjustedAmount: true, bankAllocations: { where: { reconciliation: { status: "ACTIVE" } }, select: { reconciliationId: true } }, bankAdjustments: { where: { reconciliation: { status: "ACTIVE" } }, select: { reconciliationId: true } } } });
+  const eligibility = remittanceDownloadEligibility({ status: remittance.status, totalAmount: Number(remittance.totalAmount), allocatedAmount: Number(remittance.allocatedAmount), adjustedAmount: Number(remittance.adjustedAmount), activeReconciliations: new Set([...remittance.bankAllocations, ...remittance.bankAdjustments].map((item) => item.reconciliationId)).size });
+  if (!eligibility.allowed) throw new RemittanceDownloadBlockedError(eligibility.reason ?? undefined);
   const blob = await get(remittance.storageKey, { access: "private", useCache: false });
   if (!blob?.stream) throw new Error("Arquivo da remessa não encontrado.");
   return { fileName: remittance.fileName, stream: blob.stream };
@@ -385,6 +410,10 @@ export async function getSettlementWorkspace(input: { createdDate?: string } = {
               },
               orderBy: { reconciliation: { createdAt: "asc" } },
             },
+            bankAdjustments: {
+              where: { reconciliation: { status: "ACTIVE" } },
+              select: { reconciliationId: true },
+            },
           },
         },
         items: {
@@ -401,6 +430,10 @@ export async function getSettlementWorkspace(input: { createdDate?: string } = {
   ]);
   const batchesWithFinancialSummary = batches.map((batch) => ({
     ...batch,
+    remittances: batch.remittances.map((remittance) => ({
+      ...remittance,
+      downloadEligibility: remittanceDownloadEligibility({ status: remittance.status, totalAmount: Number(remittance.totalAmount), allocatedAmount: Number(remittance.allocatedAmount), adjustedAmount: Number(remittance.adjustedAmount), activeReconciliations: new Set([...remittance.bankAllocations.map((item) => item.reconciliation.id), ...remittance.bankAdjustments.map((item) => item.reconciliationId)]).size }),
+    })),
     financialSummary: summarizeBatchReconciliation({
       receivedAmount: batch.receivedAmount.toString(),
       remittances: batch.remittances.map((remittance) => ({
