@@ -36,6 +36,7 @@
 - [ ] **Módulo Relatórios** (`/dashboard/relatorios`) — exportações (placeholder; deixar para o final)
 - [ ] **Validar média CUSTO x RECEITA da Previsões** — reconciliar médias usadas na Previsões com os cálculos manuais e com as linhas-base da DRE/Variação
 - [ ] **Refinar metodologia de Previsões** — revisar premissas de receita, custo, PDD, cota e impacto diário para deixar a previsão mais precisa
+- [ ] **Tela de LOG** — criar uma tela no OSHER para consultar eventos, importações, execuções automáticas e ações relevantes do sistema
 
 ---
 
