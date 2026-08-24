@@ -3,9 +3,11 @@ import { del, get, put } from "@vercel/blob";
 import { Prisma, type OperationalFlowSource, type SettlementItemStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { generateDaycovalCnab } from "./consignado-cnab";
+import { summarizeBatchReconciliation } from "./consignado-reconciliation";
 import { parseBmpCnab, parseUy3Workbook, type ParsedSettlementItem } from "./consignado-parsers";
 import { classifyPddMatch, getConsignadoPddSummary, loadConsignadoPddTitles } from "./consignado-pdd-service";
 import { saoPauloDayRange } from "./consignado-date";
+import { buildRemittanceExclusionPersistence, selectRemittanceItems } from "./consignado-remittance-exclusions";
 
 const CONSIGNADO_CNPJ = "54842157000193";
 export const BULK_UNDERPAID_LIMIT_PERCENT = 10;
@@ -297,12 +299,10 @@ export async function approveUnderpaid77InBulk(input: { userId: string; batchId:
 
 export async function generateSettlementRemittance(batchId: string, userId: string) {
   const batch = await prisma.consignadoSettlementBatch.findUniqueOrThrow({ where: { id: batchId }, include: {
-    originator: true, remittances: true, items: { where: { approved: true, matchedStockPositionId: { not: null }, status: { in: ["FULL_MATCH", "PARTIAL_MATCH", "MANUALLY_MATCHED", "DIVERGENT"] } }, include: { matchedStockPosition: true } },
+    originator: true, remittances: true, items: { include: { matchedStockPosition: true } },
   }});
   if (batch.remittances.some((item) => item.status !== "CANCELLED")) throw new Error("Este lote já possui uma remessa ativa.");
-  const items = batch.items.filter((item): item is typeof item & { matchedStockPosition: NonNullable<typeof item.matchedStockPosition> } =>
-    Boolean(item.matchedStockPosition) && (MATCHABLE.has(item.status) || Boolean(underpaid77Difference(item)))
-  );
+  const items = selectRemittanceItems(batch.items);
   const generated = generateDaycovalCnab(items, batch.remittances.length + 1);
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const fileName = `${batch.source}_${batch.originator?.code ?? "ORIGINADOR"}_${date}_${batch.id.slice(-6)}.REM`;
@@ -314,8 +314,10 @@ export async function generateSettlementRemittance(batchId: string, userId: stri
       await tx.consignadoSettlementItem.updateMany({ where: { batchId, approved: false, status: { notIn: ["EXCLUDED", "PDD_RECOVERY"] } }, data: { status: "EXCLUDED", exclusionReason: "Não incluído na remessa aprovada." } });
       const remittance = await tx.consignadoRemittance.create({ data: { batchId, fundId: batch.fundId, generatedByUserId: userId, fileName, storageKey, fileHash: generated.hash, totalItems: items.length, totalAmount } });
       await tx.consignadoRemittanceItem.createMany({ data: items.map((item) => ({ remittanceId: remittance.id, settlementItemId: item.id, stockPositionId: item.matchedStockPosition.id, yourNumber: item.matchedStockPosition.yourNumber, documentNumber: item.matchedStockPosition.documentNumber, debtorDocument: item.matchedStockPosition.debtorDocument, amount: item.paidAmount, occurrence: item.occurrence ?? "77" })) });
+      const exclusionPersistence = buildRemittanceExclusionPersistence(remittance.id, batch.items, items);
+      if (exclusionPersistence.exclusions.length) await tx.consignadoRemittanceExclusion.createMany({ data: exclusionPersistence.exclusions, skipDuplicates: true });
       await tx.consignadoSettlementBatch.update({ where: { id: batchId }, data: { status: "GENERATED" } });
-      await tx.consignadoStatusEvent.create({ data: { userId, entityType: "REMITTANCE", entityId: remittance.id, toStatus: "GENERATED", metadata: { fileName, totalItems: items.length, totalAmount: totalAmount.toString() } } });
+      await tx.consignadoStatusEvent.create({ data: { userId, entityType: "REMITTANCE", entityId: remittance.id, toStatus: "GENERATED", metadata: { fileName, totalItems: items.length, totalAmount: totalAmount.toString(), ...exclusionPersistence.metadata } } });
       return remittance;
     });
   } catch (error) { await del(storageKey).catch(() => undefined); throw error; }
@@ -363,7 +365,28 @@ export async function getSettlementWorkspace(input: { createdDate?: string } = {
       include: {
         originator: true,
         stockBatch: { select: { referenceDate: true, version: true } },
-        remittances: { select: { id: true, fileName: true, status: true, stockStatus: true, totalItems: true, totalAmount: true, allocatedAmount: true, generatedAt: true } },
+        remittances: {
+          select: {
+            id: true,
+            fileName: true,
+            status: true,
+            stockStatus: true,
+            totalItems: true,
+            totalAmount: true,
+            allocatedAmount: true,
+            adjustedAmount: true,
+            generatedAt: true,
+            bankAllocations: {
+              where: { reconciliation: { status: "ACTIVE" } },
+              select: {
+                amount: true,
+                reconciliation: { select: { id: true, status: true, createdAt: true } },
+                bankEntry: { select: { id: true, transactionDate: true, description: true, document: true, amount: true } },
+              },
+              orderBy: { reconciliation: { createdAt: "asc" } },
+            },
+          },
+        },
         items: {
           orderBy: { sourceRow: "asc" },
           include: {
@@ -376,7 +399,35 @@ export async function getSettlementWorkspace(input: { createdDate?: string } = {
     }),
     getConsignadoPddSummary(fund.id),
   ]);
-  return JSON.parse(JSON.stringify({ originators, batches, pddSummary }, (_, value) => value instanceof Prisma.Decimal ? value.toString() : value));
+  const batchesWithFinancialSummary = batches.map((batch) => ({
+    ...batch,
+    financialSummary: summarizeBatchReconciliation({
+      receivedAmount: batch.receivedAmount.toString(),
+      remittances: batch.remittances.map((remittance) => ({
+        id: remittance.id,
+        status: remittance.status,
+        totalAmount: remittance.totalAmount.toString(),
+        allocatedAmount: remittance.allocatedAmount.toString(),
+        adjustedAmount: remittance.adjustedAmount.toString(),
+        allocations: remittance.bankAllocations.map((allocation) => ({
+          amount: allocation.amount.toString(),
+          reconciliation: {
+            id: allocation.reconciliation.id,
+            status: allocation.reconciliation.status,
+            createdAt: allocation.reconciliation.createdAt.toISOString(),
+          },
+          bankEntry: {
+            id: allocation.bankEntry.id,
+            transactionDate: allocation.bankEntry.transactionDate.toISOString(),
+            description: allocation.bankEntry.description,
+            document: allocation.bankEntry.document,
+            amount: allocation.bankEntry.amount.toString(),
+          },
+        })),
+      })),
+    }),
+  }));
+  return JSON.parse(JSON.stringify({ originators, batches: batchesWithFinancialSummary, pddSummary }, (_, value) => value instanceof Prisma.Decimal ? value.toString() : value));
 }
 
 export async function reconcileRemittancesWithStock(stockBatchId: string, userId?: string) {

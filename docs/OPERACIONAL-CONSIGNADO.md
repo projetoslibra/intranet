@@ -1,6 +1,6 @@
 # Operacional do Consignado — arquitetura e operação
 
-> Estado verificado em 18/08/2026. Este documento registra o fluxo operacional, as regras implementadas e as pendências conhecidas.
+> Estado verificado na branch de entrega em 20/08/2026. Este documento registra o fluxo operacional, as regras implementadas, o rollout ainda necessário e as pendências conhecidas.
 
 ## Objetivo
 
@@ -29,6 +29,8 @@ O desenho deve permitir que, futuramente, uma API substitua o upload manual do e
 - Conciliação de várias entradas com várias remessas.
 - Confirmação da baixa pela ausência do título no estoque posterior.
 - Base histórica de títulos baixados por PDD e identificação de recuperações.
+- Registro e relatório dos títulos que ficaram fora de cada remessa.
+- Composição da diferença bancária com títulos excluídos e pendências auditáveis "Outros".
 - Totais em quantidade e valor pago em cada classificação de revisão.
 - Navegação estrutural por breadcrumbs entre Operacional, Financeiro, Conciliação e Consignado.
 
@@ -71,6 +73,7 @@ O desenho deve permitir que, futuramente, uma API substitua o upload manual do e
 ### Recuperações de PDD
 
 - A planilha consolidada de PDD é importada de forma incremental e histórica.
+- A manutenção e o upload da base histórica ficam em uma aba secundária da tela de baixas, fora do fluxo diário padrão.
 - O arquivo é identificado por SHA-256; uma nova tentativa com o mesmo arquivo não duplica títulos.
 - Linhas são deduplicadas pelo vínculo entre remessa, linha PDD, CPF e identificadores do título.
 - O matching contra o estoque ativo sempre tem prioridade.
@@ -98,10 +101,15 @@ O desenho deve permitir que, futuramente, uma API substitua o upload manual do e
 - Ao abrir a tela, todas as entradas pendentes ou parciais são exibidas; o operador pode filtrar pela data da movimentação e retornar a `Todas em aberto`.
 - O resumo global informa quantidade de entradas não conciliadas e saldo total em aberto, independentemente do filtro aplicado.
 - A alocação real nunca pode superar o saldo disponível da entrada ou da remessa.
-- Quando os totais selecionados forem diferentes, o operador deve justificar a diferença; o excedente vira ajuste auditável e os dois lados são encerrados.
+- Quando a entrada excede a remessa, a composição deve fechar exatamente `entrada = remessa + títulos fora da remessa + Outros`.
+- Títulos são usados integralmente pelo snapshot de valor pago, nunca parcialmente, e não podem explicar um excedente da remessa.
+- Se a remessa excede a entrada, a diferença é explicada somente por `Outros`, na direção calculada pelo sistema.
+- A composição não admite tolerância automática: qualquer centavo ainda não explicado impede a conclusão.
 - Valor alocado e valor ajustado são armazenados separadamente.
-- O estorno reverte alocações e ajustes e recalcula os estados dos dois lados.
+- O estorno reverte alocações e ajustes, recalcula os estados dos dois lados, cancela pendências `Outros` e libera os títulos, sem apagar histórico.
 - Itens conciliados continuam acessíveis no histórico.
+- Cada lote recolhido exibe valor pago no arquivo, valor efetivo da remessa e estado financeiro (`sem remessa`, `não conciliado`, `parcialmente conciliado` ou `conciliado`).
+- Conciliações ativas exibem no lote as entradas bancárias vinculadas, incluindo data, descrição, documento, valor da entrada, valor alocado e data da conciliação; vínculos desfeitos deixam de compor o log.
 
 ### Conciliação pelo estoque
 
@@ -214,7 +222,7 @@ Classificações previstas:
 
 ## Backlog executável
 
-### Status em 12/08/2026
+### Status em 20/08/2026
 
 - ✅ OC-01 — implementada e validada em build.
 - ✅ OC-02 — implementada; requer Blob privado configurado no ambiente publicado.
@@ -232,6 +240,9 @@ Classificações previstas:
 - ✅ OC-12B — revisão de antecipações por faixas, recorrência do sacado e totais monetários.
 - ✅ OC-12C — base histórica de PDD, importação idempotente, matching secundário e filtro de recuperações.
 - ✅ OC-12D — filtros de lotes/entradas, cancelamento lógico de lotes e conciliação com diferença justificada.
+- ✅ Conciliação por títulos excluídos — implementação, documentação e migration `20260820000000_add_consignado_remittance_exclusions` aplicada no schema `OSHER` em 2026-08-20; checklist pós-migration e checklist de concorrência real validados (duas conciliações `Serializable` disputando o mesmo título contra o Postgres do Railway: uma venceu, a outra foi rejeitada por conflito de escrita, título liberado após desfazer). Achado corrigido nesse teste: as transações de criar/desfazer conciliação usavam o timeout padrão do Prisma (5s), curto demais para o número de passos sequenciais da transação somado à latência real de rede — subiram para `maxWait: 5s` / `timeout: 15s`; o erro de conflito de serialização (`P2034`) agora vira mensagem amigável na API em vez do texto cru do Prisma.
+- ✅ Ajustes de UX pós-homologação (2026-08-20): aba "Títulos fora da remessa" movida para o nav principal de Baixas (antes só um link no cabeçalho de "Lotes de baixa"); situação `AVAILABLE` renomeada de "Disponível" para "Pendente" (título casou com o estoque mas ainda não foi conciliado); filtros do relatório de exclusões validados um a um contra dados reais — sem bugs encontrados no backend.
+- ✅ Backfill `20260820200000_backfill_consignado_legacy_other_differences`: as 4 conciliações `ACTIVE` fechadas antes desta funcionalidade existir (18-19/08, diferença só em texto livre, sem título/Outro associado) ganharam pendência `OTHER`/`OPEN` correspondente, preservando o motivo original como razão — R$ 997,58 que estavam invisíveis na aba "Diferenças e ajustes" agora aparecem como pendência de verdade. Migration idempotente: só atinge reconciliações sem nenhum título/Outro, o que o fluxo novo nunca deixa acontecer.
 - ✅ Navegação estrutural — breadcrumbs e retorno entre todas as páginas internas do Operacional.
 - ⏳ OC-13 e OC-14 — indicadores consolidados e homologação final ainda pendentes.
 
@@ -242,17 +253,22 @@ Classificações previstas:
 - `/dashboard/operacional/financeiro/conciliacao/consignado`: entrada da operação.
 - `/dashboard/operacional/financeiro/conciliacao/consignado/estoques`: upload, ativação e histórico dos snapshots.
 - `/dashboard/operacional/financeiro/conciliacao/consignado/baixas`: processamento BMP/UY3, revisão, PDD e remessas.
+- `/dashboard/operacional/financeiro/conciliacao/consignado/baixas/titulos-fora-remessa`: relatório e Excel dos títulos excluídos.
 - `/dashboard/operacional/financeiro/conciliacao/consignado/conciliacao-bancaria`: extrato, pendências e conciliações.
+- `/dashboard/operacional/financeiro/conciliacao/consignado/conciliacao-bancaria/diferencas`: acompanhamento, Excel e resolução das pendências `Outros`.
 
 ### Serviços
 
 - `consignado-stock-service.ts`: ingestão e ativação do estoque.
 - `consignado-parsers.ts`: leitura dos arquivos BMP e UY3.
 - `consignado-settlement-service.ts`: matching, decisões, totais e geração de remessa.
+- `consignado-remittance-exclusions.ts`: classificação determinística e snapshots dos títulos excluídos.
 - `consignado-pdd-service.ts`: importação histórica e classificação das recuperações de PDD.
 - `consignado-cnab.ts`: geração CNAB 444 Daycoval.
 - `consignado-bank-service.ts`: extrato e conciliação bancária.
 - `consignado-reconciliation.ts`: planejamento determinístico das alocações e ajustes N:N.
+- `consignado-exclusion-report.ts`: filtros, agregados e workbook dos títulos fora da remessa.
+- `consignado-difference-report.ts`: filtros, agregados, workbook e resolução das pendências `Outros`.
 - `consignado-date.ts`: validação das datas bancárias e faixa diária de processamento em São Paulo.
 
 ### Persistência de PDD
@@ -275,7 +291,246 @@ Classificações previstas:
 - `consignado_bank_adjustments`: excedentes justificados associados a uma entrada ou remessa.
 - `adjusted_amount`: parcela encerrada por ajuste, separada de `allocated_amount`.
 - `entry_total_amount`, `remittance_total_amount`, `difference_amount` e `difference_reason`: memória auditável da conciliação.
-- Migration: `20260818000000_add_consignado_bank_adjustments` (aplicar no ambiente antes de publicar a interface).
+- Migration: `20260818000000_add_consignado_bank_adjustments` aplicada no schema `OSHER`.
+
+## Conciliação por títulos fora da remessa
+
+### Geração e retroalimentação dos títulos excluídos
+
+Ao gerar uma nova remessa, a mesma transação que grava o CNAB registra um snapshot para cada item do lote que não entrou na remessa. O snapshot preserva remessa, item, categoria, motivo, valor pago e valor de face; o evento `REMITTANCE` registra também quantidade e valor pago excluídos.
+
+A classificação segue esta precedência:
+
+1. recuperação ou revisão de PDD (`PDD_RECOVERY`);
+2. título não encontrado no estoque (`NOT_FOUND_IN_STOCK`);
+3. exclusão explícita pelo operador (`OPERATOR_EXCLUDED`);
+4. item não aprovado (`NOT_APPROVED`);
+5. outra divergência (`OTHER_DIVERGENCE`).
+
+A migration `20260820000000_add_consignado_remittance_exclusions` cria as tabelas `consignado_remittance_exclusions`, `consignado_bank_difference_titles` e `consignado_bank_other_differences`. Ela retroalimenta, de forma idempotente, itens sem `consignado_remittance_items` em remessas e lotes não cancelados. O `ON CONFLICT` por remessa/item torna uma reaplicação lógica inofensiva. As colunas e tabelas anteriores permanecem: esta entrega é aditiva e não altera os parsers BMP/UY3, o matching do estoque nem outros fundos.
+
+### Equação, disponibilidade e conclusão
+
+Para excesso da entrada, a igualdade vinculante é:
+
+```text
+entrada = remessa + títulos fora da remessa + Outros
+```
+
+O servidor recalcula a igualdade em `Prisma.Decimal`, com exatidão de centavos. A interface apenas auxilia a composição; IDs, saldos, vínculos e valores dos títulos são recarregados dentro da transação `Serializable`.
+
+Um título pode ser selecionado no compositor somente quando:
+
+- pertence a uma das remessas selecionadas;
+- a remessa está ativa em `GENERATED` ou `RECONCILING` e o lote não está cancelado;
+- não existe vínculo do título com outra conciliação `ACTIVE`;
+- a direção é `ENTRY_EXCESS`;
+- seu valor pago integral não supera o saldo que falta explicar.
+
+O operador seleciona entradas e remessas e abre `Explicar diferença`. A composição mostra Entradas, Remessas, Diferença, Títulos selecionados, Outros e Falta explicar. Os títulos podem ser filtrados localmente por contrato, sacado, CPF e categoria. Se outro usuário consumir um título ou alterar um saldo antes da confirmação, o servidor rejeita toda a transação; a tela recarrega o workspace e limpa a composição obsoleta antes de permitir nova tentativa.
+
+Quando houver `REMITTANCE_EXCESS`, títulos ficam indisponíveis e `Outros` deve explicar o valor integral na direção calculada. Em qualquer direção, o botão de concluir permanece bloqueado enquanto houver excesso, centavo aberto, valor inválido ou justificativa incompleta.
+
+### Pendências `Outros`, resolução e auditoria
+
+Cada parcela residual exige categoria, valor positivo e justificativa de pelo menos cinco caracteres. As categorias são tarifa bancária, crédito não identificado, diferença de valor, arredondamento, diferença temporal e outros. Uma conciliação concluída cria a pendência como `OPEN`, mesmo quando os saldos bancário e de remessa ficam encerrados.
+
+A tela `Diferenças e ajustes bancários` apresenta quantidade e valor aberto, agrupamentos por categoria e direção, idade, origem, responsável e histórico. É possível filtrar por período, status, categoria, direção, entrada, remessa ou busca geral e exportar o mesmo conjunto para Excel. Resolver uma pendência `OPEN` exige nota com pelo menos cinco caracteres e grava `RESOLVED`, usuário e horário. Registros resolvidos saem dos indicadores de aberto, mas permanecem consultáveis.
+
+Ao desfazer uma conciliação `ACTIVE`, a transação:
+
+- restaura valores alocados e ajustados de entradas e remessas;
+- recalcula os estados dos dois lados e do lote;
+- marca a conciliação como `UNDONE`;
+- marca suas pendências `Outros` como `CANCELLED` com horário de cancelamento;
+- preserva os vínculos com títulos no histórico e volta a considerá-los disponíveis;
+- cria evento `BANK_RECONCILIATION` com a transição e os IDs envolvidos.
+
+Criação, desfazimento e resolução usam `ConsignadoStatusEvent`. O vínculo de cada título guarda o snapshot monetário utilizado; a resolução de `Outros` cria evento `BANK_OTHER_DIFFERENCE`. Não apague conciliações, vínculos ou pendências para corrigir a operação: use desfazimento ou resolução para preservar a trilha.
+
+### Relatórios, Excel e limites recuperáveis
+
+O relatório `Títulos fora da remessa` aceita período de geração, fluxo BMP/UY3, originador, arquivo/ID do lote, arquivo/ID da remessa, categoria, situação e busca por contrato, sacado ou CPF. As situações são `Disponível`, `Usado em conciliação ativa` e `Histórico desfeito`; uso ativo tem precedência quando também existe histórico desfeito.
+
+O Excel é produzido em memória, sem arquivo intermediário no servidor, e usa exatamente os filtros da tela:
+
+- títulos excluídos: abas `Resumo` e `Titulos`, com quantidade, valores de face/pago, agrupamentos e dados de lote, remessa, título, devedor e conciliação;
+- diferenças `Outros`: abas `Resumo` e `Diferencas`, com agregados, origem, responsável, idade, status e resolução.
+
+Tela e Excel percorrem no máximo 50.000 registros candidatos por consulta. Cada exportação aceita no máximo 10.000 linhas. Esses tetos se aplicam separadamente aos títulos excluídos e às diferenças `Outros`. Ao excedê-los, a API responde `422` com orientação para restringir os filtros; a página preserva os filtros válidos, remove cursor inválido e continua utilizável. Filtros inválidos retornam `400`. Falhas inesperadas retornam mensagem genérica, registram o detalhe somente no servidor e não expõem dados internos. Respostas JSON/XLSX são privadas e sem cache.
+
+### Permissões reais
+
+- `operational.view`: abrir as páginas, consultar detalhes, paginar e baixar os dois arquivos Excel.
+- `operational.finance.manage`: importar extrato, selecionar títulos, registrar `Outros`, concluir ou desfazer conciliações e resolver pendências.
+
+As rotas validam a permissão no servidor. Ocultar um botão não substitui o bloqueio da API. Não existe uma permissão alternativa `operational.manage` neste fluxo.
+
+## Rollout seguro da migration
+
+Não execute os passos seguintes diretamente em produção sem janela aprovada, backup testado e identificação explícita do schema `OSHER`. Nunca cole `DATABASE_URL`, senha ou token em terminal compartilhado, relatório, ticket ou Git.
+
+1. Gerar backup lógico/restaurável do schema e registrar o ponto de restauração fora do repositório.
+2. Aplicar a migration primeiro em banco PostgreSQL descartável ou staging com cópia anonimizada e a mesma versão da produção.
+3. Confirmar `current_schema()`/`search_path`, revisar o SQL e executar `prisma migrate deploy` a partir de `packages/database`; não usar `migrate dev`, `db push` ou `migrate reset` no ambiente publicado.
+4. Executar todo o checklist pós-migration abaixo. Qualquer divergência interrompe o rollout.
+5. Publicar a aplicação somente depois da migration, validar uma remessa conhecida e realizar smoke tests de consulta, Excel, conciliação exata, conciliação com `Outros`, resolução e desfazimento.
+6. Monitorar respostas `409`/erros de serialização, `422` por amplitude, falhas de Excel e crescimento de pendências abertas.
+
+### Checklist pós-migration em PostgreSQL não produtivo
+
+- [ ] Confirmar que a conexão aponta para o banco esperado e para o schema `OSHER`, sem imprimir a URL:
+
+```sql
+SELECT current_database(), current_schema(), current_setting('search_path');
+```
+
+- [ ] Confirmar a migration concluída e sem rollback registrado:
+
+```sql
+SELECT migration_name, finished_at, rolled_back_at
+FROM "_prisma_migrations"
+WHERE migration_name = '20260820000000_add_consignado_remittance_exclusions';
+```
+
+- [ ] Confirmar as três tabelas e a unicidade remessa/item:
+
+```sql
+SELECT
+  to_regclass('consignado_remittance_exclusions') AS exclusions,
+  to_regclass('consignado_bank_difference_titles') AS difference_titles,
+  to_regclass('consignado_bank_other_differences') AS other_differences;
+
+SELECT remittance_id, settlement_item_id, COUNT(*)
+FROM consignado_remittance_exclusions
+GROUP BY remittance_id, settlement_item_id
+HAVING COUNT(*) > 1;
+```
+
+- [ ] Comparar contagem, valor pago e valor de face esperados e gravados pelo backfill, por remessa. A consulta deve retornar zero linhas:
+
+```sql
+WITH expected AS (
+  SELECT r.id AS remittance_id,
+         COUNT(*) AS title_count,
+         COALESCE(SUM(i.paid_amount), 0) AS paid_amount,
+         COALESCE(SUM(i.title_amount), 0) AS title_amount
+  FROM consignado_remittances r
+  JOIN consignado_settlement_batches b ON b.id = r.batch_id
+  JOIN consignado_settlement_items i ON i.batch_id = b.id
+  LEFT JOIN consignado_remittance_items ri ON ri.settlement_item_id = i.id
+  WHERE r.status::text <> 'CANCELLED'
+    AND b.status::text <> 'CANCELLED'
+    AND ri.id IS NULL
+  GROUP BY r.id
+), actual AS (
+  SELECT remittance_id,
+         COUNT(*) AS title_count,
+         COALESCE(SUM(paid_amount), 0) AS paid_amount,
+         COALESCE(SUM(title_amount), 0) AS title_amount
+  FROM consignado_remittance_exclusions
+  GROUP BY remittance_id
+)
+SELECT COALESCE(e.remittance_id, a.remittance_id) AS remittance_id,
+       e.title_count AS expected_count, a.title_count AS actual_count,
+       e.paid_amount AS expected_paid, a.paid_amount AS actual_paid,
+       e.title_amount AS expected_face, a.title_amount AS actual_face
+FROM expected e
+FULL JOIN actual a USING (remittance_id)
+WHERE e.title_count IS DISTINCT FROM a.title_count
+   OR e.paid_amount IS DISTINCT FROM a.paid_amount
+   OR e.title_amount IS DISTINCT FROM a.title_amount;
+```
+
+- [ ] Registrar os agregados de controle por categoria, sem exportar CPF ou outros dados pessoais:
+
+```sql
+SELECT category, COUNT(*) AS titles,
+       COALESCE(SUM(paid_amount), 0) AS paid_amount,
+       COALESCE(SUM(title_amount), 0) AS title_amount
+FROM consignado_remittance_exclusions
+GROUP BY category
+ORDER BY category;
+```
+
+- [ ] Validar a equação de todas as conciliações novas. Após os smoke tests, a consulta deve retornar zero linhas:
+
+```sql
+WITH title_totals AS (
+  SELECT reconciliation_id, SUM(amount) AS amount
+  FROM consignado_bank_difference_titles
+  GROUP BY reconciliation_id
+), other_totals AS (
+  SELECT reconciliation_id, SUM(amount) AS amount
+  FROM consignado_bank_other_differences
+  GROUP BY reconciliation_id
+)
+SELECT r.id, r.entry_total_amount, r.remittance_total_amount,
+       r.difference_amount,
+       COALESCE(t.amount, 0) AS titles,
+       COALESCE(o.amount, 0) AS others
+FROM consignado_bank_reconciliations r
+LEFT JOIN title_totals t ON t.reconciliation_id = r.id
+LEFT JOIN other_totals o ON o.reconciliation_id = r.id
+WHERE r.created_at >= :inicio_da_validacao
+  AND (
+    ABS(r.entry_total_amount - r.remittance_total_amount) <> r.difference_amount
+    OR r.difference_amount <> COALESCE(t.amount, 0) + COALESCE(o.amount, 0)
+  );
+```
+
+Substitua `:inicio_da_validacao` por um parâmetro da ferramenta SQL; não monte a data por concatenação.
+
+- [ ] Confirmar que nenhum título participa de duas conciliações ativas e que não existe pendência `OPEN` ligada a conciliação desfeita. Ambas as consultas devem retornar zero linhas:
+
+```sql
+SELECT dt.remittance_exclusion_id, COUNT(DISTINCT dt.reconciliation_id)
+FROM consignado_bank_difference_titles dt
+JOIN consignado_bank_reconciliations r ON r.id = dt.reconciliation_id
+WHERE r.status::text = 'ACTIVE'
+GROUP BY dt.remittance_exclusion_id
+HAVING COUNT(DISTINCT dt.reconciliation_id) > 1;
+
+SELECT od.id, od.reconciliation_id
+FROM consignado_bank_other_differences od
+JOIN consignado_bank_reconciliations r ON r.id = od.reconciliation_id
+WHERE od.status::text = 'OPEN' AND r.status::text <> 'ACTIVE';
+```
+
+- [ ] Confirmar que saldos persistidos permanecem entre zero e o valor original:
+
+```sql
+SELECT 'entry' AS entity, id, amount, allocated_amount, adjusted_amount
+FROM consignado_bank_credit_entries
+WHERE allocated_amount < 0 OR adjusted_amount < 0
+   OR allocated_amount + adjusted_amount > amount
+UNION ALL
+SELECT 'remittance', id, total_amount, allocated_amount, adjusted_amount
+FROM consignado_remittances
+WHERE allocated_amount < 0 OR adjusted_amount < 0
+   OR allocated_amount + adjusted_amount > total_amount;
+```
+
+### Checklist de concorrência PostgreSQL real
+
+Este teste é obrigatório em PostgreSQL real de staging/local e não deve usar produção. Prepare uma entrada, uma remessa e um título excluído descartáveis, todos disponíveis, além de dois usuários com `operational.finance.manage`.
+
+- [ ] Abrir dois clientes independentes da aplicação, ambos apontados para o mesmo banco PostgreSQL não produtivo.
+- [ ] Preparar o mesmo payload válido nos dois clientes, com os mesmos `entryIds`, `remittanceIds` e `exclusionIds`.
+- [ ] Disparar os dois `POST /api/operacional/consignado/conciliacoes` simultaneamente, preservando status e corpo das respostas como evidência sem cookies/tokens.
+- [ ] Confirmar que exatamente uma operação concluiu e a outra foi rejeitada por conflito/estado atualizado; nenhuma resposta pode concluir duas conciliações ativas.
+- [ ] Recarregar o workspace no cliente rejeitado e confirmar que o título deixou de estar disponível e que a composição obsoleta foi limpa.
+- [ ] Rodar novamente as consultas de título ativo duplicado, equação e saldos acima; todas devem retornar zero linhas.
+- [ ] Contar conciliações, vínculos e eventos criados para os IDs descartáveis e confirmar uma única trilha ativa.
+- [ ] Desfazer a conciliação vencedora, confirmar a liberação do título e o cancelamento de `Outros`; repetir a seleção para comprovar que o recurso voltou a ficar disponível.
+
+Uma falha de serialização do PostgreSQL é um resultado recuperável da corrida, não autorização para repetir cegamente. O operador deve recarregar o workspace antes de tentar novamente. Se ambas as operações concluírem, interrompa o rollout e preserve os dados de staging para diagnóstico.
+
+### Rollback
+
+Como a migration é aditiva e as colunas legadas foram preservadas, o primeiro rollback é da aplicação para a versão anterior, mantendo as novas tabelas no banco. Isso interrompe o uso do fluxo novo sem perda de auditoria.
+
+Não use `prisma migrate reset`, não edite `_prisma_migrations` e não remova tipos/tabelas enquanto houver aplicação nova ou registros dependentes. Se for indispensável reverter também o banco, bloqueie escritas, preserve/exporte os três conjuntos novos, restaure o backup validado ou execute um roteiro SQL revisado especificamente para o incidente e somente depois confirme que nenhuma versão da aplicação referencia os objetos. Um rollback de banco deve ser tratado como mudança separada e aprovada; este runbook não autoriza DROP em produção.
 
 ### OC-01 — Fundação do estoque do Consignado
 

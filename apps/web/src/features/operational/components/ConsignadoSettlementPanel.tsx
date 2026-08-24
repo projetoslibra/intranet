@@ -7,12 +7,17 @@ type Candidate = { id: string; yourNumber: string | null; documentNumber: string
 type PddTitle = { id: string; remittanceFile: string | null; generatedAt: string | null; yourNumberUsed: string | null; documentNumber: string | null; debtorName: string | null; debtorDocument: string | null; nominalValue: string | null; pddValue: string | null; dueDate: string | null; writeOffType: string | null; originator: string | null };
 type SettlementItem = { id: string; sourceRow: number; occurrence: string | null; contractNumber: string | null; yourNumber: string | null; debtorName: string | null; debtorDocument: string | null; titleAmount: string; paidAmount: string; status: string; statusReason: string | null; approved: boolean; exclusionReason: string | null; matchedStockPosition: Candidate | null; matchedPddTitle: PddTitle | null; corrections: Array<{ id: string; justification: string; replacementYourNumber: string | null; createdAt: string }> };
 type Remittance = { id: string; fileName: string; status: string; stockStatus: string; totalItems: number; totalAmount: string; allocatedAmount: string; generatedAt: string };
-type Batch = { id: string; source: "BMP" | "UY3"; fileName: string; referenceDate: string; status: string; totalItems: number; fullItems: number; partialItems: number; issueItems: number; receivedAmount: string; matchedAmount: string; excludedAmount: string; createdAt: string; originator: { code: string; name: string } | null; stockBatch: { referenceDate: string | null; version: number }; items: SettlementItem[]; remittances: Remittance[] };
+type FinancialEntry = { id: string; transactionDate: string; description: string; document: string | null; amount: string; allocatedAmount: string; reconciliationId: string; reconciledAt: string };
+type FinancialSummary = { paidAmount: string; remittanceAmount: string; reconciliationStatus: "NO_REMITTANCE" | "NOT_RECONCILED" | "PARTIALLY_RECONCILED" | "RECONCILED"; entries: FinancialEntry[] };
+type Batch = { id: string; source: "BMP" | "UY3"; fileName: string; referenceDate: string; status: string; totalItems: number; fullItems: number; partialItems: number; issueItems: number; receivedAmount: string; matchedAmount: string; excludedAmount: string; createdAt: string; originator: { code: string; name: string } | null; stockBatch: { referenceDate: string | null; version: number }; items: SettlementItem[]; remittances: Remittance[]; financialSummary: FinancialSummary };
 type Workspace = { originators: Array<{ id: string; code: string; name: string; source: "BMP" | "UY3" }>; batches: Batch[]; pddSummary: { titleCount: number; lastImport: { id: string; fileName: string; totalRows: number; importedRows: number; duplicateRows: number; invalidRows: number; createdAt: string } | null } };
 type IssueFilter = "UNDERPAID" | "PDD" | "NOT_FOUND" | "OTHER";
+type WorkspaceSection = "LOTS" | "PDD";
 
 const statusLabel: Record<string, string> = { FULL_MATCH: "Baixa completa", PARTIAL_MATCH: "Baixa parcial", NOT_FOUND: "Não encontrado", AMBIGUOUS: "Ambíguo", DIVERGENT: "Divergente", DUPLICATE: "Duplicado", MANUALLY_MATCHED: "Corrigido manualmente", EXCLUDED: "Excluído" };
 const stockStatusLabel: Record<string, string> = { AWAITING_NEXT_STOCK: "Aguardando próximo estoque", CONFIRMED: "Baixa confirmada", STILL_IN_STOCK: "Ainda no estoque", REVIEW_REQUIRED: "Revisão necessária" };
+const financialStatusLabel: Record<FinancialSummary["reconciliationStatus"], string> = { NO_REMITTANCE: "Sem remessa", NOT_RECONCILED: "Não conciliado", PARTIALLY_RECONCILED: "Parcialmente conciliado", RECONCILED: "Conciliado" };
+const financialStatusClass: Record<FinancialSummary["reconciliationStatus"], string> = { NO_REMITTANCE: "bg-slate-100 text-slate-600", NOT_RECONCILED: "bg-amber-50 text-amber-700", PARTIALLY_RECONCILED: "bg-blue-50 text-blue-700", RECONCILED: "bg-emerald-50 text-emerald-700" };
 statusLabel.PDD_RECOVERY = "Recuperação de PDD";
 statusLabel.PDD_REVIEW = "Possível baixa por PDD";
 function money(value: string | number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value)); }
@@ -56,6 +61,7 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
   const [candidates, setCandidates] = useState<Record<string, Candidate[]>>({});
   const [issueFilters, setIssueFilters] = useState<Record<string, IssueFilter>>({});
   const [createdDate, setCreatedDate] = useState("");
+  const [activeSection, setActiveSection] = useState<WorkspaceSection>("LOTS");
 
   async function refresh(dateFilter = createdDate) {
     const query = dateFilter ? `?createdDate=${encodeURIComponent(dateFilter)}` : "";
@@ -227,22 +233,30 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
       {feedback ? <p className="mt-4 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm">{feedback}</p> : null}
     </section> : null}
 
-    <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
+    <nav className="flex flex-wrap gap-2 rounded border border-slate-200 bg-white p-2 shadow-executive" aria-label="Áreas de baixas do Consignado">
+      <button className={`rounded px-4 py-2 text-sm font-semibold ${activeSection === "LOTS" ? "bg-primary text-white" : "text-slate-600 hover:bg-slate-50"}`} onClick={() => setActiveSection("LOTS")} type="button">Baixas e remessas</button>
+      <button className={`rounded px-4 py-2 text-sm font-semibold ${activeSection === "PDD" ? "bg-primary text-white" : "text-slate-600 hover:bg-slate-50"}`} onClick={() => setActiveSection("PDD")} type="button">Base histórica PDD</button>
+      <a className="rounded px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50" href="/dashboard/operacional/financeiro/conciliacao/consignado/baixas/titulos-fora-remessa">Títulos fora da remessa</a>
+    </nav>
+
+    {activeSection === "PDD" ? <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><h2 className="font-semibold text-slate-950">Base histórica de baixas PDD</h2><p className="mt-1 text-sm text-slate-500">{workspace.pddSummary.titleCount.toLocaleString("pt-BR")} títulos armazenados. Esta base separa recuperações de PDD dos títulos realmente não encontrados.</p>{workspace.pddSummary.lastImport ? <p className="mt-1 text-xs text-slate-500">Última importação: {workspace.pddSummary.lastImport.fileName} em {date(workspace.pddSummary.lastImport.createdAt)}</p> : null}</div>
         {canManage ? <form className="flex flex-wrap items-end gap-3" onSubmit={importPdd}><label className="text-sm">Planilha consolidada<input accept=".xlsx" className="mt-1 block h-10 rounded border border-slate-200 px-3 py-2 text-sm" ref={pddFileRef} required type="file" /></label><button className="inline-flex h-10 items-center gap-2 rounded border border-primary bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60" disabled={pending}><UploadCloud className="h-4 w-4" />Importar base PDD</button></form> : null}
       </div>
       {pddFeedback ? <p className="mt-4 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm">{pddFeedback}</p> : null}
-    </section>
+    </section> : null}
 
-    <section className="overflow-hidden rounded border border-slate-200 bg-white shadow-executive">
+    {activeSection === "LOTS" ? <section className="overflow-hidden rounded border border-slate-200 bg-white shadow-executive">
       <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 p-5">
         <div><h2 className="font-semibold">Lotes de baixa</h2><p className="mt-1 text-sm text-slate-500">Resultado, divergências, correções e remessas geradas.</p></div>
-        <form className="flex flex-wrap items-end gap-2" onSubmit={filterBatches}>
-          <label className="text-sm">Processado em<input className="mt-1 block h-9 rounded border border-slate-200 px-3" onChange={(event) => setCreatedDate(event.target.value)} type="date" value={createdDate} /></label>
-          <button className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-60" disabled={pending || !createdDate} type="submit">Filtrar</button>
-          <button className="h-9 rounded border border-slate-300 px-3 text-sm font-semibold disabled:opacity-60" disabled={pending || !createdDate} onClick={() => void showRecentBatches()} type="button">Todos recentes</button>
-        </form>
+        <div className="flex flex-wrap items-end gap-3">
+          <form className="flex flex-wrap items-end gap-2" onSubmit={filterBatches}>
+            <label className="text-sm">Processado em<input className="mt-1 block h-9 rounded border border-slate-200 px-3" onChange={(event) => setCreatedDate(event.target.value)} type="date" value={createdDate} /></label>
+            <button className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-60" disabled={pending || !createdDate} type="submit">Filtrar</button>
+            <button className="h-9 rounded border border-slate-300 px-3 text-sm font-semibold disabled:opacity-60" disabled={pending || !createdDate} onClick={() => void showRecentBatches()} type="button">Todos recentes</button>
+          </form>
+        </div>
       </div>
       {workspace.batches.length ? <div className="divide-y divide-slate-200">{workspace.batches.map((batch) => {
         const issues = batch.items.filter((item) => !item.approved && item.status !== "EXCLUDED");
@@ -259,8 +273,24 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
         const activeFilter = issueFilters[batch.id] ?? (underpaidItems.length ? "UNDERPAID" : pddItems.length ? "PDD" : notFoundItems.length ? "NOT_FOUND" : "OTHER");
         const totals = underpaidTotals(underpaidItems);
         const canCancel = !batch.remittances.some((remittance) => remittance.status !== "CANCELLED");
+        const financial = batch.financialSummary;
         return <details className="p-5" key={batch.id}>
-          <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-4"><div><p className="font-semibold">{batch.source} · {batch.originator?.name} · {batch.fileName}</p><p className="mt-1 text-xs text-slate-500">Processado em {dateTime(batch.createdAt)} · Estoque {date(batch.stockBatch.referenceDate)} v{batch.stockBatch.version} · {batch.totalItems.toLocaleString("pt-BR")} títulos</p></div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-3 py-1 text-xs font-semibold ${pendingIssues.length ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{pendingIssues.length ? `${pendingIssues.length} para revisar` : "Pronto"}</span>{canManage && canCancel ? <button className="inline-flex h-8 items-center gap-1 rounded border border-red-200 px-2 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={pending} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void cancelBatch(batch); }} type="button"><Trash2 className="h-3.5 w-3.5" />Excluir da visualização</button> : null}</div></summary>
+          <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">{batch.source} · {batch.originator?.name} · {batch.fileName}</p>
+              <p className="mt-1 text-xs text-slate-500">Processado em {dateTime(batch.createdAt)} · Estoque {date(batch.stockBatch.referenceDate)} v{batch.stockBatch.version} · {batch.totalItems.toLocaleString("pt-BR")} títulos</p>
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+                <span><span className="text-slate-500">Valor pago:</span> <strong>{money(financial.paidAmount)}</strong></span>
+                <span><span className="text-slate-500">Valor da remessa:</span> <strong>{financial.reconciliationStatus === "NO_REMITTANCE" ? "—" : money(financial.remittanceAmount)}</strong></span>
+                <span className={`rounded-full px-2.5 py-1 font-semibold ${financialStatusClass[financial.reconciliationStatus]}`}>Financeiro: {financialStatusLabel[financial.reconciliationStatus]}</span>
+              </div>
+              {financial.entries.length ? <div className="mt-2 space-y-1 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                <p className="font-semibold text-slate-700">Entradas vinculadas</p>
+                {financial.entries.map((entry) => <p key={`${entry.reconciliationId}-${entry.id}`}><span className="font-medium text-slate-900">{date(entry.transactionDate)} · {entry.description}</span>{entry.document ? ` · Dcto. ${entry.document}` : ""} · entrada {money(entry.amount)} · alocado {money(entry.allocatedAmount)} · conciliado em {dateTime(entry.reconciledAt)}</p>)}
+              </div> : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-3 py-1 text-xs font-semibold ${pendingIssues.length ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{pendingIssues.length ? `${pendingIssues.length} para revisar` : "Pronto"}</span>{canManage && canCancel ? <button className="inline-flex h-8 items-center gap-1 rounded border border-red-200 px-2 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={pending} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void cancelBatch(batch); }} type="button"><Trash2 className="h-3.5 w-3.5" />Excluir da visualização</button> : null}</div>
+          </summary>
           <div className="mt-5 space-y-5">
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">{[["Recebidos", batch.totalItems], ["Valor total do arquivo", money(batch.receivedAmount)], ["Completos", batch.fullItems], ["Parciais", batch.partialItems], ["Fora/revisão", batch.issueItems], ["Encontrado", money(batch.matchedAmount)], ["Não incluído", money(batch.excludedAmount)]].map(([label, value]) => <div className="rounded border border-slate-200 bg-slate-50 p-3" key={label}><p className="text-xs text-slate-500">{label}</p><p className="mt-1 font-semibold">{value}</p></div>)}</div>
             {issues.length || pddItems.length ? <section className="rounded border border-amber-200 bg-amber-50/30 p-4">
@@ -294,10 +324,10 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
               {activeFilter === "NOT_FOUND" ? <div className="mt-4 space-y-3">{notFoundItems.length ? notFoundItems.map((item) => renderIssueItem(batch, item)) : <p className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-500">Nenhum título não encontrado.</p>}</div> : null}
               {activeFilter === "OTHER" ? <div className="mt-4 space-y-3">{otherItems.length ? otherItems.map((item) => renderIssueItem(batch, item)) : <p className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-500">Nenhuma outra divergência.</p>}</div> : null}
             </section> : <div className="flex items-center gap-2 rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><CheckCircle2 className="h-4 w-4" />Todos os títulos estão aptos.</div>}
-            {batch.remittances.length ? <div className="space-y-2">{batch.remittances.map((remittance) => <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-slate-200 p-3" key={remittance.id}><div><p className="text-sm font-semibold">{remittance.fileName}</p><p className="text-xs text-slate-500">{remittance.totalItems} títulos · {money(remittance.totalAmount)} · {stockStatusLabel[remittance.stockStatus] ?? remittance.stockStatus}</p></div><a className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm font-semibold" href={`/api/operacional/consignado/remessas/${remittance.id}/download`}><Download className="h-4 w-4" />Baixar REM</a></div>)}</div> : canManage ? <button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60" disabled={pending || batch.items.every((item) => !item.approved)} onClick={() => void generate(batch.id)} type="button">{pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}Gerar remessa com aptos</button> : null}
+            {batch.remittances.length ? <div className="space-y-2">{batch.remittances.map((remittance) => <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-slate-200 p-3" key={remittance.id}><div><p className="text-sm font-semibold">{remittance.fileName}</p><p className="text-xs text-slate-500">{remittance.totalItems} títulos · {money(remittance.totalAmount)} · {stockStatusLabel[remittance.stockStatus] ?? remittance.stockStatus}</p></div><div className="flex flex-wrap items-center gap-2"><a className="inline-flex h-9 items-center rounded border border-slate-300 px-3 text-sm font-semibold" href={`/dashboard/operacional/financeiro/conciliacao/consignado/baixas/titulos-fora-remessa?remittanceId=${encodeURIComponent(remittance.id)}`}>Ver títulos fora</a><a className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm font-semibold" href={`/api/operacional/consignado/titulos-fora-remessa/export?remittanceId=${encodeURIComponent(remittance.id)}`}><Download className="h-4 w-4" />Exportar Excel</a><a className="inline-flex h-9 items-center gap-2 rounded border border-slate-300 px-3 text-sm font-semibold" href={`/api/operacional/consignado/remessas/${remittance.id}/download`}><Download className="h-4 w-4" />Baixar REM</a></div></div>)}</div> : canManage ? <button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60" disabled={pending || batch.items.every((item) => !item.approved)} onClick={() => void generate(batch.id)} type="button">{pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}Gerar remessa com aptos</button> : null}
           </div>
         </details>;
       })}</div> : <div className="p-8 text-center text-sm text-slate-500"><AlertTriangle className="mx-auto mb-2 h-5 w-5" />{createdDate ? "Nenhum lote processado nesta data." : "Nenhum lote processado."}</div>}
-    </section>
+    </section> : null}
   </div>;
 }
