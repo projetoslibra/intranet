@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DuplicateSettlementFileError, findPreviouslyRemittedTitle, remittanceDownloadEligibility } from "./consignado-settlement-safety";
+import { assertRemittanceCancellationAllowed, DuplicateSettlementFileError, findPreviouslyRemittedTitle, remittanceDownloadEligibility } from "./consignado-settlement-safety";
 
 test("arquivo com o mesmo conteudo e nome diferente e bloqueado definitivamente", () => {
   const error = new DuplicateSettlementFileError({ batchId: "batch-1", fileName: "CB18081ECO.REM", processedAt: new Date("2026-08-18T15:52:00Z") });
@@ -24,4 +24,15 @@ test("download so e liberado por conciliacao ativa e matematicamente completa", 
   assert.deepEqual(remittanceDownloadEligibility({ status: "RECONCILED", totalAmount: 900, allocatedAmount: 900, adjustedAmount: 0, activeReconciliations: 1 }), { allowed: true, reason: null });
   assert.deepEqual(remittanceDownloadEligibility({ status: "RECONCILED", totalAmount: 900, allocatedAmount: 850, adjustedAmount: 50, activeReconciliations: 1 }), { allowed: true, reason: null });
   assert.equal(remittanceDownloadEligibility({ status: "RECONCILED", totalAmount: 900, allocatedAmount: 900, adjustedAmount: 0, activeReconciliations: 0 }).allowed, false);
+});
+
+test("permite cancelar remessa pendente sem vinculo financeiro ativo", () => {
+  assert.doesNotThrow(() => assertRemittanceCancellationAllowed({ status: "GENERATED", activeReconciliations: 0 }));
+  assert.doesNotThrow(() => assertRemittanceCancellationAllowed({ status: "RECONCILING", activeReconciliations: 0 }));
+});
+
+test("impede cancelar remessa conciliada, ja cancelada ou com conciliacao ativa", () => {
+  assert.throws(() => assertRemittanceCancellationAllowed({ status: "GENERATED", activeReconciliations: 1 }), /desfaça a conciliação/i);
+  assert.throws(() => assertRemittanceCancellationAllowed({ status: "RECONCILED", activeReconciliations: 1 }), /desfaça a conciliação/i);
+  assert.throws(() => assertRemittanceCancellationAllowed({ status: "CANCELLED", activeReconciliations: 0 }), /já foi cancelada/i);
 });

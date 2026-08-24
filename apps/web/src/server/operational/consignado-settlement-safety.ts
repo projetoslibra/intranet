@@ -47,3 +47,8 @@ export function remittanceDownloadEligibility(input: { status: string; totalAmou
   const allowed = input.status === "RECONCILED" && input.activeReconciliations > 0 && settled + 0.005 >= input.totalAmount;
   return { allowed, reason: allowed ? null : "Aguardando conciliação bancária." };
 }
+
+export function assertRemittanceCancellationAllowed(input: { status: string; activeReconciliations: number }) {
+  if (input.status === "CANCELLED") throw new Error("Esta remessa já foi cancelada.");
+  if (input.activeReconciliations > 0 || input.status === "RECONCILED") throw new Error("Esta remessa possui conciliação ativa. Desfaça a conciliação antes de cancelar.");
+}

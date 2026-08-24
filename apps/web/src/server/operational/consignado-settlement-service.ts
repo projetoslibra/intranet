@@ -8,7 +8,7 @@ import { parseBmpCnab, parseUy3Workbook, type ParsedSettlementItem } from "./con
 import { classifyPddMatch, getConsignadoPddSummary, loadConsignadoPddTitles } from "./consignado-pdd-service";
 import { saoPauloDayRange } from "./consignado-date";
 import { buildRemittanceExclusionPersistence, selectRemittanceItems } from "./consignado-remittance-exclusions";
-import { DuplicateSettlementFileError, findPreviouslyRemittedTitle, remittanceDownloadEligibility, RemittanceDownloadBlockedError, type PreviousRemittanceTitle } from "./consignado-settlement-safety";
+import { assertRemittanceCancellationAllowed, DuplicateSettlementFileError, findPreviouslyRemittedTitle, remittanceDownloadEligibility, RemittanceDownloadBlockedError, type PreviousRemittanceTitle } from "./consignado-settlement-safety";
 
 const CONSIGNADO_CNPJ = "54842157000193";
 export const BULK_UNDERPAID_LIMIT_PERCENT = 10;
@@ -355,6 +355,26 @@ export async function getRemittanceDownload(remittanceId: string) {
   return { fileName: remittance.fileName, stream: blob.stream };
 }
 
+export async function cancelSettlementRemittance(remittanceId: string, userId: string) {
+  const remittance = await prisma.$transaction(async (tx) => {
+    const current = await tx.consignadoRemittance.findUniqueOrThrow({
+      where: { id: remittanceId },
+      include: {
+        bankAllocations: { where: { reconciliation: { status: "ACTIVE" } }, select: { reconciliationId: true } },
+        bankAdjustments: { where: { reconciliation: { status: "ACTIVE" } }, select: { reconciliationId: true } },
+      },
+    });
+    const activeReconciliations = new Set([...current.bankAllocations, ...current.bankAdjustments].map((item) => item.reconciliationId)).size;
+    assertRemittanceCancellationAllowed({ status: current.status, activeReconciliations });
+    await tx.consignadoRemittance.update({ where: { id: current.id }, data: { status: "CANCELLED" } });
+    await tx.consignadoSettlementBatch.update({ where: { id: current.batchId }, data: { status: "READY" } });
+    await tx.consignadoStatusEvent.create({ data: { userId, entityType: "REMITTANCE", entityId: current.id, fromStatus: current.status, toStatus: "CANCELLED", metadata: { fileName: current.fileName, reason: "CANCELLED_BY_OPERATOR" } } });
+    return current;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  await del(remittance.storageKey).catch(() => undefined);
+  return { id: remittance.id, batchId: remittance.batchId };
+}
+
 export async function cancelSettlementBatch(batchId: string, userId: string) {
   const fund = await consignadoFund();
   return prisma.$transaction(async (tx) => {
@@ -391,6 +411,7 @@ export async function getSettlementWorkspace(input: { createdDate?: string } = {
         originator: true,
         stockBatch: { select: { referenceDate: true, version: true } },
         remittances: {
+          where: { status: { not: "CANCELLED" } },
           select: {
             id: true,
             fileName: true,
@@ -466,7 +487,7 @@ export async function getSettlementWorkspace(input: { createdDate?: string } = {
 export async function reconcileRemittancesWithStock(stockBatchId: string, userId?: string) {
   const stock = await prisma.importBatch.findFirstOrThrow({ where: { id: stockBatchId, status: "COMPLETED" }, select: { id: true, fundId: true, referenceDate: true, isActive: true } });
   if (!stock.isActive || !stock.fundId || !stock.referenceDate) return { processed: 0 };
-  const remittances = await prisma.consignadoRemittance.findMany({ where: { fundId: stock.fundId, stockStatus: { in: ["AWAITING_NEXT_STOCK", "STILL_IN_STOCK"] }, batch: { referenceDate: { lt: stock.referenceDate } } }, include: { items: true } });
+  const remittances = await prisma.consignadoRemittance.findMany({ where: { fundId: stock.fundId, status: { not: "CANCELLED" }, stockStatus: { in: ["AWAITING_NEXT_STOCK", "STILL_IN_STOCK"] }, batch: { referenceDate: { lt: stock.referenceDate } } }, include: { items: true } });
   for (const remittance of remittances) {
     for (const item of remittance.items) {
       if (!item.yourNumber && !item.documentNumber) {
