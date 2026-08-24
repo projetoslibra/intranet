@@ -4,7 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Calculator, Info, Trash2 } from "lucide-react";
 import {
   calculateDebtorPddAfterReduction,
+  pddDaysLate,
   pddDebtorKey,
+  pddRangeLabelForDelay,
+  pddRateForDelay,
   type LogicaPddTitle,
 } from "@/lib/logica-pdd";
 
@@ -27,6 +30,14 @@ type HistoricalRow = {
 
 type ForecastInput = {
   pddDelta: number;
+};
+
+type ForecastPddMovement = {
+  turnoverItems: PddCompositionItem[];
+  reversalItems: PddCompositionItem[];
+  turnoverValue: number;
+  reversalValue: number;
+  netValue: number;
 };
 
 type ForecastStockTitle = LogicaPddTitle & {
@@ -399,9 +410,10 @@ function calculateAverageFundCost(rows: HistoricalRow[]) {
 }
 
 type StockReductionPanelProps = {
+  appliedReductionBatches: AppliedReductionBatch[];
   stockData: ForecastStockData;
   futureDates: string[];
-  onApplyReduction: (date: string, reversalValue: number) => void;
+  onAppliedReductionBatchesChange: (batches: AppliedReductionBatch[]) => void;
 };
 
 type AppliedTitleReduction = {
@@ -456,7 +468,7 @@ function calculateAppliedReductionState(
         (title) => pddDebtorKey(title) === key
       );
       const previousPdd = calculateDebtorPddAfterReduction(
-        stockData.latestDate,
+        batch.reductionDate,
         debtorTitles,
         appliedTitleIds
       );
@@ -467,7 +479,7 @@ function calculateAppliedReductionState(
         .forEach((title) => nextAppliedTitleIds.add(title.id));
 
       const nextPdd = calculateDebtorPddAfterReduction(
-        stockData.latestDate,
+        batch.reductionDate,
         debtorTitles,
         nextAppliedTitleIds
       );
@@ -546,9 +558,141 @@ function sumReversalByDate(batches: ComputedAppliedReductionBatch[]) {
   return result;
 }
 
+function batchTitleIdsUntil(
+  batches: AppliedReductionBatch[],
+  date: string,
+  inclusive = true
+) {
+  const result = new Set<string>();
+
+  batches.forEach((batch) => {
+    const shouldInclude = inclusive
+      ? batch.reductionDate <= date
+      : batch.reductionDate < date;
+
+    if (shouldInclude) {
+      batch.titleIds.forEach((titleId) => result.add(titleId));
+    }
+  });
+
+  return result;
+}
+
+function groupForecastTitlesByDebtor(titles: ForecastStockTitle[]) {
+  const result = new Map<string, ForecastStockTitle[]>();
+
+  titles.forEach((title) => {
+    const key = pddDebtorKey(title);
+    const current = result.get(key) ?? [];
+
+    current.push(title);
+    result.set(key, current);
+  });
+
+  return result;
+}
+
+function calculateForecastPddMovements(
+  stockData: ForecastStockData,
+  futureDates: string[],
+  appliedReductionBatches: AppliedReductionBatch[]
+) {
+  const result = new Map<string, ForecastPddMovement>();
+  const emptyMovement = (): ForecastPddMovement => ({
+    turnoverItems: [],
+    reversalItems: [],
+    turnoverValue: 0,
+    reversalValue: 0,
+    netValue: 0,
+  });
+
+  if (!stockData) {
+    futureDates.forEach((date) => result.set(date, emptyMovement()));
+    return result;
+  }
+
+  const computedBatches = calculateAppliedReductionState(
+    stockData,
+    appliedReductionBatches
+  ).computedBatches;
+  const reversalItemsByDate = new Map<string, PddCompositionItem[]>();
+  const reversalByDate = sumReversalByDate(computedBatches);
+
+  computedBatches.forEach((batch) => {
+    reversalItemsByDate.set(batch.reductionDate, [
+      ...(reversalItemsByDate.get(batch.reductionDate) ?? []),
+      ...batch.pddItems.map((item) => ({
+        ...item,
+        detail: `${item.detail ?? "Cedente"} · ${batch.debtorNames.join(", ")}`,
+      })),
+    ]);
+  });
+
+  futureDates.forEach((date, index) => {
+    const previousDate =
+      index === 0 ? stockData.latestDate : futureDates[index - 1];
+    const reducedTitleIds = batchTitleIdsUntil(
+      appliedReductionBatches,
+      date,
+      true
+    );
+    const turnoverItems: PddCompositionItem[] = [];
+    const debtors = groupForecastTitlesByDebtor(
+      stockData.titles.filter((title) => !reducedTitleIds.has(title.id))
+    );
+
+    debtors.forEach((debtorTitles) => {
+      const previousDelay = Math.max(
+        0,
+        ...debtorTitles.map((title) =>
+          pddDaysLate(previousDate, title.originalDueDate)
+        )
+      );
+      const nextDelay = Math.max(
+        0,
+        ...debtorTitles.map((title) => pddDaysLate(date, title.originalDueDate))
+      );
+      const previousRate = pddRateForDelay(previousDelay);
+      const nextRate = pddRateForDelay(nextDelay);
+      const deltaRate = nextRate - previousRate;
+
+      if (deltaRate <= 0) {
+        return;
+      }
+
+      const previousRange = pddRangeLabelForDelay(previousDelay);
+      const nextRange = pddRangeLabelForDelay(nextDelay);
+
+      debtorTitles.forEach((title) => {
+        turnoverItems.push({
+          detail: `${title.debtorName} · ${previousRange} para ${nextRange}`,
+          label: title.cedentName,
+          value: title.presentValue * deltaRate,
+        });
+      });
+    });
+
+    const turnover = mergePddItems(turnoverItems);
+    const reversal = mergePddItems(reversalItemsByDate.get(date) ?? []);
+    const turnoverValue = sumPddItems(turnover);
+    const reversalValue = reversalByDate.get(date) ?? 0;
+
+    result.set(date, {
+      turnoverItems: turnover,
+      reversalItems: reversal,
+      turnoverValue,
+      reversalValue,
+      netValue: turnoverValue - reversalValue,
+    });
+  });
+
+  return result;
+}
+
 function StockReductionPanel({
+  appliedReductionBatches,
   futureDates,
-  onApplyReduction,
+  onAppliedReductionBatchesChange,
   stockData,
 }: StockReductionPanelProps) {
   const defaultDate = futureDates[0] ?? "";
@@ -562,10 +706,6 @@ function StockReductionPanel({
   const [selectedTitleIds, setSelectedTitleIds] = useState<Set<string>>(
     () => new Set()
   );
-  const [appliedReductionBatches, setAppliedReductionBatches] = useState<
-    AppliedReductionBatch[]
-  >([]);
-
   useEffect(() => {
     if (!stockData) {
       return;
@@ -686,10 +826,6 @@ function StockReductionPanel({
   const appliedTitleIds = appliedReductionState.appliedTitleIds;
   const computedAppliedReductionBatches =
     appliedReductionState.computedBatches;
-  const appliedReversalByDate = useMemo(
-    () => sumReversalByDate(computedAppliedReductionBatches),
-    [computedAppliedReductionBatches]
-  );
   const selectedTitles = useMemo(
     () =>
       cedentTitles.filter(
@@ -731,14 +867,14 @@ function StockReductionPanel({
         (item) => pddDebtorKey(item) === key
       );
       const previousPdd = calculateDebtorPddAfterReduction(
-        stockData.latestDate,
+        reductionDate || stockData.latestDate,
         debtorTitles,
         appliedTitleIds
       );
       const nextAppliedTitleIds = new Set(appliedTitleIds);
       nextAppliedTitleIds.add(title.id);
       const nextPdd = calculateDebtorPddAfterReduction(
-        stockData.latestDate,
+        reductionDate || stockData.latestDate,
         debtorTitles,
         nextAppliedTitleIds
       );
@@ -747,7 +883,7 @@ function StockReductionPanel({
     }
 
     return result;
-  }, [appliedTitleIds, appliedTitleReductions, cedentTitles, stockData]);
+  }, [appliedTitleIds, appliedTitleReductions, cedentTitles, reductionDate, stockData]);
   const reductionSimulation = useMemo(() => {
     if (!stockData) {
       return {
@@ -769,7 +905,7 @@ function StockReductionPanel({
         (title) => pddDebtorKey(title) === key
       );
       const previousPdd = calculateDebtorPddAfterReduction(
-        stockData.latestDate,
+        reductionDate || stockData.latestDate,
         debtorTitles,
         appliedTitleIds
       );
@@ -780,7 +916,7 @@ function StockReductionPanel({
         .forEach((title) => nextAppliedTitleIds.add(title.id));
 
       const nextPdd = calculateDebtorPddAfterReduction(
-        stockData.latestDate,
+        reductionDate || stockData.latestDate,
         debtorTitles,
         nextAppliedTitleIds
       );
@@ -819,7 +955,7 @@ function StockReductionPanel({
       reversalValue: Math.max(0, currentPdd - newPdd),
       affectedDebtors: affectedDebtorKeys.size,
     };
-  }, [appliedTitleIds, selectedTitles, stockData]);
+  }, [appliedTitleIds, reductionDate, selectedTitles, stockData]);
 
   function toggleTitle(titleId: string) {
     const title = cedentTitles.find((item) => item.id === titleId);
@@ -860,11 +996,8 @@ function StockReductionPanel({
       return;
     }
 
-    if (reductionSimulation.reversalValue > 0) {
-      onApplyReduction(reductionDate, reductionSimulation.reversalValue);
-    }
-    setAppliedReductionBatches((current) => [
-      ...current,
+    onAppliedReductionBatchesChange([
+      ...appliedReductionBatches,
       {
         id: `${Date.now()}-${selectedTitles.map((title) => title.id).join("-")}`,
         reductionDate,
@@ -879,29 +1012,11 @@ function StockReductionPanel({
       return;
     }
 
-    const previousTotals = appliedReversalByDate;
     const nextBatches = appliedReductionBatches.filter(
       (batch) => batch.id !== batchId
     );
-    const nextComputedBatches = calculateAppliedReductionState(
-      stockData,
-      nextBatches
-    ).computedBatches;
-    const nextTotals = sumReversalByDate(nextComputedBatches);
-    const affectedDates = new Set([
-      ...Array.from(previousTotals.keys()),
-      ...Array.from(nextTotals.keys()),
-    ]);
 
-    affectedDates.forEach((date) => {
-      const delta = (nextTotals.get(date) ?? 0) - (previousTotals.get(date) ?? 0);
-
-      if (Math.abs(delta) >= 0.005) {
-        onApplyReduction(date, delta);
-      }
-    });
-
-    setAppliedReductionBatches(nextBatches);
+    onAppliedReductionBatchesChange(nextBatches);
     setSelectedTitleIds(new Set());
   }
 
@@ -1384,6 +1499,9 @@ export function QuotaForecastPlanner({
   const [viewDate, setViewDate] = useState(defaultViewDate);
   const [shareQuantity, setShareQuantity] = useState(baseShareQuantity);
   const [inputs, setInputs] = useState<Record<string, ForecastInput>>({});
+  const [appliedReductionBatches, setAppliedReductionBatches] = useState<
+    AppliedReductionBatch[]
+  >([]);
   const averageCreditRightsRevenue = useMemo(
     () => calculateAverageCreditRightsRevenue(historicalRows),
     [historicalRows]
@@ -1402,6 +1520,20 @@ export function QuotaForecastPlanner({
     () => buildFutureDates(lastHistorical?.date ?? null, viewDate),
     [lastHistorical?.date, viewDate]
   );
+  const pddMovementsByDate = useMemo(
+    () =>
+      calculateForecastPddMovements(
+        stockData,
+        futureDates,
+        appliedReductionBatches
+      ),
+    [appliedReductionBatches, futureDates, stockData]
+  );
+
+  useEffect(() => {
+    setAppliedReductionBatches([]);
+    setInputs({});
+  }, [selectedFundId, stockData?.latestDate]);
 
   const projections = useMemo(() => {
     let previousPl = lastPatrimonio;
@@ -1416,10 +1548,20 @@ export function QuotaForecastPlanner({
 
     return futureDates.map((date) => {
       const input = inputs[date] ?? { pddDelta: 0 };
+      const pddMovement = pddMovementsByDate.get(date) ?? {
+        turnoverItems: [],
+        reversalItems: [],
+        turnoverValue: 0,
+        reversalValue: 0,
+        netValue: 0,
+      };
+      const manualPddDelta = input.pddDelta;
+      const pddDelta = pddMovement.netValue + manualPddDelta;
+
       previousCreditRights += averageCreditRightsRevenue;
-      previousPdd -= input.pddDelta;
+      previousPdd -= pddDelta;
       previousPl =
-        previousPl + averageCreditRightsRevenue - averageFundCost - input.pddDelta;
+        previousPl + averageCreditRightsRevenue - averageFundCost - pddDelta;
       const quotaValue = quantity > 0 ? previousPl / quantity : 0;
       const returnBase = quantity > 0 ? quotaValue : previousPl;
       const dailyReturn =
@@ -1443,7 +1585,13 @@ export function QuotaForecastPlanner({
         dailyReturn,
         monthlyReturn,
         yearlyReturn,
-        pddDelta: input.pddDelta,
+        manualPddDelta,
+        pddDelta,
+        pddReversal: pddMovement.reversalValue,
+        pddReversalItems: pddMovement.reversalItems,
+        pddTurnover: pddMovement.turnoverValue,
+        pddTurnoverItems: pddMovement.turnoverItems,
+        pddNet: pddMovement.netValue,
       };
     });
   }, [
@@ -1456,6 +1604,7 @@ export function QuotaForecastPlanner({
     lastPatrimonio,
     lastPdd,
     lastYearlyReturn,
+    pddMovementsByDate,
     shareQuantity,
   ]);
 
@@ -1471,19 +1620,6 @@ export function QuotaForecastPlanner({
         pddDelta: toInputNumber(value),
       },
     }));
-  }
-
-  function applyStockReduction(date: string, reversalValue: number) {
-    setInputs((current) => {
-      const currentValue = current[date]?.pddDelta ?? 0;
-
-      return {
-        ...current,
-        [date]: {
-          pddDelta: currentValue - reversalValue,
-        },
-      };
-    });
   }
 
   const projectedDailyReturn = finalProjection?.dailyReturn ?? 0;
@@ -1567,16 +1703,43 @@ export function QuotaForecastPlanner({
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-[1440px] border-collapse text-sm">
+            <table className="min-w-[1780px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
                   <th className="px-4 py-3 text-left font-semibold">Data</th>
                   <th className="px-4 py-3 text-right font-semibold">
                     <span
                       className="inline-flex items-center justify-end gap-1"
-                      title="Valor positivo aumenta a PDD/provisão, deixa a PDD projetada mais negativa e reduz o PL. Valor negativo representa reversão de PDD, deixa a PDD menos negativa e aumenta o PL."
+                      title="Viradas futuras calculadas pela lógica PDD: sacados que mudam de faixa nesta data, já excluindo títulos baixados na simulação até esta data."
                     >
-                      Variação PDD
+                      Viradas
+                      <Info className="h-3.5 w-3.5 text-slate-400" />
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-right font-semibold">
+                    <span
+                      className="inline-flex items-center justify-end gap-1"
+                      title="Reversões de PDD geradas pelas baixas simuladas para esta data."
+                    >
+                      Reversão
+                      <Info className="h-3.5 w-3.5 text-slate-400" />
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-right font-semibold">
+                    <span
+                      className="inline-flex items-center justify-end gap-1"
+                      title="Viradas menos Reversão. Valor positivo aumenta a PDD/provisão e reduz o PL; valor negativo representa reversão líquida e aumenta o PL."
+                    >
+                      Líquido PDD
+                      <Info className="h-3.5 w-3.5 text-slate-400" />
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-right font-semibold">
+                    <span
+                      className="inline-flex items-center justify-end gap-1"
+                      title="Ajuste manual adicional. Valor positivo aumenta a PDD/provisão e reduz o PL; valor negativo representa reversão manual e aumenta o PL."
+                    >
+                      Ajuste manual PDD
                       <Info className="h-3.5 w-3.5 text-slate-400" />
                     </span>
                   </th>
@@ -1612,6 +1775,29 @@ export function QuotaForecastPlanner({
                   <tr className="border-b border-slate-100 last:border-0" key={row.date}>
                     <td className="px-4 py-3 font-medium text-slate-700">
                       {formatDate(row.date)}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-amber-700">
+                      <PddCompositionTooltip
+                        caption="Viradas de faixa previstas para esta data pela lógica PDD, já desconsiderando títulos baixados na simulação."
+                        items={row.pddTurnoverItems}
+                        value={row.pddTurnover}
+                      />
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-emerald-700">
+                      <PddCompositionTooltip
+                        caption="Reversões de PDD geradas pelas baixas simuladas nesta data."
+                        items={row.pddReversalItems}
+                        value={row.pddReversal}
+                      />
+                    </td>
+                    <td
+                      className={
+                        row.pddNet >= 0
+                          ? "px-4 py-3 text-right font-semibold text-red-700"
+                          : "px-4 py-3 text-right font-semibold text-emerald-700"
+                      }
+                    >
+                      {formatSignedCurrency(row.pddNet)}
                     </td>
                     <td className="px-4 py-3">
                       <input
@@ -1667,7 +1853,25 @@ export function QuotaForecastPlanner({
                   <td className="px-4 py-3">Total</td>
                   <td className="px-4 py-3 text-right">
                     {formatSignedCurrency(
-                      projections.reduce((total, row) => total + row.pddDelta, 0)
+                      projections.reduce((total, row) => total + row.pddTurnover, 0)
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {formatSignedCurrency(
+                      projections.reduce((total, row) => total + row.pddReversal, 0)
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {formatSignedCurrency(
+                      projections.reduce((total, row) => total + row.pddNet, 0)
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {formatSignedCurrency(
+                      projections.reduce(
+                        (total, row) => total + row.manualPddDelta,
+                        0
+                      )
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
@@ -1726,8 +1930,9 @@ export function QuotaForecastPlanner({
       </section>
 
       <StockReductionPanel
+        appliedReductionBatches={appliedReductionBatches}
         futureDates={futureDates}
-        onApplyReduction={applyStockReduction}
+        onAppliedReductionBatchesChange={setAppliedReductionBatches}
         stockData={stockData}
       />
     </div>

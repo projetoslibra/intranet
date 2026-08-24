@@ -1,5 +1,10 @@
 import { findDefaultFund, sortFundsByDisplayPriority } from "@/lib/fund-order";
-import { pddDaysLate, pddDebtorKey, pddRateForDelay } from "@/lib/logica-pdd";
+import {
+  pddDaysLate,
+  pddDebtorKey,
+  pddRangeLabelForDelay,
+  pddRateForDelay,
+} from "@/lib/logica-pdd";
 import { hasPermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import {
@@ -152,30 +157,6 @@ function buildHistoricalDates(
   return [...historicalDates, ...futureDates];
 }
 
-function pddRangeLabel(daysLate: number) {
-  if (daysLate <= 5) {
-    return "0 a 5 dias";
-  }
-
-  if (daysLate <= 30) {
-    return "6 a 30 dias";
-  }
-
-  if (daysLate <= 60) {
-    return "31 a 60 dias";
-  }
-
-  if (daysLate <= 90) {
-    return "61 a 90 dias";
-  }
-
-  if (daysLate <= 120) {
-    return "91 a 120 dias";
-  }
-
-  return "121+ dias";
-}
-
 function calculateDebtorProjection(date: string, titles: StockTitle[]) {
   const maxDelay = Math.max(
     0,
@@ -186,7 +167,7 @@ function calculateDebtorProjection(date: string, titles: StockTitle[]) {
   return {
     maxDelay,
     rate,
-    range: pddRangeLabel(maxDelay),
+    range: pddRangeLabelForDelay(maxDelay),
     totalPdd: titles.reduce(
       (total, title) => total + title.presentValue * rate,
       0
