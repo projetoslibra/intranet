@@ -1,7 +1,13 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
+import { uploadPresigned } from "@vercel/blob/client";
 import { AlertTriangle, CheckCircle2, Download, FileCheck2, Loader2, Search, Trash2, UploadCloud } from "lucide-react";
+import {
+  buildSettlementUploadPath,
+  consignadoSettlementUploadConfig,
+  readSettlementApiResponse,
+} from "../consignado-settlement-upload";
 
 type Candidate = { id: string; yourNumber: string | null; documentNumber: string | null; debtorName: string; debtorDocument: string; nominalValue: string; originalDueDate: string | null; adjustedDueDate: string | null; cedentName: string };
 type PddTitle = { id: string; remittanceFile: string | null; generatedAt: string | null; yourNumberUsed: string | null; documentNumber: string | null; debtorName: string | null; debtorDocument: string | null; nominalValue: string | null; pddValue: string | null; dueDate: string | null; writeOffType: string | null; originator: string | null };
@@ -47,6 +53,10 @@ function underpaidTotals(items: SettlementItem[]) {
   }, { nominal: 0, paid: 0, difference: 0 });
 }
 function paidTotal(items: SettlementItem[]) { return items.reduce((sum, item) => sum + Number(item.paidAmount), 0); }
+async function sha256(file: File) {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
+}
 
 export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { initialWorkspace: Workspace; canManage: boolean }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -56,6 +66,8 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
   const [originator, setOriginator] = useState("GIBB");
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStage, setUploadStage] = useState("");
   const [pddFeedback, setPddFeedback] = useState("");
   const [searches, setSearches] = useState<Record<string, string>>({});
   const [candidates, setCandidates] = useState<Record<string, Candidate[]>>({});
@@ -116,20 +128,41 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
     event.preventDefault();
     const file = fileRef.current?.files?.[0];
     if (!file) return;
+    if (file.size > consignadoSettlementUploadConfig.maxFileSize) {
+      setFeedback("O arquivo de baixa deve possuir no máximo 50 MB.");
+      return;
+    }
     setPending(true); setFeedback("");
+    setUploadProgress(0);
     try {
-      const form = new FormData();
-      form.set("file", file);
-      form.set("source", source);
-      if (source === "BMP") form.set("originator", originator);
-      const response = await fetch("/api/operacional/consignado/baixas", { method: "POST", body: form });
-      const payload = await response.json();
+      setUploadStage("Calculando identificação segura do arquivo...");
+      const fileHash = await sha256(file);
+      setUploadStage("Enviando arquivo para o armazenamento privado...");
+      const blob = await uploadPresigned(buildSettlementUploadPath({ source, fileName: file.name }), file, {
+        access: "private",
+        handleUploadUrl: "/api/operacional/consignado/baixas/upload",
+        onUploadProgress: ({ percentage }) => setUploadProgress(Math.round(percentage)),
+      });
+      setUploadStage("Processando e confrontando com o estoque ativo...");
+      const response = await fetch("/api/operacional/consignado/baixas", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          source,
+          originator: source === "UY3" ? "UY3" : originator,
+          fileName: file.name,
+          fileHash,
+          fileSize: file.size,
+          storageKey: blob.pathname,
+        }),
+      });
+      const payload = await readSettlementApiResponse(response);
       if (!payload.ok) throw new Error(payload.message);
       setFeedback(payload.message);
       fileRef.current!.value = "";
       await refresh();
     } catch (error) { setFeedback(error instanceof Error ? error.message : "Erro ao processar arquivo."); }
-    finally { setPending(false); }
+    finally { setPending(false); setUploadStage(""); setUploadProgress(0); }
   }
 
   async function importPdd(event: FormEvent) {
@@ -236,6 +269,7 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
         <label className="text-sm">Arquivo<input className="mt-1 block h-10 w-full rounded border border-slate-200 px-3 py-2 text-sm" accept={source === "BMP" ? ".rem,.txt" : ".xlsx"} ref={fileRef} required type="file" /></label>
         <button className="inline-flex h-10 items-center justify-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60" disabled={pending}><UploadCloud className="h-4 w-4" />{pending ? "Processando..." : "Processar"}</button>
       </form>
+      {pending && uploadStage ? <div className="mt-4 space-y-2"><div className="flex items-center justify-between gap-3 text-xs text-slate-600"><span>{uploadStage}</span>{uploadProgress > 0 ? <span>{uploadProgress}%</span> : null}</div><div className="h-2 overflow-hidden rounded bg-slate-100"><div className="h-full bg-primary transition-all" style={{ width: `${uploadProgress}%` }} /></div></div> : null}
       {feedback ? <p className={`mt-4 rounded border px-3 py-2 text-sm ${/já foi processado|bloqueado/i.test(feedback) ? "border-red-300 bg-red-50 font-semibold text-red-800" : "border-slate-200 bg-slate-50"}`}>{feedback}</p> : null}
     </section> : null}
 

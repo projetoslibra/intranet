@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { del, get, put } from "@vercel/blob";
+import { del, get, head, put } from "@vercel/blob";
 import { Prisma, type OperationalFlowSource, type SettlementItemStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { generateDaycovalCnab } from "./consignado-cnab";
@@ -9,6 +9,11 @@ import { classifyPddMatch, getConsignadoPddSummary, loadConsignadoPddTitles } fr
 import { saoPauloDayRange } from "./consignado-date";
 import { buildRemittanceExclusionPersistence, selectRemittanceItems } from "./consignado-remittance-exclusions";
 import { assertRemittanceCancellationAllowed, DuplicateSettlementFileError, findPreviouslyRemittedTitle, remittanceDownloadEligibility, RemittanceDownloadBlockedError, type PreviousRemittanceTitle } from "./consignado-settlement-safety";
+import {
+  assertSettlementBlobIntegrity,
+  validateSettlementUploadMetadata,
+  type SettlementUploadMetadata,
+} from "@/features/operational/consignado-settlement-upload";
 
 const CONSIGNADO_CNPJ = "54842157000193";
 export const BULK_UNDERPAID_LIMIT_PERCENT = 10;
@@ -136,7 +141,7 @@ export async function listConsignadoOriginators() {
   return prisma.consignadoOriginator.findMany({ where: { active: true }, orderBy: { code: "asc" } });
 }
 
-export async function importSettlementBatch(input: { userId: string; source: OperationalFlowSource; originatorCode?: string; fileName: string; buffer: Buffer }) {
+async function importSettlementBatchFromBuffer(input: { userId: string; source: OperationalFlowSource; originatorCode?: string; fileName: string; fileHash: string; storageKey: string; buffer: Buffer }) {
   const fund = await consignadoFund();
   const stock = await activeStock(fund.id);
   if (input.source === "BMP" && !["GIBB", "JUCA", "BANKERIZE"].includes(input.originatorCode ?? "")) {
@@ -146,14 +151,13 @@ export async function importSettlementBatch(input: { userId: string; source: Ope
     where: { code: (input.source === "UY3" ? "UY3" : input.originatorCode) as never, source: input.source, active: true },
   });
   if (!originator) throw new Error("Originador inválido ou inativo.");
-  const fileHash = createHash("sha256").update(input.buffer).digest("hex");
   const existing = await prisma.consignadoSettlementBatch.findFirst({
-    where: { fundId: fund.id, source: input.source, fileHash },
+    where: { fundId: fund.id, source: input.source, fileHash: input.fileHash },
     orderBy: { createdAt: "desc" },
     select: { id: true, fileName: true, createdAt: true },
   });
   if (existing) {
-    await prisma.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_DUPLICATE_ATTEMPT", entityId: existing.id, fromStatus: "BLOCKED", toStatus: "BLOCKED", metadata: { attemptedFileName: input.fileName, originalFileName: existing.fileName, fileHash } } });
+    await prisma.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_DUPLICATE_ATTEMPT", entityId: existing.id, fromStatus: "BLOCKED", toStatus: "BLOCKED", metadata: { attemptedFileName: input.fileName, originalFileName: existing.fileName, fileHash: input.fileHash } } });
     throw new DuplicateSettlementFileError({ batchId: existing.id, fileName: existing.fileName, processedAt: existing.createdAt });
   }
 
@@ -180,15 +184,11 @@ export async function importSettlementBatch(input: { userId: string; source: Ope
   const issueItems = matched.filter((item) => !MATCHABLE.has(item.status) && item.status !== "PDD_RECOVERY").length;
   const receivedAmount = matched.reduce((sum, entry) => sum.add(entry.item.paidAmount), new Prisma.Decimal(0));
   const matchedAmount = matched.filter((entry) => MATCHABLE.has(entry.status)).reduce((sum, entry) => sum.add(entry.item.paidAmount), new Prisma.Decimal(0));
-  const safeName = input.fileName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._-]/g, "-");
-  const storageKey = `operacional/consignado/baixas/${Date.now()}-${safeName}`;
-  await put(storageKey, input.buffer, { access: "private", addRandomSuffix: false, contentType: input.source === "BMP" ? "text/plain" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-
   try {
     const batch = await prisma.$transaction(async (tx) => {
       const created = await tx.consignadoSettlementBatch.create({ data: {
         fundId: fund.id, stockBatchId: stock.id, uploadedByUserId: input.userId, originatorId: originator.id,
-        source: input.source, fileName: input.fileName, fileHash, storageKey, referenceDate: stock.referenceDate!,
+        source: input.source, fileName: input.fileName, fileHash: input.fileHash, storageKey: input.storageKey, referenceDate: stock.referenceDate!,
         status: issueItems ? "REVIEW_REQUIRED" : "READY", totalItems: matched.length, fullItems, partialItems, issueItems,
         receivedAmount, matchedAmount, excludedAmount: receivedAmount.sub(matchedAmount), completedAt: new Date(),
       }});
@@ -204,8 +204,55 @@ export async function importSettlementBatch(input: { userId: string; source: Ope
     });
     return { batchId: batch.id };
   } catch (error) {
-    await del(storageKey).catch(() => undefined);
+    await del(input.storageKey).catch(() => undefined);
     throw error;
+  }
+}
+
+async function settlementStreamToBuffer(stream: ReadableStream): Promise<Buffer> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value instanceof Uint8Array ? value : new Uint8Array(value));
+  }
+  return Buffer.concat(chunks);
+}
+
+export async function importSettlementBatchFromBlob(input: SettlementUploadMetadata & { userId: string }) {
+  const metadata = validateSettlementUploadMetadata(input);
+  let persisted = false;
+  try {
+    const blobMetadata = await head(metadata.storageKey);
+    if (blobMetadata.size !== metadata.fileSize) {
+      throw new Error("O tamanho do arquivo armazenado não confere com o upload.");
+    }
+    const stored = await get(metadata.storageKey, { access: "private", useCache: false });
+    if (!stored || stored.statusCode !== 200 || !stored.stream) {
+      throw new Error("O arquivo privado de baixa não foi encontrado.");
+    }
+    const buffer = await settlementStreamToBuffer(stored.stream);
+    const actualHash = createHash("sha256").update(buffer).digest("hex");
+    assertSettlementBlobIntegrity({
+      declaredSize: metadata.fileSize,
+      declaredHash: metadata.fileHash,
+      actualSize: buffer.length,
+      actualHash,
+    });
+    const result = await importSettlementBatchFromBuffer({
+      userId: input.userId,
+      source: metadata.source,
+      originatorCode: metadata.originator,
+      fileName: metadata.fileName,
+      fileHash: metadata.fileHash,
+      storageKey: metadata.storageKey,
+      buffer,
+    });
+    persisted = true;
+    return result;
+  } finally {
+    if (!persisted) await del(metadata.storageKey).catch(() => undefined);
   }
 }
 
