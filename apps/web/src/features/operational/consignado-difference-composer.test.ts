@@ -10,6 +10,7 @@ import {
   normalizeOtherDifferencesForPayload,
   normalizePtBrMoneyInput,
   recoverDifferenceCompositionAfterRejection,
+  toggleAllVisibleExclusions,
   type EligibleExclusion,
   type OtherDifferenceDraft,
 } from "./consignado-difference-composer";
@@ -221,4 +222,53 @@ test("fecha diferença acima do limite seguro com o valor integral do título", 
   assert.equal(state.titleTotal, "90071992547409.92");
   assert.equal(state.unexplained, "0.00");
   assert.equal(state.canSubmit, true);
+});
+
+test("seleciona em lote somente títulos visíveis que cabem no saldo e preserva seleções ocultas", () => {
+  const hidden = { ...exclusion, id: "hidden", paidAmount: "20.00" };
+  const firstVisible = { ...exclusion, id: "visible-1", paidAmount: "50.00" };
+  const overflowingVisible = { ...exclusion, id: "visible-2", paidAmount: "35.00" };
+  const lastVisible = { ...exclusion, id: "visible-3", paidAmount: "15.00" };
+
+  const selectedIds = toggleAllVisibleExclusions({
+    difference: "100.00",
+    exclusions: [hidden, firstVisible, overflowingVisible, lastVisible],
+    visibleExclusionIds: [firstVisible.id, overflowingVisible.id, lastVisible.id],
+    selectedIds: [hidden.id],
+    otherDifferences: [{ ...completeOther, amount: "10.00" }],
+  });
+
+  assert.deepEqual(selectedIds, [hidden.id, firstVisible.id, lastVisible.id]);
+});
+
+test("limpa em lote os títulos visíveis quando todos já estão selecionados", () => {
+  const hidden = { ...exclusion, id: "hidden", paidAmount: "20.00" };
+  const firstVisible = { ...exclusion, id: "visible-1", paidAmount: "50.00" };
+  const secondVisible = { ...exclusion, id: "visible-2", paidAmount: "30.00" };
+
+  const selectedIds = toggleAllVisibleExclusions({
+    difference: "100.00",
+    exclusions: [hidden, firstVisible, secondVisible],
+    visibleExclusionIds: [firstVisible.id, secondVisible.id],
+    selectedIds: [hidden.id, firstVisible.id, secondVisible.id],
+    otherDifferences: [],
+  });
+
+  assert.deepEqual(selectedIds, [hidden.id]);
+});
+
+test("limpa a seleção visível quando nenhum outro título visível cabe no saldo", () => {
+  const hidden = { ...exclusion, id: "hidden", paidAmount: "20.00" };
+  const selectedVisible = { ...exclusion, id: "visible-1", paidAmount: "70.00" };
+  const overflowingVisible = { ...exclusion, id: "visible-2", paidAmount: "35.00" };
+
+  const selectedIds = toggleAllVisibleExclusions({
+    difference: "100.00",
+    exclusions: [hidden, selectedVisible, overflowingVisible],
+    visibleExclusionIds: [selectedVisible.id, overflowingVisible.id],
+    selectedIds: [hidden.id, selectedVisible.id],
+    otherDifferences: [{ ...completeOther, amount: "10.00" }],
+  });
+
+  assert.deepEqual(selectedIds, [hidden.id]);
 });
