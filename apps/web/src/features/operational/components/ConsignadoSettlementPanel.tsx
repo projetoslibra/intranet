@@ -8,6 +8,7 @@ import {
   consignadoSettlementUploadConfig,
   readSettlementApiResponse,
 } from "../consignado-settlement-upload";
+import { buildSettlementWorkspaceQuery } from "../consignado-settlement-filters";
 
 type Candidate = { id: string; yourNumber: string | null; documentNumber: string | null; debtorName: string; debtorDocument: string; nominalValue: string; originalDueDate: string | null; adjustedDueDate: string | null; cedentName: string };
 type PddTitle = { id: string; remittanceFile: string | null; generatedAt: string | null; yourNumberUsed: string | null; documentNumber: string | null; debtorName: string | null; debtorDocument: string | null; nominalValue: string | null; pddValue: string | null; dueDate: string | null; writeOffType: string | null; originator: string | null };
@@ -73,10 +74,11 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
   const [candidates, setCandidates] = useState<Record<string, Candidate[]>>({});
   const [issueFilters, setIssueFilters] = useState<Record<string, IssueFilter>>({});
   const [createdDate, setCreatedDate] = useState("");
+  const [batchOriginator, setBatchOriginator] = useState("");
   const [activeSection, setActiveSection] = useState<WorkspaceSection>("LOTS");
 
-  async function refresh(dateFilter = createdDate) {
-    const query = dateFilter ? `?createdDate=${encodeURIComponent(dateFilter)}` : "";
+  async function refresh(dateFilter = createdDate, originatorFilter = batchOriginator) {
+    const query = buildSettlementWorkspaceQuery({ createdDate: dateFilter, originator: originatorFilter });
     const response = await fetch(`/api/operacional/consignado/baixas${query}`, { cache: "no-store" });
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.message);
@@ -86,14 +88,14 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
   async function filterBatches(event: FormEvent) {
     event.preventDefault();
     setPending(true); setFeedback("");
-    try { await refresh(createdDate); }
+    try { await refresh(createdDate, batchOriginator); }
     catch (error) { setFeedback(error instanceof Error ? error.message : "Erro ao filtrar lotes."); }
     finally { setPending(false); }
   }
 
   async function showRecentBatches() {
     setCreatedDate(""); setPending(true); setFeedback("");
-    try { await refresh(""); }
+    try { await refresh("", batchOriginator); }
     catch (error) { setFeedback(error instanceof Error ? error.message : "Erro ao consultar lotes."); }
     finally { setPending(false); }
   }
@@ -292,8 +294,9 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
         <div><h2 className="font-semibold">Lotes de baixa</h2><p className="mt-1 text-sm text-slate-500">Resultado, divergências, correções e remessas geradas.</p></div>
         <div className="flex flex-wrap items-end gap-3">
           <form className="flex flex-wrap items-end gap-2" onSubmit={filterBatches}>
+            <label className="text-sm">Originador<select className="mt-1 block h-9 rounded border border-slate-200 px-3" onChange={(event) => setBatchOriginator(event.target.value)} value={batchOriginator}><option value="">Todos os originadores</option>{Array.from(new Map(workspace.originators.map((item) => [item.code, item])).values()).map((item) => <option key={item.id} value={item.code}>{item.name}</option>)}</select></label>
             <label className="text-sm">Processado em<input className="mt-1 block h-9 rounded border border-slate-200 px-3" onChange={(event) => setCreatedDate(event.target.value)} type="date" value={createdDate} /></label>
-            <button className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-60" disabled={pending || !createdDate} type="submit">Filtrar</button>
+            <button className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-60" disabled={pending} type="submit">Filtrar</button>
             <button className="h-9 rounded border border-slate-300 px-3 text-sm font-semibold disabled:opacity-60" disabled={pending || !createdDate} onClick={() => void showRecentBatches()} type="button">Todos recentes</button>
           </form>
         </div>

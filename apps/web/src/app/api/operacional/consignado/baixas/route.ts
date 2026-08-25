@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ ok: false, message: "Sessão expirada." }, { status: 401 });
   if (!(await hasPermission("operational.view"))) return NextResponse.json({ ok: false, message: "Sem permissão." }, { status: 403 });
-  try { return NextResponse.json({ ok: true, workspace: await getSettlementWorkspace({ createdDate: request.nextUrl.searchParams.get("createdDate") || undefined }) }); }
+  try { return NextResponse.json({ ok: true, workspace: await getSettlementWorkspace({ createdDate: request.nextUrl.searchParams.get("createdDate") || undefined, originator: request.nextUrl.searchParams.get("originator") || undefined }) }); }
   catch (error) { return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Erro ao consultar baixas." }, { status: 500 }); }
 }
 
