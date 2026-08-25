@@ -14,6 +14,7 @@ import {
   validateSettlementUploadMetadata,
   type SettlementUploadMetadata,
 } from "@/features/operational/consignado-settlement-upload";
+import { normalizeSettlementWorkspaceFilters } from "@/features/operational/consignado-settlement-filters";
 
 const CONSIGNADO_CNPJ = "54842157000193";
 export const BULK_UNDERPAID_LIMIT_PERCENT = 10;
@@ -446,14 +447,15 @@ export async function cancelSettlementBatch(batchId: string, userId: string) {
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
-export async function getSettlementWorkspace(input: { createdDate?: string } = {}) {
+export async function getSettlementWorkspace(input: { createdDate?: string; originator?: string } = {}) {
+  const filters = normalizeSettlementWorkspaceFilters(input);
   const fund = await consignadoFund();
   const [originators, batches, pddSummary] = await Promise.all([
     listConsignadoOriginators(),
     prisma.consignadoSettlementBatch.findMany({
-      where: { fundId: fund.id, status: { not: "CANCELLED" }, ...(input.createdDate ? { createdAt: saoPauloDayRange(input.createdDate) } : {}) },
+      where: { fundId: fund.id, status: { not: "CANCELLED" }, ...(filters.createdDate ? { createdAt: saoPauloDayRange(filters.createdDate) } : {}), ...(filters.originator ? { originator: { code: filters.originator } } : {}) },
       orderBy: { createdAt: "desc" },
-      take: input.createdDate ? undefined : 30,
+      take: filters.createdDate ? undefined : 30,
       include: {
         originator: true,
         stockBatch: { select: { referenceDate: true, version: true } },
