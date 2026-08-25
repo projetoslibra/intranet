@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Calculator, Info, Trash2 } from "lucide-react";
 import {
   calculateDebtorPddAfterReduction,
@@ -297,63 +298,170 @@ function PddCompositionTooltip({
   items: PddCompositionItem[];
   value: number;
 }) {
+  const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const tooltipId = useId();
+  const [isOpen, setIsOpen] = useState(false);
+  const [position, setPosition] = useState({
+    left: 0,
+    maxHeight: 340,
+    top: 0,
+    width: 320,
+  });
   const visibleItems = sortPddItems(items).slice(0, 8);
   const hiddenCount = Math.max(0, items.length - visibleItems.length);
-  const tooltipAlignment = align === "left" ? "left-0" : "right-0";
+
+  const updatePosition = useCallback(() => {
+    const trigger = triggerRef.current;
+
+    if (!trigger || typeof window === "undefined") {
+      return;
+    }
+
+    const margin = 12;
+    const rect = trigger.getBoundingClientRect();
+    const width = Math.min(320, window.innerWidth - margin * 2);
+    const maxHeight = Math.min(340, window.innerHeight - margin * 2);
+    const preferredLeft = align === "left" ? rect.left : rect.right - width;
+    const left = Math.min(
+      Math.max(preferredLeft, margin),
+      window.innerWidth - width - margin,
+    );
+    const belowTop = rect.bottom + 8;
+    const aboveTop = rect.top - maxHeight - 8;
+    const top =
+      belowTop + maxHeight > window.innerHeight - margin
+        ? Math.max(margin, aboveTop)
+        : belowTop;
+
+    setPosition({ left, maxHeight, top, width });
+  }, [align]);
+
+  function showTooltip() {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+
+    updatePosition();
+    setIsOpen(true);
+  }
+
+  function scheduleCloseTooltip() {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+    }
+
+    closeTimeoutRef.current = setTimeout(() => {
+      setIsOpen(false);
+      closeTimeoutRef.current = null;
+    }, 120);
+  }
+
+  useEffect(() => {
+    if (!isOpen) {
+      return undefined;
+    }
+
+    const handlePosition = () => updatePosition();
+    window.addEventListener("resize", handlePosition);
+    window.addEventListener("scroll", handlePosition, true);
+
+    return () => {
+      window.removeEventListener("resize", handlePosition);
+      window.removeEventListener("scroll", handlePosition, true);
+    };
+  }, [isOpen, updatePosition]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimeoutRef.current) {
+        clearTimeout(closeTimeoutRef.current);
+      }
+    };
+  }, []);
 
   return (
     <span
-      className={`group relative inline-flex cursor-help items-center justify-end ${className}`}
+      aria-describedby={isOpen ? tooltipId : undefined}
+      className={`inline-flex cursor-help items-center justify-end ${className}`}
+      onBlur={scheduleCloseTooltip}
+      onFocus={showTooltip}
+      onMouseEnter={showTooltip}
+      onMouseLeave={scheduleCloseTooltip}
+      ref={triggerRef}
       tabIndex={0}
     >
-      <span className="decoration-slate-400 decoration-dotted underline-offset-4 group-hover:underline group-focus:underline">
+      <span
+        className={`decoration-slate-400 decoration-dotted underline-offset-4 ${
+          isOpen ? "underline" : ""
+        }`}
+      >
         {currencyFormatter.format(value)}
       </span>
-      <span
-        className={`pointer-events-none absolute top-full z-40 mt-2 hidden w-80 rounded border border-slate-200 bg-white p-3 text-left text-xs normal-case text-slate-600 shadow-lg group-hover:block group-focus:block ${tooltipAlignment}`}
-      >
-        <span className="block font-semibold text-slate-950">
-          Composição da PDD
-        </span>
-        {caption ? (
-          <span className="mt-1 block text-slate-500">{caption}</span>
-        ) : null}
-        <span className="mt-3 block space-y-2">
-          {visibleItems.length > 0 ? (
-            visibleItems.map((item) => (
-              <span
-                className="flex items-start justify-between gap-3"
-                key={`${item.label}-${item.detail ?? ""}`}
-              >
-                <span className="min-w-0">
-                  <span className="block truncate font-medium text-slate-700">
-                    {item.label}
-                  </span>
-                  {item.detail ? (
-                    <span className="block text-[11px] text-slate-400">
-                      {item.detail}
-                    </span>
-                  ) : null}
-                </span>
-                <span className="shrink-0 font-semibold text-slate-950">
-                  {currencyFormatter.format(item.value)}
-                </span>
+      {isOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fixed z-[9999] overflow-y-auto overscroll-contain rounded border border-slate-200 bg-white p-3 text-left text-xs normal-case text-slate-600 shadow-2xl"
+              id={tooltipId}
+              onFocus={showTooltip}
+              onMouseEnter={showTooltip}
+              onMouseLeave={scheduleCloseTooltip}
+              role="tooltip"
+              style={{
+                left: position.left,
+                maxHeight: position.maxHeight,
+                top: position.top,
+                width: position.width,
+              }}
+            >
+              <span className="block font-semibold text-slate-950">
+                Composição da PDD
               </span>
-            ))
-          ) : (
-            <span className="block text-slate-500">Sem composição disponível.</span>
-          )}
-        </span>
-        {hiddenCount > 0 ? (
-          <span className="mt-2 block text-[11px] text-slate-400">
-            +{hiddenCount} componente(s) menor(es)
-          </span>
-        ) : null}
-        <span className="mt-3 flex justify-between border-t border-slate-100 pt-2 font-semibold text-slate-950">
-          <span>Total</span>
-          <span>{currencyFormatter.format(value)}</span>
-        </span>
-      </span>
+              {caption ? (
+                <span className="mt-1 block text-slate-500">{caption}</span>
+              ) : null}
+              <span className="mt-3 block space-y-2">
+                {visibleItems.length > 0 ? (
+                  visibleItems.map((item) => (
+                    <span
+                      className="flex items-start justify-between gap-3"
+                      key={`${item.label}-${item.detail ?? ""}`}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-slate-700">
+                          {item.label}
+                        </span>
+                        {item.detail ? (
+                          <span className="block text-[11px] text-slate-400">
+                            {item.detail}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="shrink-0 font-semibold text-slate-950">
+                        {currencyFormatter.format(item.value)}
+                      </span>
+                    </span>
+                  ))
+                ) : (
+                  <span className="block text-slate-500">
+                    Sem composição disponível.
+                  </span>
+                )}
+              </span>
+              {hiddenCount > 0 ? (
+                <span className="mt-2 block text-[11px] text-slate-400">
+                  +{hiddenCount} componente(s) menor(es)
+                </span>
+              ) : null}
+              <span className="mt-3 flex justify-between border-t border-slate-100 pt-2 font-semibold text-slate-950">
+                <span>Total</span>
+                <span>{currencyFormatter.format(value)}</span>
+              </span>
+            </div>,
+            document.body,
+          )
+        : null}
     </span>
   );
 }
