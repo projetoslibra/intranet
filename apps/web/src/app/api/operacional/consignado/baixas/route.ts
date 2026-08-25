@@ -1,10 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
-import { getSettlementWorkspace, importSettlementBatch } from "@/server/operational/consignado-settlement-service";
+import { getSettlementWorkspace, importSettlementBatchFromBlob } from "@/server/operational/consignado-settlement-service";
+import type { SettlementUploadMetadata } from "@/features/operational/consignado-settlement-upload";
 import { DuplicateSettlementFileError } from "@/server/operational/consignado-settlement-safety";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -19,18 +21,10 @@ export async function POST(request: NextRequest) {
   if (!session?.user?.id) return NextResponse.json({ ok: false, message: "Sessão expirada." }, { status: 401 });
   if (!(await hasPermission("operational.finance.manage"))) return NextResponse.json({ ok: false, message: "Sem permissão para processar baixas." }, { status: 403 });
   try {
-    const form = await request.formData();
-    const file = form.get("file");
-    const source = String(form.get("source") ?? "").toUpperCase();
-    if (!(file instanceof File)) throw new Error("Selecione o arquivo de baixa.");
-    if (!(["BMP", "UY3"] as string[]).includes(source)) throw new Error("Selecione BMP ou UY3.");
-    if (file.size > 15 * 1024 * 1024) throw new Error("O arquivo de baixa deve possuir no máximo 15 MB.");
-    const result = await importSettlementBatch({
+    const input = (await request.json()) as SettlementUploadMetadata;
+    const result = await importSettlementBatchFromBlob({
       userId: session.user.id,
-      source: source as "BMP" | "UY3",
-      originatorCode: String(form.get("originator") ?? ""),
-      fileName: file.name,
-      buffer: Buffer.from(await file.arrayBuffer()),
+      ...input,
     });
     return NextResponse.json({ ok: true, result, message: "Arquivo processado e confrontado com o estoque ativo." });
   } catch (error) { return NextResponse.json({ ok: false, code: error instanceof DuplicateSettlementFileError ? error.code : undefined, message: error instanceof Error ? error.message : "Erro ao processar baixa." }, { status: error instanceof DuplicateSettlementFileError ? 409 : 400 }); }
