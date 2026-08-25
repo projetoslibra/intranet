@@ -227,3 +227,45 @@ export function composeDifferenceState(input: ComposeDifferenceStateInput) {
     canSubmit,
   };
 }
+
+export function toggleAllVisibleExclusions(input: {
+  difference: string;
+  exclusions: EligibleExclusion[];
+  visibleExclusionIds: string[];
+  selectedIds: string[];
+  otherDifferences: OtherDifferenceDraft[];
+}) {
+  const differenceCents = decimalAmountToCents(input.difference);
+  const exclusionsById = new Map(input.exclusions.map((item) => [item.id, item]));
+  const visibleIds = Array.from(new Set(input.visibleExclusionIds));
+  const visibleIdSet = new Set(visibleIds);
+  const selectedIds = Array.from(new Set(input.selectedIds));
+  const selectedIdSet = new Set(selectedIds);
+
+  const selectedCents = selectedIds.reduce((total, id) => {
+    const amount = decimalAmountToCents(exclusionsById.get(id)?.paidAmount ?? "");
+    return total + (amount ?? ZERO_CENTS);
+  }, ZERO_CENTS);
+  const otherCents = input.otherDifferences.reduce((total, item) => {
+    const normalizedAmount = normalizePtBrMoneyInput(item.amount);
+    const amount = normalizedAmount === null ? null : decimalAmountToCents(normalizedAmount);
+    return total + (amount ?? ZERO_CENTS);
+  }, ZERO_CENTS);
+
+  let allocatedCents = selectedCents + otherCents;
+  const additions: string[] = [];
+  if (differenceCents !== null) {
+    for (const id of visibleIds) {
+      if (selectedIdSet.has(id)) continue;
+      const amount = decimalAmountToCents(exclusionsById.get(id)?.paidAmount ?? "");
+      if (amount === null || amount <= ZERO_CENTS || allocatedCents + amount > differenceCents) continue;
+      additions.push(id);
+      allocatedCents += amount;
+    }
+  }
+
+  if (!additions.length && selectedIds.some((id) => visibleIdSet.has(id))) {
+    return selectedIds.filter((id) => !visibleIdSet.has(id));
+  }
+  return [...selectedIds, ...additions];
+}

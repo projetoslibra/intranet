@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
 import { getSettlementWorkspace, importSettlementBatch } from "@/server/operational/consignado-settlement-service";
+import { DuplicateSettlementFileError } from "@/server/operational/consignado-settlement-safety";
 
 export const runtime = "nodejs";
 
@@ -30,16 +31,7 @@ export async function POST(request: NextRequest) {
       originatorCode: String(form.get("originator") ?? ""),
       fileName: file.name,
       buffer: Buffer.from(await file.arrayBuffer()),
-      allowDuplicate: form.get("allowDuplicate") === "true",
     });
-    const previousDate = result.previousCreatedAt
-      ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" }).format(new Date(result.previousCreatedAt))
-      : null;
-    const message = result.requiresConfirmation
-      ? `Este arquivo já foi processado em ${previousDate}. Deseja processá-lo novamente?`
-      : result.duplicate
-        ? "Arquivo repetido processado novamente e confrontado com o estoque ativo."
-        : "Arquivo processado e confrontado com o estoque ativo.";
-    return NextResponse.json({ ok: true, result, message });
-  } catch (error) { return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "Erro ao processar baixa." }, { status: 400 }); }
+    return NextResponse.json({ ok: true, result, message: "Arquivo processado e confrontado com o estoque ativo." });
+  } catch (error) { return NextResponse.json({ ok: false, code: error instanceof DuplicateSettlementFileError ? error.code : undefined, message: error instanceof Error ? error.message : "Erro ao processar baixa." }, { status: error instanceof DuplicateSettlementFileError ? 409 : 400 }); }
 }

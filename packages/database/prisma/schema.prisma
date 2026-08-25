@@ -638,7 +638,7 @@ model ConsignadoSettlementItem {
   matchedStockPosition   ReceivableStockPosition?     @relation("SettlementMatchedStock", fields: [matchedStockPositionId], references: [id], onDelete: Restrict)
   matchedPddTitle        ConsignadoPddTitle?          @relation(fields: [matchedPddTitleId], references: [id], onDelete: Restrict)
   corrections            ConsignadoManualCorrection[]
-  remittanceItem         ConsignadoRemittanceItem?
+  remittanceItems        ConsignadoRemittanceItem[]
   remittanceExclusions   ConsignadoRemittanceExclusion[]
 
   @@unique([batchId, sourceRow])
@@ -763,7 +763,7 @@ model ConsignadoRemittance {
   bankAdjustments     ConsignadoBankAdjustment[]
   exclusions          ConsignadoRemittanceExclusion[]
 
-  @@unique([batchId])
+  @@index([batchId])
   @@unique([storageKey])
   @@index([fundId, status])
   @@index([stockStatus, generatedAt])
@@ -773,7 +773,7 @@ model ConsignadoRemittance {
 model ConsignadoRemittanceItem {
   id               String                    @id @default(cuid())
   remittanceId     String                    @map("remittance_id")
-  settlementItemId String                    @unique @map("settlement_item_id")
+  settlementItemId String                    @map("settlement_item_id")
   stockPositionId  String                    @map("stock_position_id")
   yourNumber       String?                   @map("your_number")
   documentNumber   String?                   @map("document_number")
@@ -787,6 +787,7 @@ model ConsignadoRemittanceItem {
   stockPosition    ReceivableStockPosition   @relation(fields: [stockPositionId], references: [id], onDelete: Restrict)
 
   @@index([remittanceId, stockStatus])
+  @@index([settlementItemId])
   @@index([yourNumber, documentNumber])
   @@map("consignado_remittance_items")
 }

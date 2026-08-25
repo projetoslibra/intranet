@@ -7,6 +7,7 @@ import {
   composeDifferenceState,
   decimalAmountToCents,
   formatCentsAsBRL,
+  toggleAllVisibleExclusions,
   type DifferenceDirection,
   type EligibleExclusion,
   type OtherDifferenceCategory,
@@ -76,6 +77,16 @@ export function ConsignadoDifferenceComposer({
     && (!documentFilter || normalized(item.debtorDocument).includes(normalized(documentFilter)))
     && (!categoryFilter || item.category === categoryFilter)
   )), [categoryFilter, contractFilter, debtorFilter, documentFilter, exclusions]);
+  const bulkSelectedIds = toggleAllVisibleExclusions({
+    difference,
+    exclusions,
+    visibleExclusionIds: visibleExclusions.map((item) => item.id),
+    selectedIds,
+    otherDifferences,
+  });
+  const bulkWillClear = bulkSelectedIds.length < selectedIds.length;
+  const bulkSelectionChanged = bulkSelectedIds.length !== selectedIds.length
+    || bulkSelectedIds.some((id, index) => id !== selectedIds[index]);
 
   function toggleExclusion(item: EligibleExclusion) {
     if (selectedIds.includes(item.id)) {
@@ -106,6 +117,12 @@ export function ConsignadoDifferenceComposer({
           <label className="text-xs font-medium text-slate-600">Sacado<input className="mt-1 block h-9 w-full rounded border border-slate-200 px-3 text-sm" onChange={(event) => setDebtorFilter(event.target.value)} placeholder="Buscar sacado" value={debtorFilter} /></label>
           <label className="text-xs font-medium text-slate-600">CPF<input className="mt-1 block h-9 w-full rounded border border-slate-200 px-3 text-sm" onChange={(event) => setDocumentFilter(event.target.value)} placeholder="Buscar CPF" value={documentFilter} /></label>
           <label className="text-xs font-medium text-slate-600">Categoria<select className="mt-1 block h-9 w-full rounded border border-slate-200 bg-white px-3 text-sm" onChange={(event) => setCategoryFilter(event.target.value as RemittanceExclusionCategory | "")} value={categoryFilter}><option value="">Todas</option>{Object.entries(exclusionCategoryLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-slate-500">{visibleExclusions.length} título(s) visível(is). A seleção em lote respeita o saldo ainda disponível.</p>
+          <button className="inline-flex h-9 items-center rounded border border-slate-300 bg-white px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50" disabled={disabled || !bulkSelectionChanged} onClick={() => onSelectedIdsChange(bulkSelectedIds)} type="button">
+            {bulkWillClear ? "Limpar seleção visível" : "Selecionar todos visíveis"}
+          </button>
         </div>
         <div className="mt-4 max-h-80 space-y-2 overflow-auto">
           {visibleExclusions.map((item) => {
