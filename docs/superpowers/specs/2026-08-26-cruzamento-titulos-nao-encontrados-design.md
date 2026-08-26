@@ -33,7 +33,8 @@ buildCrossMatchSuggestions({ source, items, candidates, blockedPositionIds })
 ```
 
 - Normaliza documento (somente dígitos) e nome (NFD sem acentuação, maiúsculo, espaços colapsados) **nos dois lados** da comparação.
-- Monta o pool de cada item com as posições que satisfazem, simultaneamente: mesmo sacado por documento **ou** por nome normalizado; diferença de valor nominal menor que `0,01`; posição não bloqueada; e cedente compatível com o fluxo do arquivo, reutilizando a regra de `sourceMatches` para que um arquivo BMP nunca case com título UY3.
+- Monta o pool de cada item com as posições que satisfazem, simultaneamente: mesmo sacado; diferença de valor nominal menor que `0,01`; posição não bloqueada; e cedente compatível com o fluxo do arquivo, reutilizando a regra de `sourceMatches` para que um arquivo BMP nunca case com título UY3.
+- **O documento tem precedência sobre o nome.** Quando arquivo e estoque têm documento, a igualdade dos dígitos decide sozinha — documentos diferentes reprovam o par mesmo com nomes idênticos, porque homônimo é mais provável que erro de cadastro. O nome normalizado só é usado quando um dos lados não tem documento. A sugestão registra qual dos dois casou.
 - Classifica cada sugestão em um grupo:
 
   | Grupo | Regra | Aceite em lote |
@@ -45,7 +46,8 @@ buildCrossMatchSuggestions({ source, items, candidates, blockedPositionIds })
   "Exatamente um mês" significa o mês civil seguinte preservando o dia: `23/07/2026 → 23/08/2026`, `21/04/2026 → 21/05/2026`. Quando o dia não existe no mês seguinte, vale o último dia do mês (`31/01 → 28/02`). Qualquer outro intervalo, incluindo vencimento do estoque anterior ao do arquivo, cai em `OLDEST_WIDE_GAP`.
 
 - Itens com pool vazio retornam em `unmatched` e seguem como `NOT_FOUND`.
-- **Alocação um-para-um:** os itens são percorridos em ordem determinística (grupo `FULL_KEY` antes dos demais, depois `sourceRow` crescente) e cada item consome sua posição, que é removida do pool de todos os outros. Quando o pool de um item esvazia por consumo, ele volta para `unmatched`.
+- **Alocação um-para-um:** a alocação acontece em duas passagens, ambas em ordem crescente de `sourceRow`. A primeira distribui as posições de vencimento exato; a segunda distribui a parcela mais antiga entre os itens que sobraram. Cada item consome sua posição, que sai do pool de todos os outros.
+- **Item que perdeu a posição exata não cai para a regra da parcela mais antiga.** Se um item tinha candidatas de vencimento exato e todas foram consumidas por outros itens na primeira passagem, ele vai para `unmatched`. A evidência da chave completa aponta para um título específico, e esse título já foi baixado por outra linha — o cenário é linha duplicada no arquivo, não pagamento atrasado. Aplicar a regra da parcela mais antiga aqui seria um palpite.
 - Dentro de um mesmo pool o desempate é determinístico: menor `documentNumber` (parcela), depois menor `yourNumber`, depois `id`.
 
 ### Serviço e API
@@ -106,7 +108,8 @@ Nos grupos `OLDEST_NEXT_MONTH` e `OLDEST_WIDE_GAP` o pagamento refere-se a uma p
 - sem vencimento exato, a parcela mais antiga é escolhida; um mês de intervalo produz `OLDEST_NEXT_MONTH` e intervalo maior produz `OLDEST_WIDE_GAP`;
 - posição bloqueada nunca é sugerida;
 - arquivo BMP não recebe sugestão de título de cedente UY3;
+- documentos diferentes reprovam o par mesmo com nomes idênticos, e o nome só decide quando falta documento;
 - duas linhas equivalentes disputando duas posições equivalentes recebem uma posição cada;
-- item cuja única posição foi consumida por outro item retorna em `unmatched`;
+- item cuja única posição de vencimento exato foi consumida por outro item retorna em `unmatched`, sem cair para a parcela mais antiga;
 - item sem candidato retorna em `unmatched`;
 - a mesma entrada produz sempre a mesma saída.
