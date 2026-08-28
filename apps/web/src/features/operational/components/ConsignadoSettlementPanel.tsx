@@ -2,7 +2,7 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import { uploadPresigned } from "@vercel/blob/client";
-import { AlertTriangle, CheckCircle2, Download, FileCheck2, Loader2, Search, Trash2, UploadCloud } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileCheck2, Loader2, RotateCcw, Search, Trash2, UploadCloud } from "lucide-react";
 import {
   buildSettlementUploadPath,
   consignadoSettlementUploadConfig,
@@ -54,6 +54,8 @@ function underpaidTotals(items: SettlementItem[]) {
   }, { nominal: 0, paid: 0, difference: 0 });
 }
 function paidTotal(items: SettlementItem[]) { return items.reduce((sum, item) => sum + Number(item.paidAmount), 0); }
+const AUTO_EXCLUSION_REASON = "Não incluído na remessa aprovada.";
+function autoExcludedItems(items: SettlementItem[]) { return items.filter((item) => item.status === "EXCLUDED" && item.exclusionReason === AUTO_EXCLUSION_REASON); }
 async function sha256(file: File) {
   const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
   return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
@@ -110,6 +112,23 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
       setFeedback(payload.message);
       await refresh();
     } catch (error) { setFeedback(error instanceof Error ? error.message : "Erro ao excluir lote."); }
+    finally { setPending(false); }
+  }
+
+  async function reopenBatch(batch: Batch, count: number) {
+    const locked = batch.remittances.some((remittance) => remittance.status !== "CANCELLED");
+    const warning = locked
+      ? "A remessa ativa não será cancelada — os títulos voltam apenas para conferência. Para ajustá-los, cancele a remessa antes."
+      : "Os títulos voltam para revisão com o status que tinham antes da remessa.";
+    if (!window.confirm(`Devolver ${count} título(s) excluídos pela geração da remessa para a revisão? ${warning}`)) return;
+    setPending(true); setFeedback("");
+    try {
+      const response = await fetch(`/api/operacional/consignado/baixas/${batch.id}/reabrir`, { method: "POST" });
+      const payload = await response.json();
+      if (!payload.ok) throw new Error(payload.message);
+      setFeedback(payload.message);
+      await refresh();
+    } catch (error) { setFeedback(error instanceof Error ? error.message : "Erro ao reabrir o lote."); }
     finally { setPending(false); }
   }
 
@@ -234,6 +253,17 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
   function renderIssueItem(batch: Batch, item: SettlementItem, allowUnderpaidApproval = false) {
     const underpaid = underpaid77(item);
     const alreadyRemitted = item.status === "DUPLICATE" && item.statusReason?.startsWith("Título já baixado via OSHER");
+    const remittanceLocked = batch.remittances.some((remittance) => remittance.status !== "CANCELLED");
+    if (remittanceLocked) return <div className="rounded border border-slate-200 bg-white p-4" key={item.id}>
+      <div className="flex flex-wrap justify-between gap-3">
+        <div>
+          <p className="font-semibold">{item.debtorName ?? "Sacado não informado"}</p>
+          <p className="text-xs text-slate-500">Contrato {item.contractNumber ?? item.yourNumber ?? "—"} · CPF {item.debtorDocument ?? "—"} · linha {item.sourceRow}</p>
+        </div>
+        <div className="text-right"><p className="font-semibold">{money(item.paidAmount)}</p><p className="text-xs text-red-600">{statusLabel[item.status] ?? item.status}: {item.statusReason}</p></div>
+      </div>
+      <p className="mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">Cancele a remessa para ajustar os títulos.</p>
+    </div>;
     return <div className="rounded border border-slate-200 bg-white p-4" key={item.id}>
       <div className="flex flex-wrap justify-between gap-3">
         <div>
@@ -317,6 +347,7 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
         const activeFilter = issueFilters[batch.id] ?? (alreadyRemittedItems.length ? "ALREADY_REMITTED" : underpaidItems.length ? "UNDERPAID" : pddItems.length ? "PDD" : notFoundItems.length ? "NOT_FOUND" : "OTHER");
         const totals = underpaidTotals(underpaidItems);
         const canCancel = !batch.remittances.some((remittance) => remittance.status !== "CANCELLED");
+        const reopenable = autoExcludedItems(batch.items);
         const financial = batch.financialSummary;
         return <details className="p-5" key={batch.id}>
           <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-4">
@@ -333,7 +364,7 @@ export function ConsignadoSettlementPanel({ initialWorkspace, canManage }: { ini
                 {financial.entries.map((entry) => <p key={`${entry.reconciliationId}-${entry.id}`}><span className="font-medium text-slate-900">{date(entry.transactionDate)} · {entry.description}</span>{entry.document ? ` · Dcto. ${entry.document}` : ""} · entrada {money(entry.amount)} · alocado {money(entry.allocatedAmount)} · conciliado em {dateTime(entry.reconciledAt)}</p>)}
               </div> : null}
             </div>
-            <div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-3 py-1 text-xs font-semibold ${pendingIssues.length ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{pendingIssues.length ? `${pendingIssues.length} para revisar` : "Pronto"}</span>{canManage && canCancel ? <button className="inline-flex h-8 items-center gap-1 rounded border border-red-200 px-2 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={pending} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void cancelBatch(batch); }} type="button"><Trash2 className="h-3.5 w-3.5" />Excluir da visualização</button> : null}</div>
+            <div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-3 py-1 text-xs font-semibold ${pendingIssues.length ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{pendingIssues.length ? `${pendingIssues.length} para revisar` : "Pronto"}</span>{canManage && reopenable.length ? <button className="inline-flex h-8 items-center gap-1 rounded border border-slate-300 px-2 text-xs font-semibold text-slate-700 disabled:opacity-50" disabled={pending} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void reopenBatch(batch, reopenable.length); }} title={`${reopenable.length} título(s) ficaram de fora da remessa`} type="button"><RotateCcw className="h-3.5 w-3.5" />Reabrir lote ({reopenable.length})</button> : null}{canManage && canCancel ? <button className="inline-flex h-8 items-center gap-1 rounded border border-red-200 px-2 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={pending} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void cancelBatch(batch); }} type="button"><Trash2 className="h-3.5 w-3.5" />Excluir da visualização</button> : null}</div>
           </summary>
           <div className="mt-5 space-y-5">
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">{[["Recebidos", batch.totalItems], ["Valor total do arquivo", money(batch.receivedAmount)], ["Completos", batch.fullItems], ["Parciais", batch.partialItems], ["Fora/revisão", batch.issueItems], ["Encontrado", money(batch.matchedAmount)], ["Não incluído", money(batch.excludedAmount)]].map(([label, value]) => <div className="rounded border border-slate-200 bg-slate-50 p-3" key={label}><p className="text-xs text-slate-500">{label}</p><p className="mt-1 font-semibold">{value}</p></div>)}</div>

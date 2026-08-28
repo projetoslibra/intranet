@@ -9,6 +9,7 @@ import { classifyPddMatch, getConsignadoPddSummary, loadConsignadoPddTitles } fr
 import { saoPauloDayRange } from "./consignado-date";
 import { buildRemittanceExclusionPersistence, selectRemittanceItems } from "./consignado-remittance-exclusions";
 import { assertRemittanceCancellationAllowed, DuplicateSettlementFileError, findPreviouslyRemittedTitle, remittanceDownloadEligibility, RemittanceDownloadBlockedError, type PreviousRemittanceTitle } from "./consignado-settlement-safety";
+import { assertBatchReopenAllowed, AUTO_EXCLUSION_REASON, REMITTANCE_EXCLUSION_EVENT_REASON, resolveRestoredStatus, selectReopenableItems } from "./consignado-batch-reopen";
 import {
   assertSettlementBlobIntegrity,
   validateSettlementUploadMetadata,
@@ -257,7 +258,10 @@ export async function importSettlementBatchFromBlob(input: SettlementUploadMetad
   }
 }
 
+const FROZEN_BATCH_STATUSES = new Set(["GENERATED", "RECONCILING", "RECONCILED", "CANCELLED"]);
+
 async function refreshBatchTotals(batchId: string) {
+  const batch = await prisma.consignadoSettlementBatch.findUniqueOrThrow({ where: { id: batchId }, select: { status: true } });
   const items = await prisma.consignadoSettlementItem.findMany({ where: { batchId }, select: {
     status: true, approved: true, paidAmount: true, occurrence: true,
     matchedStockPosition: { select: { nominalValue: true } },
@@ -270,7 +274,7 @@ async function refreshBatchTotals(batchId: string) {
   const issueItems = items.filter((item) => !item.approved && !["EXCLUDED", "PDD_RECOVERY"].includes(item.status)).length;
   await prisma.consignadoSettlementBatch.update({ where: { id: batchId }, data: {
     fullItems, partialItems, issueItems, receivedAmount: received, matchedAmount: matched, excludedAmount: received.sub(matched),
-    status: issueItems ? "REVIEW_REQUIRED" : "READY",
+    ...(FROZEN_BATCH_STATUSES.has(batch.status) ? {} : { status: issueItems ? "REVIEW_REQUIRED" : "READY" }),
   }});
 }
 
@@ -382,8 +386,13 @@ export async function generateSettlementRemittance(batchId: string, userId: stri
   const totalAmount = items.reduce((sum, item) => sum.add(item.paidAmount), new Prisma.Decimal(0));
   try {
     return await prisma.$transaction(async (tx) => {
-      await tx.consignadoSettlementItem.updateMany({ where: { batchId, approved: false, status: { notIn: ["EXCLUDED", "PDD_RECOVERY"] } }, data: { status: "EXCLUDED", exclusionReason: "Não incluído na remessa aprovada." } });
+      const autoExcluded = batch.items.filter((item) => !item.approved && !["EXCLUDED", "PDD_RECOVERY"].includes(item.status));
+      await tx.consignadoSettlementItem.updateMany({ where: { batchId, approved: false, status: { notIn: ["EXCLUDED", "PDD_RECOVERY"] } }, data: { status: "EXCLUDED", exclusionReason: AUTO_EXCLUSION_REASON } });
       const remittance = await tx.consignadoRemittance.create({ data: { batchId, fundId: batch.fundId, generatedByUserId: userId, fileName, storageKey, fileHash: generated.hash, totalItems: items.length, totalAmount } });
+      if (autoExcluded.length) await tx.consignadoStatusEvent.createMany({ data: autoExcluded.map((item) => ({
+        userId, entityType: "SETTLEMENT_ITEM", entityId: item.id, fromStatus: item.status, toStatus: "EXCLUDED",
+        metadata: { reason: REMITTANCE_EXCLUSION_EVENT_REASON, remittanceId: remittance.id },
+      })) });
       await tx.consignadoRemittanceItem.createMany({ data: items.map((item) => ({ remittanceId: remittance.id, settlementItemId: item.id, stockPositionId: item.matchedStockPosition.id, yourNumber: item.matchedStockPosition.yourNumber, documentNumber: item.matchedStockPosition.documentNumber, debtorDocument: item.matchedStockPosition.debtorDocument, amount: item.paidAmount, occurrence: item.occurrence ?? "77" })) });
       const exclusionPersistence = buildRemittanceExclusionPersistence(remittance.id, batch.items, items);
       if (exclusionPersistence.exclusions.length) await tx.consignadoRemittanceExclusion.createMany({ data: exclusionPersistence.exclusions, skipDuplicates: true });
@@ -421,6 +430,53 @@ export async function cancelSettlementRemittance(remittanceId: string, userId: s
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   await del(remittance.storageKey).catch(() => undefined);
   return { id: remittance.id, batchId: remittance.batchId };
+}
+
+export async function reopenSettlementBatch(batchId: string, userId: string) {
+  const fund = await consignadoFund();
+  const batch = await prisma.consignadoSettlementBatch.findFirstOrThrow({
+    where: { id: batchId, fundId: fund.id },
+    select: { id: true, status: true, items: { select: { id: true, status: true, exclusionReason: true, matchedStockPositionId: true, paidAmount: true } } },
+  });
+  const reopenable = selectReopenableItems(batch.items);
+  assertBatchReopenAllowed({ batchStatus: batch.status, reopenableItems: reopenable.length });
+
+  const events = await prisma.consignadoStatusEvent.findMany({
+    where: { entityType: "SETTLEMENT_ITEM", entityId: { in: reopenable.map((item) => item.id) }, toStatus: "EXCLUDED" },
+    orderBy: { createdAt: "desc" },
+    select: { entityId: true, fromStatus: true, metadata: true },
+  });
+  const recordedByItem = new Map<string, string | null>();
+  events.forEach((event) => {
+    const metadata = event.metadata as { reason?: string } | null;
+    if (metadata?.reason !== REMITTANCE_EXCLUSION_EVENT_REASON || recordedByItem.has(event.entityId)) return;
+    recordedByItem.set(event.entityId, event.fromStatus);
+  });
+
+  const restored = reopenable.map((item) => ({
+    item,
+    status: resolveRestoredStatus({ recordedFromStatus: recordedByItem.get(item.id), matchedStockPositionId: item.matchedStockPositionId }),
+  }));
+
+  await prisma.$transaction(async (tx) => {
+    for (const entry of restored) {
+      await tx.consignadoSettlementItem.update({ where: { id: entry.item.id }, data: { status: entry.status, approved: false, exclusionReason: null } });
+    }
+    await tx.consignadoStatusEvent.createMany({ data: restored.map((entry) => ({
+      userId, entityType: "SETTLEMENT_ITEM", entityId: entry.item.id, fromStatus: "EXCLUDED", toStatus: entry.status,
+      metadata: { reason: "BATCH_REOPENED", restoredFrom: recordedByItem.get(entry.item.id) ?? null },
+    })) });
+    await tx.consignadoStatusEvent.create({ data: {
+      userId, entityType: "SETTLEMENT_BATCH", entityId: batch.id, fromStatus: batch.status, toStatus: batch.status,
+      metadata: { reason: "BATCH_REOPENED", reopenedItems: restored.length },
+    } });
+  }, { maxWait: 5000, timeout: 30000 });
+
+  await refreshBatchTotals(batchId);
+  return {
+    reopenedItems: restored.length,
+    paidAmount: restored.reduce((sum, entry) => sum.add(entry.item.paidAmount), new Prisma.Decimal(0)).toString(),
+  };
 }
 
 export async function cancelSettlementBatch(batchId: string, userId: string) {
