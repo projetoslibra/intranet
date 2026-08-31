@@ -422,9 +422,11 @@ O card leva ao relatório `Títulos fora da remessa` já filtrado em `situation=
 
 Três blocos, nessa ordem:
 
-1. **Pendências** — conciliado sem baixa e entradas em aberto, mais o link para diferenças e ajustes.
-2. **Selecionar e conciliar** — filtro por data, entradas e remessas lado a lado, e a barra de totais da seleção (entradas, remessas, será alocado, diferença) fixa no rodapé enquanto se percorre as listas. A barra desgruda quando o compositor de diferença abre, senão ele ficaria espremido no rodapé.
-3. **Registros** — histórico de conciliações e de importações. O formulário de importar extrato fica recolhido logo abaixo das pendências, por ser ação pontual.
+1. **Cabeçalho** — título e os dois números (conciliado sem baixa, entradas em aberto) numa faixa sem moldura, separados por um filete. Sem cartões: a hierarquia vem da escala tipográfica e do espaço, não de bordas.
+2. **Selecionar e conciliar** — barra de ferramentas com filtro por data e o importador de extrato recolhido, entradas e remessas lado a lado, e a barra de totais da seleção fixa no rodapé enquanto se percorre as listas. A barra é escura (`navy-900`), destacando-se das listas claras; ela desgruda quando o compositor de diferença abre, e o compositor passou a ser irmão da barra em vez de filho, para não herdar o fundo escuro.
+3. **Registros** — histórico de conciliações e de importações.
+
+O total de ajustes `Outro` em aberto não é mais exibido no cabeçalho, por decisão do usuário em 31/08/2026. A página de diferenças e ajustes não tem outra porta de entrada no app, então o link foi preservado — sem o valor — junto ao título do histórico de conciliações.
 
 Observação registrada em 31/08/2026, não corrigida: os quatro ajustes `Outro` em aberto (R$ 997,58) têm valores que casam um a um com títulos que seguem disponíveis para conciliação — R$ 258,81 de FRANCINI DORNELES BORGES e R$ 54,42 de MARCOS VINICIUS DA CRUZ DE OLIVEIRA, entre outros. É o mesmo dinheiro registrado de duas formas, por escolha do operador em 19/08. Nenhum lançamento foi alterado.
 
