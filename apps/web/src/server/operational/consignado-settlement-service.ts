@@ -8,7 +8,8 @@ import { parseBmpCnab, parseUy3Workbook, type ParsedSettlementItem } from "./con
 import { classifyPddMatch, getConsignadoPddSummary, loadConsignadoPddTitles } from "./consignado-pdd-service";
 import { saoPauloDayRange } from "./consignado-date";
 import { buildRemittanceExclusionPersistence, selectRemittanceItems } from "./consignado-remittance-exclusions";
-import { assertRemittanceCancellationAllowed, DuplicateSettlementFileError, findPreviouslyRemittedTitle, remittanceDownloadEligibility, RemittanceDownloadBlockedError, type PreviousRemittanceTitle } from "./consignado-settlement-safety";
+import { assertRemittanceCancellationAllowed, buildPreviousRemittanceIndex, DuplicateSettlementFileError, findPreviouslyRemittedTitle, remittanceDownloadEligibility, RemittanceDownloadBlockedError, selectPreviousRemittanceCandidates, type PreviousRemittanceTitle } from "./consignado-settlement-safety";
+import { buildStockCandidateIndex, chooseCandidate, dateKey, digits, normalized, sameMoney, selectScorableCandidates } from "./consignado-matching";
 import { assertBatchReopenAllowed, AUTO_EXCLUSION_REASON, REMITTANCE_EXCLUSION_EVENT_REASON, resolveRestoredStatus, selectReopenableItems } from "./consignado-batch-reopen";
 import {
   assertSettlementBlobIntegrity,
@@ -22,12 +23,6 @@ export const BULK_UNDERPAID_LIMIT_PERCENT = 10;
 const MATCHABLE = new Set<SettlementItemStatus>(["FULL_MATCH", "PARTIAL_MATCH", "MANUALLY_MATCHED"]);
 const ALREADY_REMITTED_REASON = "Título já baixado via OSHER";
 
-function digits(value: unknown) { return String(value ?? "").replace(/\D/g, ""); }
-function normalized(value: unknown) {
-  return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase().replace(/\s+/g, " ");
-}
-function sameMoney(left: unknown, right: unknown) { return Math.abs(Number(left) - Number(right)) < 0.01; }
-function dateKey(value: Date | null | undefined) { return value?.toISOString().slice(0, 10) ?? null; }
 function debtorKey(item: { debtorDocument: string | null; debtorName: string | null }) {
   const document = digits(item.debtorDocument);
   if (document) return `DOCUMENT:${document}`;
@@ -65,78 +60,86 @@ async function activeStock(fundId: string) {
 
 type StockCandidate = Prisma.ReceivableStockPositionGetPayload<{}>;
 
+const IN_CHUNK = 1000;
+const INSERT_CHUNK = 2000;
+const CONTAINS_CHUNK = 150;
+
+function chunked<T>(values: T[], size: number) {
+  const result: T[][] = [];
+  for (let offset = 0; offset < values.length; offset += size) result.push(values.slice(offset, offset + size));
+  return result;
+}
+
+/**
+ * O filtro `debtorDocument: { contains: <digitos> }` custa uma varredura do estoque e só
+ * pode casar se algum documento gravado contiver uma corrida de dígitos do tamanho do
+ * padrão procurado. Documentos formatados como `NNN.NNN.NNN-NN` nunca contêm. Esta
+ * consulta decide, com uma única varredura, se vale repetir o filtro em cada bloco.
+ * Padrão vazio casa com tudo e mantém o filtro. Qualquer erro devolve `true`, preservando
+ * o comportamento atual.
+ */
+async function documentPatternsCanMatch(stockBatchId: string, patterns: Set<string>) {
+  if (!patterns.size) return false;
+  if (patterns.has("")) return true;
+  const shortest = Math.min(...Array.from(patterns, (pattern) => pattern.length));
+  try {
+    const rows = await prisma.$queryRaw<Array<{ found: number }>>`
+      select 1 as found from receivable_stock_positions
+      where "batchId" = ${stockBatchId} and debtor_document ~ ${`[0-9]{${shortest}}`}
+      limit 1`;
+    return rows.length > 0;
+  } catch {
+    return true;
+  }
+}
+
 async function loadCandidates(stockBatchId: string, items: ParsedSettlementItem[]) {
   const all = new Map<string, StockCandidate>();
-  for (let offset = 0; offset < items.length; offset += 150) {
-    const chunk = items.slice(offset, offset + 150);
-    const clauses: Prisma.ReceivableStockPositionWhereInput[] = [];
-    chunk.forEach((item) => {
-      if (item.yourNumber) clauses.push({ yourNumber: item.yourNumber });
-      if (item.documentNumber) clauses.push({ documentNumber: item.documentNumber });
-      if (item.contractNumber) clauses.push({ documentNumber: item.contractNumber });
-      if (item.debtorDocument) clauses.push({ debtorDocument: { contains: digits(item.debtorDocument) } });
-    });
-    if (!clauses.length) continue;
-    const rows = await prisma.receivableStockPosition.findMany({ where: { batchId: stockBatchId, OR: clauses } });
+  const yourNumbers = new Set<string>();
+  const documentNumbers = new Set<string>();
+  const documents = new Set<string>();
+  items.forEach((item) => {
+    if (item.yourNumber) yourNumbers.add(item.yourNumber);
+    if (item.documentNumber) documentNumbers.add(item.documentNumber);
+    if (item.contractNumber) documentNumbers.add(item.contractNumber);
+    if (item.debtorDocument) documents.add(digits(item.debtorDocument));
+  });
+  const collect = async (where: Prisma.ReceivableStockPositionWhereInput) => {
+    const rows = await prisma.receivableStockPosition.findMany({ where: { batchId: stockBatchId, ...where } });
     rows.forEach((row) => all.set(row.id, row));
+  };
+  for (const chunk of chunked(Array.from(yourNumbers), IN_CHUNK)) await collect({ yourNumber: { in: chunk } });
+  for (const chunk of chunked(Array.from(documentNumbers), IN_CHUNK)) await collect({ documentNumber: { in: chunk } });
+  if (await documentPatternsCanMatch(stockBatchId, documents)) {
+    for (const chunk of chunked(Array.from(documents), CONTAINS_CHUNK)) {
+      await collect({ OR: chunk.map((document) => ({ debtorDocument: { contains: document } })) });
+    }
   }
   return Array.from(all.values());
 }
 
 async function loadPreviouslyRemittedTitles(fundId: string, items: ParsedSettlementItem[]): Promise<PreviousRemittanceTitle[]> {
   const rows = new Map<string, PreviousRemittanceTitle>();
-  for (let offset = 0; offset < items.length; offset += 150) {
-    const clauses: Prisma.ConsignadoRemittanceItemWhereInput[] = [];
-    items.slice(offset, offset + 150).forEach((item) => {
-      if (item.yourNumber) clauses.push({ yourNumber: item.yourNumber });
-      if (item.documentNumber) clauses.push({ documentNumber: item.documentNumber });
-      if (item.debtorDocument) clauses.push({ debtorDocument: { contains: digits(item.debtorDocument) } });
-    });
-    if (!clauses.length) continue;
+  const yourNumbers = new Set<string>();
+  const documentNumbers = new Set<string>();
+  const documents = new Set<string>();
+  items.forEach((item) => {
+    if (item.yourNumber) yourNumbers.add(item.yourNumber);
+    if (item.documentNumber) documentNumbers.add(item.documentNumber);
+    if (item.debtorDocument) documents.add(digits(item.debtorDocument));
+  });
+  const collect = async (clauses: Prisma.ConsignadoRemittanceItemWhereInput[]) => {
+    if (!clauses.length) return;
     const found = await prisma.consignadoRemittanceItem.findMany({
       where: { remittance: { fundId, status: { not: "CANCELLED" } }, OR: clauses },
       select: { id: true, yourNumber: true, documentNumber: true, debtorDocument: true, amount: true, settlementItem: { select: { contractNumber: true, installmentNumber: true } }, remittance: { select: { id: true, fileName: true, status: true, generatedAt: true, batch: { select: { source: true, originator: { select: { code: true } } } } } } },
     });
     found.forEach((item) => rows.set(item.id, { id: item.id, source: item.remittance.batch.source, originatorCode: item.remittance.batch.originator?.code ?? null, yourNumber: item.yourNumber, documentNumber: item.documentNumber, contractNumber: item.settlementItem.contractNumber, installmentNumber: item.settlementItem.installmentNumber, debtorDocument: item.debtorDocument, amount: Number(item.amount), remittanceId: item.remittance.id, remittanceFileName: item.remittance.fileName, remittanceStatus: item.remittance.status, generatedAt: item.remittance.generatedAt }));
-  }
+  };
+  for (const chunk of chunked(Array.from(yourNumbers), IN_CHUNK)) await collect([{ yourNumber: { in: chunk } }]);
+  for (const chunk of chunked(Array.from(documentNumbers), IN_CHUNK)) await collect([{ documentNumber: { in: chunk } }]);
+  for (const chunk of chunked(Array.from(documents), CONTAINS_CHUNK)) await collect(chunk.map((document) => ({ debtorDocument: { contains: document } })));
   return Array.from(rows.values()).sort((left, right) => right.generatedAt.getTime() - left.generatedAt.getTime());
-}
-
-function sourceMatches(source: OperationalFlowSource, candidate: StockCandidate) {
-  const cedent = normalized(candidate.cedentName);
-  return source === "UY3" ? cedent.includes("UY3") : cedent.includes("BMP") || cedent.includes("MONEY PLUS");
-}
-
-function chooseCandidate(source: OperationalFlowSource, item: ParsedSettlementItem, candidates: StockCandidate[]) {
-  if (item.parseIssue) return { status: "DIVERGENT" as const, reason: item.parseIssue, candidate: null };
-  const ranked = candidates
-    .filter((candidate) => sourceMatches(source, candidate))
-    .map((candidate) => {
-      let score = 0;
-      if (item.yourNumber && candidate.yourNumber === item.yourNumber) score += 120;
-      if (item.documentNumber && candidate.documentNumber === item.documentNumber) score += 70;
-      if (item.contractNumber && candidate.documentNumber === item.contractNumber) score += 60;
-      if (item.debtorDocument && digits(candidate.debtorDocument) === digits(item.debtorDocument)) score += 25;
-      if (item.debtorName && normalized(candidate.debtorName) === normalized(item.debtorName)) score += 15;
-      if (sameMoney(candidate.nominalValue, item.titleAmount)) score += 15;
-      if (item.dueDate && dateKey(candidate.adjustedDueDate ?? candidate.originalDueDate) === dateKey(item.dueDate)) score += 5;
-      return { candidate, score };
-    })
-    .filter((entry) => entry.score >= 60)
-    .sort((left, right) => right.score - left.score || left.candidate.id.localeCompare(right.candidate.id));
-  if (!ranked.length) return { status: "NOT_FOUND" as const, reason: "Título não encontrado no estoque ativo.", candidate: null };
-  const top = ranked[0];
-  if (ranked[1]?.score === top.score) return { status: "AMBIGUOUS" as const, reason: `${ranked.filter((entry) => entry.score === top.score).length} candidatos equivalentes.`, candidate: null };
-
-  const nominal = Number(top.candidate.nominalValue);
-  const paid = Number(item.paidAmount);
-  if (item.occurrence === "14") {
-    if (!(paid > 0 && paid < nominal)) return { status: "DIVERGENT" as const, reason: "Ocorrência 14 exige valor pago positivo e menor que o valor de face do estoque.", candidate: top.candidate };
-    return { status: "PARTIAL_MATCH" as const, reason: null, candidate: top.candidate };
-  }
-  if (item.occurrence !== "77") return { status: "DIVERGENT" as const, reason: "Ocorrência diferente de 14 ou 77.", candidate: top.candidate };
-  if (!sameMoney(paid, nominal) && paid < nominal) return { status: "DIVERGENT" as const, reason: "Ocorrência 77 com valor pago inferior ao valor de face.", candidate: top.candidate };
-  return { status: "FULL_MATCH" as const, reason: null, candidate: top.candidate };
 }
 
 export async function listConsignadoOriginators() {
@@ -165,11 +168,14 @@ async function importSettlementBatchFromBuffer(input: { userId: string; source: 
 
   const parsed = input.source === "BMP" ? parseBmpCnab(input.buffer) : parseUy3Workbook(input.buffer);
   const [candidates, pddTitles, remittedTitles] = await Promise.all([loadCandidates(stock.id, parsed), loadConsignadoPddTitles(fund.id), loadPreviouslyRemittedTitles(fund.id, parsed)]);
+  const candidateIndex = buildStockCandidateIndex(candidates);
+  const remittedIndex = buildPreviousRemittanceIndex(remittedTitles);
   const usedPositions = new Set<string>();
   const matched = parsed.map((item) => {
-    const previous = findPreviouslyRemittedTitle({ source: input.source, originatorCode: originator.code, yourNumber: item.yourNumber, documentNumber: item.documentNumber, contractNumber: item.contractNumber, installmentNumber: item.installmentNumber, debtorDocument: item.debtorDocument, paidAmount: Number(item.paidAmount) }, remittedTitles);
+    const incoming = { source: input.source, originatorCode: originator.code, yourNumber: item.yourNumber, documentNumber: item.documentNumber, contractNumber: item.contractNumber, installmentNumber: item.installmentNumber, debtorDocument: item.debtorDocument, paidAmount: Number(item.paidAmount) };
+    const previous = findPreviouslyRemittedTitle(incoming, selectPreviousRemittanceCandidates(remittedIndex, incoming));
     if (previous) return { item, status: "DUPLICATE" as SettlementItemStatus, reason: `${ALREADY_REMITTED_REASON} na remessa ${previous.remittanceFileName}, gerada em ${previous.generatedAt.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}.`, candidate: null, pddTitle: null };
-    let result: ReturnType<typeof chooseCandidate> | (ReturnType<typeof classifyPddMatch> & { candidate: null }) = chooseCandidate(input.source, item, candidates);
+    let result: ReturnType<typeof chooseCandidate> | (ReturnType<typeof classifyPddMatch> & { candidate: null }) = chooseCandidate(input.source, item, selectScorableCandidates(candidateIndex, item));
     if (result.status === "NOT_FOUND") {
       const pddMatch = classifyPddMatch(input.source, { ...item, titleAmount: Number(item.titleAmount) }, pddTitles);
       if (pddMatch.status !== "NOT_FOUND") result = { ...pddMatch, candidate: null };
@@ -194,16 +200,17 @@ async function importSettlementBatchFromBuffer(input: { userId: string; source: 
         status: issueItems ? "REVIEW_REQUIRED" : "READY", totalItems: matched.length, fullItems, partialItems, issueItems,
         receivedAmount, matchedAmount, excludedAmount: receivedAmount.sub(matchedAmount), completedAt: new Date(),
       }});
-      await tx.consignadoSettlementItem.createMany({ data: matched.map(({ item, status, reason, candidate, pddTitle }) => ({
+      const itemRows = matched.map(({ item, status, reason, candidate, pddTitle }) => ({
         batchId: created.id, sourceRow: item.sourceRow, sourceRaw: item.sourceRaw, occurrence: item.occurrence,
         contractNumber: item.contractNumber, installmentNumber: item.installmentNumber, yourNumber: item.yourNumber,
         documentNumber: item.documentNumber, debtorName: item.debtorName, debtorDocument: item.debtorDocument,
         dueDate: item.dueDate, titleAmount: new Prisma.Decimal(item.titleAmount), paidAmount: new Prisma.Decimal(item.paidAmount),
         status, statusReason: reason, matchedStockPositionId: candidate?.id ?? null, matchedPddTitleId: pddTitle?.id ?? null, approved: MATCHABLE.has(status),
-      })) });
+      }));
+      for (const rows of chunked(itemRows, INSERT_CHUNK)) await tx.consignadoSettlementItem.createMany({ data: rows });
       await tx.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_BATCH", entityId: created.id, toStatus: created.status, metadata: { stockBatchId: stock.id, originator: originator.code } } });
       return created;
-    });
+    }, { maxWait: 15_000, timeout: 240_000 });
     return { batchId: batch.id };
   } catch (error) {
     await del(input.storageKey).catch(() => undefined);
@@ -393,13 +400,14 @@ export async function generateSettlementRemittance(batchId: string, userId: stri
         userId, entityType: "SETTLEMENT_ITEM", entityId: item.id, fromStatus: item.status, toStatus: "EXCLUDED",
         metadata: { reason: REMITTANCE_EXCLUSION_EVENT_REASON, remittanceId: remittance.id },
       })) });
-      await tx.consignadoRemittanceItem.createMany({ data: items.map((item) => ({ remittanceId: remittance.id, settlementItemId: item.id, stockPositionId: item.matchedStockPosition.id, yourNumber: item.matchedStockPosition.yourNumber, documentNumber: item.matchedStockPosition.documentNumber, debtorDocument: item.matchedStockPosition.debtorDocument, amount: item.paidAmount, occurrence: item.occurrence ?? "77" })) });
+      const remittanceRows = items.map((item) => ({ remittanceId: remittance.id, settlementItemId: item.id, stockPositionId: item.matchedStockPosition.id, yourNumber: item.matchedStockPosition.yourNumber, documentNumber: item.matchedStockPosition.documentNumber, debtorDocument: item.matchedStockPosition.debtorDocument, amount: item.paidAmount, occurrence: item.occurrence ?? "77" }));
+      for (const rows of chunked(remittanceRows, INSERT_CHUNK)) await tx.consignadoRemittanceItem.createMany({ data: rows });
       const exclusionPersistence = buildRemittanceExclusionPersistence(remittance.id, batch.items, items);
-      if (exclusionPersistence.exclusions.length) await tx.consignadoRemittanceExclusion.createMany({ data: exclusionPersistence.exclusions, skipDuplicates: true });
+      for (const rows of chunked(exclusionPersistence.exclusions, INSERT_CHUNK)) await tx.consignadoRemittanceExclusion.createMany({ data: rows, skipDuplicates: true });
       await tx.consignadoSettlementBatch.update({ where: { id: batchId }, data: { status: "GENERATED" } });
       await tx.consignadoStatusEvent.create({ data: { userId, entityType: "REMITTANCE", entityId: remittance.id, toStatus: "GENERATED", metadata: { fileName, totalItems: items.length, totalAmount: totalAmount.toString(), ...exclusionPersistence.metadata } } });
       return remittance;
-    });
+    }, { maxWait: 15_000, timeout: 240_000 });
   } catch (error) { await del(storageKey).catch(() => undefined); throw error; }
 }
 
