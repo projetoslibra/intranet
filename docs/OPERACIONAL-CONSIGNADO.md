@@ -92,6 +92,21 @@ O desenho deve permitir que, futuramente, uma API substitua o upload manual do e
 - O valor, o título original, o substituto, o usuário, a data e a justificativa ficam auditados.
 - Um título substituto não pode ser usado duas vezes no mesmo lote nem em outra remessa ativa.
 
+### Cruzamento de títulos não encontrados
+
+Quando o "seu número" do arquivo não existe no estoque, o título é classificado como `NOT_FOUND` e vai para a aba "Não encontrados no estoque". O botão **Cruzar títulos com IA** procura o título por chaves alternativas: mesmo sacado (CPF quando os dois lados têm documento, nome normalizado quando falta), mesmo valor nominal com tolerância de um centavo, e vencimento. Nada é gravado nessa etapa.
+
+As sugestões saem em três grupos:
+
+- **Chave completa** — sacado, valor e vencimento idênticos. Aceita aprovação em lote.
+- **Parcela mais antiga (um mês)** — não existe vencimento igual no estoque; é indicada a parcela em aberto mais antiga, que vence exatamente um mês depois. Caso típico de pagamento atrasado cuja parcela já saiu do estoque. Aceita aprovação em lote.
+- **Parcela mais antiga (intervalo maior)** — mesma regra, mas o intervalo não é de um mês. Só aceita aprovação individual.
+
+Cada posição do estoque é alocada a um único item, e posições já aprovadas no lote ou presentes em remessa não cancelada nunca são sugeridas. Um item que tinha candidata de vencimento exato e a perdeu para outra linha não cai para a regra da parcela mais antiga: fica sem sugestão. Ao aceitar, o item vira `MANUALLY_MATCHED` com justificativa automática em `ConsignadoManualCorrection` e um `ConsignadoStatusEvent` guardando grupo, campos casados e os dois vencimentos.
+
+A aplicação recalcula as sugestões no servidor e só aceita `itemIds` do cliente, nunca o título de destino.
+
+**Atenção ao formato do documento:** o estoque grava `debtor_document` formatado (`NNN.NNN.NNN-NN`) e o parser de baixas grava só dígitos. Qualquer comparação de documento entre as duas bases precisa normalizar os dois lados.
 ### Desempenho do processamento
 
 O arquivo de baixa é processado numa única requisição, com teto de 300 segundos na Vercel (`maxDuration` da rota). Três pontos cresciam multiplicando o tamanho do arquivo pelo tamanho da base e estouravam esse teto em arquivos grandes.

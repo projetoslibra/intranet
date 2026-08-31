@@ -267,7 +267,7 @@ export async function importSettlementBatchFromBlob(input: SettlementUploadMetad
 
 const FROZEN_BATCH_STATUSES = new Set(["GENERATED", "RECONCILING", "RECONCILED", "CANCELLED"]);
 
-async function refreshBatchTotals(batchId: string) {
+export async function refreshBatchTotals(batchId: string) {
   const batch = await prisma.consignadoSettlementBatch.findUniqueOrThrow({ where: { id: batchId }, select: { status: true } });
   const items = await prisma.consignadoSettlementItem.findMany({ where: { batchId }, select: {
     status: true, approved: true, paidAmount: true, occurrence: true,
