@@ -4,6 +4,7 @@ import { hasPermission } from "@/lib/permissions";
 import { getBankReconciliationWorkspace, importBradescoStatement } from "@/server/operational/consignado-bank-service";
 import { loadBankReconciliationView } from "@/server/operational/consignado-bank-overview";
 import { getOpenDifferenceOverview } from "@/server/operational/consignado-difference-report";
+import { getUnsettledOverview } from "@/server/operational/consignado-bank-pendencies";
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -14,6 +15,7 @@ export async function GET(request: NextRequest) {
       () => getBankReconciliationWorkspace({ transactionDate: request.nextUrl.searchParams.get("transactionDate") || undefined }),
       getOpenDifferenceOverview,
       (error) => console.error("[consignado-bank-overview] Falha ao atualizar badge.", error),
+      { load: getUnsettledOverview, onFailure: (error) => console.error("[consignado-bank-pendencies] Falha ao atualizar o conciliado sem baixa.", error) },
     );
     return NextResponse.json({ ok: true, ...result });
   }
