@@ -12,6 +12,26 @@ export class DuplicateSettlementFileError extends Error {
   }
 }
 
+export type ExistingSettlementBatch = { id: string; fileName: string; createdAt: Date; status: string };
+
+/**
+ * Decide se um arquivo ja processado impede o reprocessamento.
+ *
+ * O bloqueio existe para evitar baixa em duplicidade, e so um lote vivo pode ter
+ * efetivado baixa: `cancelSettlementBatch` recusa excluir lote com remessa ativa ou
+ * conciliada. Um lote CANCELLED, portanto, nunca baixou nada -- e como a exclusao e
+ * logica (a linha e o hash permanecem na tabela), ignora-lo aqui e o que devolve o
+ * arquivo para a fila em vez de trava-lo para sempre.
+ *
+ * Quando ha lote vivo e lote excluido com o mesmo hash, o vivo prevalece e e ele que
+ * a mensagem reporta.
+ */
+export function findBlockingSettlementBatch(existing: ReadonlyArray<ExistingSettlementBatch>) {
+  return existing
+    .filter((batch) => batch.status !== "CANCELLED")
+    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0] ?? null;
+}
+
 export type IncomingTitle = {
   source: string; originatorCode: string | null; yourNumber: string | null; documentNumber: string | null;
   contractNumber: string | null; installmentNumber: string | null; debtorDocument: string | null; paidAmount: number;

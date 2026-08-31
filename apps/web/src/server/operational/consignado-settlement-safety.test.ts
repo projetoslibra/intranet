@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertRemittanceCancellationAllowed, DuplicateSettlementFileError, findPreviouslyRemittedTitle, remittanceDownloadEligibility } from "./consignado-settlement-safety";
+import { assertRemittanceCancellationAllowed, DuplicateSettlementFileError, findBlockingSettlementBatch, findPreviouslyRemittedTitle, remittanceDownloadEligibility } from "./consignado-settlement-safety";
 
 test("arquivo com o mesmo conteudo e nome diferente e bloqueado definitivamente", () => {
   const error = new DuplicateSettlementFileError({ batchId: "batch-1", fileName: "CB18081ECO.REM", processedAt: new Date("2026-08-18T15:52:00Z") });
@@ -35,4 +35,40 @@ test("impede cancelar remessa conciliada, ja cancelada ou com conciliacao ativa"
   assert.throws(() => assertRemittanceCancellationAllowed({ status: "GENERATED", activeReconciliations: 1 }), /desfaça a conciliação/i);
   assert.throws(() => assertRemittanceCancellationAllowed({ status: "RECONCILED", activeReconciliations: 1 }), /desfaça a conciliação/i);
   assert.throws(() => assertRemittanceCancellationAllowed({ status: "CANCELLED", activeReconciliations: 0 }), /já foi cancelada/i);
+});
+
+test("lote excluido da visualizacao nao bloqueia o reprocessamento do mesmo arquivo", () => {
+  const blocking = findBlockingSettlementBatch([
+    { id: "batch-cancelado", fileName: "CB270805ECO.REM", createdAt: new Date("2026-08-31T21:49:26Z"), status: "CANCELLED" },
+  ]);
+  assert.equal(blocking, null);
+});
+
+test("lote ativo bloqueia mesmo que exista um lote excluido com o mesmo arquivo", () => {
+  const blocking = findBlockingSettlementBatch([
+    { id: "batch-cancelado", fileName: "CB270805ECO.REM", createdAt: new Date("2026-08-31T21:49:26Z"), status: "CANCELLED" },
+    { id: "batch-vivo", fileName: "CB270805ECO (1).REM", createdAt: new Date("2026-08-30T10:00:00Z"), status: "RECONCILED" },
+  ]);
+  assert.equal(blocking?.id, "batch-vivo");
+});
+
+test("entre varios lotes ativos, bloqueia reportando o mais recente", () => {
+  const blocking = findBlockingSettlementBatch([
+    { id: "antigo", fileName: "a.REM", createdAt: new Date("2026-08-01T10:00:00Z"), status: "READY" },
+    { id: "recente", fileName: "b.REM", createdAt: new Date("2026-08-20T10:00:00Z"), status: "GENERATED" },
+    { id: "meio", fileName: "c.REM", createdAt: new Date("2026-08-10T10:00:00Z"), status: "RECONCILED" },
+  ]);
+  assert.equal(blocking?.id, "recente");
+});
+
+test("sem lote algum com aquele hash, nada bloqueia", () => {
+  assert.equal(findBlockingSettlementBatch([]), null);
+});
+
+test("todos os lotes excluidos libera o reprocessamento", () => {
+  const blocking = findBlockingSettlementBatch([
+    { id: "c1", fileName: "a.REM", createdAt: new Date("2026-08-01T10:00:00Z"), status: "CANCELLED" },
+    { id: "c2", fileName: "b.REM", createdAt: new Date("2026-08-20T10:00:00Z"), status: "CANCELLED" },
+  ]);
+  assert.equal(blocking, null);
 });

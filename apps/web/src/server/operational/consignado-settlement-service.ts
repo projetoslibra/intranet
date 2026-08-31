@@ -8,7 +8,7 @@ import { parseBmpCnab, parseUy3Workbook, type ParsedSettlementItem } from "./con
 import { classifyPddMatch, getConsignadoPddSummary, loadConsignadoPddTitles } from "./consignado-pdd-service";
 import { saoPauloDayRange } from "./consignado-date";
 import { buildRemittanceExclusionPersistence, selectRemittanceItems } from "./consignado-remittance-exclusions";
-import { assertRemittanceCancellationAllowed, buildPreviousRemittanceIndex, DuplicateSettlementFileError, findPreviouslyRemittedTitle, remittanceDownloadEligibility, RemittanceDownloadBlockedError, selectPreviousRemittanceCandidates, type PreviousRemittanceTitle } from "./consignado-settlement-safety";
+import { assertRemittanceCancellationAllowed, buildPreviousRemittanceIndex, DuplicateSettlementFileError, findBlockingSettlementBatch, findPreviouslyRemittedTitle, remittanceDownloadEligibility, RemittanceDownloadBlockedError, selectPreviousRemittanceCandidates, type PreviousRemittanceTitle } from "./consignado-settlement-safety";
 import { buildStockCandidateIndex, chooseCandidate, dateKey, digits, normalized, sameMoney, selectScorableCandidates } from "./consignado-matching";
 import { assertBatchReopenAllowed, AUTO_EXCLUSION_REASON, REMITTANCE_EXCLUSION_EVENT_REASON, resolveRestoredStatus, selectReopenableItems } from "./consignado-batch-reopen";
 import {
@@ -156,11 +156,12 @@ async function importSettlementBatchFromBuffer(input: { userId: string; source: 
     where: { code: (input.source === "UY3" ? "UY3" : input.originatorCode) as never, source: input.source, active: true },
   });
   if (!originator) throw new Error("Originador inválido ou inativo.");
-  const existing = await prisma.consignadoSettlementBatch.findFirst({
+  // Traz todos os lotes com este hash (na pratica zero ou um) e deixa a decisao com
+  // findBlockingSettlementBatch, que sabe ignorar os excluidos.
+  const existing = findBlockingSettlementBatch(await prisma.consignadoSettlementBatch.findMany({
     where: { fundId: fund.id, source: input.source, fileHash: input.fileHash },
-    orderBy: { createdAt: "desc" },
-    select: { id: true, fileName: true, createdAt: true },
-  });
+    select: { id: true, fileName: true, createdAt: true, status: true },
+  }));
   if (existing) {
     await prisma.consignadoStatusEvent.create({ data: { userId: input.userId, entityType: "SETTLEMENT_DUPLICATE_ATTEMPT", entityId: existing.id, fromStatus: "BLOCKED", toStatus: "BLOCKED", metadata: { attemptedFileName: input.fileName, originalFileName: existing.fileName, fileHash: input.fileHash } } });
     throw new DuplicateSettlementFileError({ batchId: existing.id, fileName: existing.fileName, processedAt: existing.createdAt });
