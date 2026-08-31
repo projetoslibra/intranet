@@ -111,6 +111,7 @@ ADMIN | DIRETOR | SOCIO | FINANCEIRO | LEITURA
 - Caminho real do repositório nesta máquina: `C:\Users\Juan Carneiro\Documents\GitHub\intranet` (o repo se chama `intranet`, mas contém o monorepo `osher-finance-app`).
 
 ## Atualizacoes recentes
+- [2026-08-26] Cruzamento de títulos não encontrados nas baixas do Consignado: `consignado-cross-match.ts` (motor puro) + `consignado-cross-match-service.ts` + rota `baixas/[batchId]/cruzamento`. ATENÇÃO: o estoque grava `debtor_document` formatado (`NNN.NNN.NNN-NN`) e o parser de baixas grava só dígitos — qualquer comparação de CPF entre as duas bases precisa normalizar os dois lados.
 - [x] TASK 7 - DRE com abas Carteira e DRE/Variacao + fluxos de caixa dos fundos.
 - Nova tabela `FundCashFlow` (`fund_cash_flows`) armazena aplicacoes/resgates dos fundos importados do demonstrativo de caixa QITECH.
 - Tela DRE possui duas abas: `Carteira` para valores absolutos e `DRE / Variacao` para delta diario ajustado por aplicacoes/resgates.
