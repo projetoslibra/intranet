@@ -18,5 +18,5 @@ export default async function ConsignadoBankReconciliationPage() {
       { load: getUnsettledOverview, onFailure: (error) => console.error("[consignado-bank-pendencies] Falha ao carregar o conciliado sem baixa inicial.", error) },
     ),
   ]);
-  return <div className="space-y-6"><section className="rounded border border-slate-200 bg-white p-5 shadow-executive"><h1 className="text-lg font-semibold">Conciliação bancária do Consignado</h1><p className="mt-1 text-sm text-slate-500">Entradas Bradesco e remessas relacionadas em qualquer combinação.</p></section><ConsignadoBankReconciliationPanel canManage={canManage} initialWorkspace={data.workspace} openDifferences={data.openDifferences} unsettled={data.unsettled} /></div>;
+  return <ConsignadoBankReconciliationPanel canManage={canManage} initialWorkspace={data.workspace} unsettled={data.unsettled} />;
 }

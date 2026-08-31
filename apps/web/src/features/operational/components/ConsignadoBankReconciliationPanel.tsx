@@ -90,17 +90,14 @@ const differenceStatusLabel: Record<OtherDifferenceHistory["status"], string> = 
 export function ConsignadoBankReconciliationPanel({
   initialWorkspace,
   canManage,
-  openDifferences,
   unsettled,
 }: {
   initialWorkspace: Workspace;
   canManage: boolean;
-  openDifferences: { count: number; amount: string } | null;
   unsettled: { count: number; amount: string } | null;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [workspace, setWorkspace] = useState(initialWorkspace);
-  const [openDifferenceOverview, setOpenDifferenceOverview] = useState(openDifferences);
   const [unsettledOverview, setUnsettledOverview] = useState(unsettled);
   const [entryIds, setEntryIds] = useState<string[]>([]);
   const [remittanceIds, setRemittanceIds] = useState<string[]>([]);
@@ -153,7 +150,6 @@ export function ConsignadoBankReconciliationPanel({
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.message);
     setWorkspace(payload.workspace);
-    setOpenDifferenceOverview(payload.openDifferences ?? null);
     setUnsettledOverview(payload.unsettled ?? null);
   }
 
@@ -245,95 +241,91 @@ export function ConsignadoBankReconciliationPanel({
     if (payload.ok) await refresh();
   }
 
-  return <div className="space-y-6">
-    <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><h2 className="font-semibold">Pendências da conciliação</h2><p className="mt-1 text-sm text-slate-500">Dinheiro que já entrou no banco e ainda não virou baixa.</p></div>
-        <a className="inline-flex items-center gap-2 rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" href="/dashboard/operacional/financeiro/conciliacao/consignado/conciliacao-bancaria/diferencas">Diferenças e ajustes{openDifferenceOverview ? <span className={openDifferenceOverview.count ? "rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800" : "rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600"}>{openDifferenceOverview.count.toLocaleString("pt-BR")} · {money(openDifferenceOverview.amount)}</span> : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500">indisponível</span>}</a>
+  return <div className="space-y-8">
+    <header className="flex flex-wrap items-end justify-between gap-x-12 gap-y-6 border-b border-slate-200 pb-7">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-navy-900">Conciliação bancária</h1>
+        <p className="mt-1 text-sm text-ink-600">Consignado · entradas Bradesco contra remessas geradas</p>
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <a className="rounded border border-amber-200 bg-amber-50 p-4 transition hover:border-amber-400" href="/dashboard/operacional/financeiro/conciliacao/consignado/baixas/titulos-fora-remessa?situation=ACTIVE_RECONCILIATION">
-          <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">Conciliado sem baixa</p>
-          <p className="mt-1 text-3xl font-semibold tabular-nums text-amber-950">{unsettledOverview ? money(unsettledOverview.amount) : "—"}</p>
-          <p className="mt-1 text-xs text-amber-800">{unsettledOverview ? `${unsettledOverview.count.toLocaleString("pt-BR")} conciliações com sobra · ver os títulos` : "Indicador indisponível no momento."}</p>
+      <div className="flex items-end gap-8 sm:gap-12">
+        <a className="group" href="/dashboard/operacional/financeiro/conciliacao/consignado/baixas/titulos-fora-remessa?situation=ACTIVE_RECONCILIATION">
+          <p className="text-sm text-ink-600">Conciliado sem baixa</p>
+          <p className="mt-1 text-[2rem] font-semibold leading-none tracking-tight tabular-nums text-navy-900">{unsettledOverview ? money(unsettledOverview.amount) : "—"}</p>
+          <p className="mt-2 text-xs text-ink-400 transition group-hover:text-emerald-brand">{unsettledOverview ? `${unsettledOverview.count.toLocaleString("pt-BR")} conciliações com sobra` : "indisponível"}</p>
         </a>
-        <div className="rounded border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Entradas em aberto</p>
-          <p className="mt-1 text-3xl font-semibold tabular-nums text-slate-950">{money(workspace.summary.openEntryAmount)}</p>
-          <p className="mt-1 text-xs text-slate-500">{workspace.summary.openEntryCount.toLocaleString("pt-BR")} entradas aguardando conciliação</p>
+        <div aria-hidden="true" className="h-12 w-px bg-slate-200" />
+        <div>
+          <p className="text-sm text-ink-600">Entradas em aberto</p>
+          <p className="mt-1 text-[2rem] font-semibold leading-none tracking-tight tabular-nums text-navy-900">{money(workspace.summary.openEntryAmount)}</p>
+          <p className="mt-2 text-xs text-ink-400">{workspace.summary.openEntryCount.toLocaleString("pt-BR")} entradas</p>
         </div>
       </div>
-    </section>
+    </header>
 
-    {canManage ? <details className="rounded border border-slate-200 bg-white p-5 shadow-executive">
-      <summary className="cursor-pointer font-semibold">Importar extrato Bradesco</summary>
-      <p className="mt-1 text-sm text-slate-500">Somente créditos positivos novos serão exibidos. Uploads sobrepostos são deduplicados.</p>
-      <form className="mt-4 flex flex-wrap items-end gap-3" onSubmit={upload}>
-        <label className="min-w-72 flex-1 text-sm">Arquivo CSV<input accept=".csv,text/csv" className="mt-1 block h-10 w-full rounded border border-slate-200 px-3 py-2" ref={fileRef} required type="file" /></label>
-        <button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60" disabled={pending}><UploadCloud className="h-4 w-4" />Importar entradas</button>
+    <div aria-atomic="true" aria-live="polite" className={feedback ? "rounded-lg border-l-2 border-emerald-brand bg-white px-4 py-3 text-sm text-navy-900" : "sr-only"} id="bank-reconciliation-feedback" role="status">{feedback}</div>
+
+    <div className="space-y-5">
+    <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+      <form className="flex flex-wrap items-end gap-2" onSubmit={filterEntries}>
+        <label className="text-xs text-ink-600">Data da entrada<input className="mt-1 block h-9 rounded-md border border-slate-300 bg-white px-3 text-sm text-navy-900" onChange={(event) => setTransactionDate(event.target.value)} type="date" value={transactionDate} /></label>
+        <button className="h-9 rounded-md bg-navy-900 px-3.5 text-sm font-medium text-white transition hover:bg-navy-700 disabled:opacity-40" disabled={pending || !transactionDate}>Filtrar</button>
+        <button className="h-9 rounded-md px-3 text-sm font-medium text-ink-600 transition hover:text-navy-900 disabled:opacity-40" disabled={pending || !transactionDate} onClick={() => void showAllOpenEntries()} type="button">Todas em aberto</button>
       </form>
-    </details> : null}
-
-    <div aria-atomic="true" aria-live="polite" className={feedback ? "rounded border border-slate-200 bg-white px-4 py-3 text-sm shadow-executive" : "sr-only"} id="bank-reconciliation-feedback" role="status">{feedback}</div>
-
-    <div className="space-y-6">
-    <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
-      <div className="flex flex-wrap items-end justify-between gap-5">
-        <div className="min-w-72 flex-1"><h2 className="font-semibold">Selecionar e conciliar</h2><p className="mt-1 text-sm text-slate-500">Marque entradas e remessas em qualquer combinação; os totais da seleção acompanham você no rodapé.</p></div>
-        <form className="flex flex-wrap items-end gap-2" onSubmit={filterEntries}>
-          <label className="text-sm">Data da entrada<input className="mt-1 block h-10 rounded border border-slate-200 px-3" onChange={(event) => setTransactionDate(event.target.value)} type="date" value={transactionDate} /></label>
-          <button className="h-10 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-60" disabled={pending || !transactionDate}>Filtrar</button>
-          <button className="h-10 rounded border border-slate-300 px-3 text-sm font-semibold disabled:opacity-60" disabled={pending || !transactionDate} onClick={() => void showAllOpenEntries()} type="button">Todas em aberto</button>
+      {canManage ? <details className="text-sm">
+        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden text-ink-600 transition hover:text-navy-900"><UploadCloud className="h-4 w-4" />Importar extrato Bradesco</summary>
+        <form className="mt-3 flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-4" onSubmit={upload}>
+          <label className="min-w-64 flex-1 text-xs text-ink-600">Arquivo CSV<input accept=".csv,text/csv" className="mt-1 block h-9 w-full rounded-md border border-slate-300 px-3 text-sm text-navy-900" ref={fileRef} required type="file" /></label>
+          <button className="inline-flex h-9 items-center gap-2 rounded-md bg-emerald-brand px-4 text-sm font-medium text-white transition hover:bg-emerald-bright disabled:opacity-40" disabled={pending}>Importar entradas</button>
+          <p className="w-full text-xs text-ink-400">Somente créditos positivos novos. Uploads sobrepostos são deduplicados.</p>
         </form>
-      </div>
-    </section>
+      </details> : null}
+    </div>
 
-    <div className="grid gap-6 xl:grid-cols-2">
-      <section className="overflow-hidden rounded border border-slate-200 bg-white shadow-executive">
-        <div className="border-b border-slate-200 p-4"><h2 className="font-semibold">Entradas pendentes</h2><p className="text-sm text-slate-500">{transactionDate ? `Exibindo movimentações de ${date(`${transactionDate}T00:00:00.000Z`)}` : "Todas as entradas ainda em aberto."}</p></div>
-        <div className="max-h-[480px] divide-y overflow-auto">{workspace.entries.map((entry) => <label className="flex cursor-pointer items-start gap-3 p-4 hover:bg-slate-50" key={entry.id}>
+    <div className="grid gap-5 xl:grid-cols-2">
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="flex items-baseline justify-between gap-3 border-b border-slate-200 px-4 py-3"><h2 className="text-sm font-semibold text-navy-900">Entradas pendentes</h2><p className="text-xs text-ink-400">{transactionDate ? date(`${transactionDate}T00:00:00.000Z`) : `${workspace.entries.length} em aberto`}</p></div>
+        <div className="max-h-[480px] divide-y divide-slate-100 overflow-auto">{workspace.entries.map((entry) => <label className="flex cursor-pointer items-start gap-3 px-4 py-3 transition hover:bg-ink-100" key={entry.id}>
           <input checked={entryIds.includes(entry.id)} className="mt-1" disabled={!canManage} onChange={() => toggle(entry.id, setEntryIds)} type="checkbox" />
-          <div className="min-w-0 flex-1"><div className="flex justify-between gap-3"><p className="truncate text-sm font-medium">{entry.description}</p><strong className="whitespace-nowrap text-sm">{money(entryBalance(entry))}</strong></div><p className="mt-1 text-xs text-slate-500">{date(entry.transactionDate)} · Dcto. {entry.document ?? "não informado"} · {entry.status === "PARTIAL" ? "parcial" : "pendente"}</p></div>
-        </label>)}{!workspace.entries.length ? <p className="p-8 text-center text-sm text-slate-500">{transactionDate ? "Nenhuma entrada pendente nesta data." : "Nenhuma entrada pendente."}</p> : null}</div>
+          <div className="min-w-0 flex-1"><div className="flex justify-between gap-3"><p className="truncate text-sm text-navy-900">{entry.description}</p><strong className="whitespace-nowrap text-sm font-semibold tabular-nums text-navy-900">{money(entryBalance(entry))}</strong></div><p className="mt-0.5 text-xs text-ink-400">{date(entry.transactionDate)} · Dcto. {entry.document ?? "não informado"}{entry.status === "PARTIAL" ? " · parcial" : ""}</p></div>
+        </label>)}{!workspace.entries.length ? <p className="px-4 py-12 text-center text-sm text-ink-400">{transactionDate ? "Nenhuma entrada pendente nesta data." : "Nenhuma entrada pendente."}</p> : null}</div>
       </section>
 
-      <section className="overflow-hidden rounded border border-slate-200 bg-white shadow-executive">
-        <div className="border-b border-slate-200 p-4"><h2 className="font-semibold">Remessas pendentes</h2><p className="text-sm text-slate-500">Selecione uma ou várias remessas.</p></div>
-        <div className="max-h-[480px] divide-y overflow-auto">{workspace.remittances.map((remittance) => <label className="flex cursor-pointer items-start gap-3 p-4 hover:bg-slate-50" key={remittance.id}>
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="flex items-baseline justify-between gap-3 border-b border-slate-200 px-4 py-3"><h2 className="text-sm font-semibold text-navy-900">Remessas pendentes</h2><p className="text-xs text-ink-400">{workspace.remittances.length} em aberto</p></div>
+        <div className="max-h-[480px] divide-y divide-slate-100 overflow-auto">{workspace.remittances.map((remittance) => <label className="flex cursor-pointer items-start gap-3 px-4 py-3 transition hover:bg-ink-100" key={remittance.id}>
           <input checked={remittanceIds.includes(remittance.id)} className="mt-1" disabled={!canManage} onChange={() => toggle(remittance.id, setRemittanceIds)} type="checkbox" />
-          <div className="min-w-0 flex-1"><div className="flex justify-between gap-3"><p className="truncate text-sm font-medium">{remittance.fileName}</p><strong className="whitespace-nowrap text-sm">{money(remittanceBalance(remittance))}</strong></div><p className="mt-1 text-xs text-slate-500">{remittance.batch.source} · {remittance.batch.originator?.name} · {remittance.status === "RECONCILING" ? "parcial" : "pendente"}</p></div>
-        </label>)}{!workspace.remittances.length ? <p className="p-8 text-center text-sm text-slate-500">Nenhuma remessa pendente.</p> : null}</div>
+          <div className="min-w-0 flex-1"><div className="flex justify-between gap-3"><p className="truncate text-sm text-navy-900">{remittance.fileName}</p><strong className="whitespace-nowrap text-sm font-semibold tabular-nums text-navy-900">{money(remittanceBalance(remittance))}</strong></div><p className="mt-0.5 text-xs text-ink-400">{remittance.batch.source} · {remittance.batch.originator?.name}{remittance.status === "RECONCILING" ? " · parcial" : ""}</p></div>
+        </label>)}{!workspace.remittances.length ? <p className="px-4 py-12 text-center text-sm text-ink-400">Nenhuma remessa pendente.</p> : null}</div>
       </section>
     </div>
 
-    {canManage ? <section className={showDifferenceBox ? "rounded border border-slate-300 bg-white p-5 shadow-executive" : "sticky bottom-4 z-20 rounded border border-slate-300 bg-white p-5 shadow-lg"}>
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="grid min-w-72 flex-1 grid-cols-2 gap-4 lg:grid-cols-4">
-          <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Entradas</p><p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{money(selectedEntryTotal)}</p><p className="mt-0.5 text-xs text-slate-500">{entryIds.length} selecionada(s)</p></div>
-          <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Remessas</p><p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{money(selectedRemittanceTotal)}</p><p className="mt-0.5 text-xs text-slate-500">{remittanceIds.length} selecionada(s)</p></div>
-          <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Será alocado</p><p className="mt-1 text-2xl font-semibold tabular-nums text-emerald-700">{money(selectedEntryTotal < selectedRemittanceTotal ? selectedEntryTotal : selectedRemittanceTotal)}</p><p className="mt-0.5 text-xs text-slate-500">menor dos dois lados</p></div>
-          <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Diferença</p><p className={selectedDifferenceCents === BigInt(0) ? "mt-1 text-2xl font-semibold tabular-nums text-slate-400" : "mt-1 text-2xl font-semibold tabular-nums text-amber-700"}>{money(selectedDifference)}</p><p className="mt-0.5 text-xs text-slate-500">{selectedDifferenceCents === BigInt(0) ? "sem diferença" : differenceDirection === "ENTRY_EXCESS" ? "entrada maior" : "remessa maior"}</p></div>
+    {canManage ? <>
+    <div className={showDifferenceBox ? "rounded-lg bg-navy-900 px-6 py-5" : "sticky bottom-4 z-20 rounded-lg bg-navy-900 px-6 py-5 shadow-executive"}>
+      <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
+        <div className="grid min-w-72 flex-1 grid-cols-2 gap-x-8 gap-y-5 lg:grid-cols-4">
+          <div><p className="text-xs text-white/45">Entradas{entryIds.length ? ` · ${entryIds.length}` : ""}</p><p className="mt-1.5 text-xl font-semibold leading-none tabular-nums text-white">{money(selectedEntryTotal)}</p></div>
+          <div><p className="text-xs text-white/45">Remessas{remittanceIds.length ? ` · ${remittanceIds.length}` : ""}</p><p className="mt-1.5 text-xl font-semibold leading-none tabular-nums text-white">{money(selectedRemittanceTotal)}</p></div>
+          <div><p className="text-xs text-white/45">Será alocado</p><p className="mt-1.5 text-xl font-semibold leading-none tabular-nums text-emerald-bright">{money(selectedEntryTotal < selectedRemittanceTotal ? selectedEntryTotal : selectedRemittanceTotal)}</p></div>
+          <div><p className="text-xs text-white/45">Diferença{selectedDifferenceCents === BigInt(0) ? "" : differenceDirection === "ENTRY_EXCESS" ? " · entrada maior" : " · remessa maior"}</p><p className={selectedDifferenceCents === BigInt(0) ? "mt-1.5 text-xl font-semibold leading-none tabular-nums text-white/30" : "mt-1.5 text-xl font-semibold leading-none tabular-nums text-amber-300"}>{money(selectedDifference)}</p></div>
         </div>
-        <button className="inline-flex h-11 items-center gap-2 rounded bg-primary px-5 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || showDifferenceBox || !entryIds.length || !remittanceIds.length} onClick={beginReconciliation} type="button"><Link2 className="h-4 w-4" />Conciliar selecionados</button>
+        <button className="inline-flex h-10 items-center gap-2 rounded-md bg-emerald-brand px-5 text-sm font-medium text-white transition hover:bg-emerald-bright disabled:opacity-30" disabled={pending || showDifferenceBox || !entryIds.length || !remittanceIds.length} onClick={beginReconciliation} type="button"><Link2 className="h-4 w-4" />Conciliar selecionados</button>
       </div>
-      {showDifferenceBox ? <div className="mt-5 rounded border border-amber-300 bg-amber-50 p-4">
+    </div>
+    {showDifferenceBox ? <div className="rounded-lg border border-amber-300 bg-amber-50 p-5">
         <div className="flex items-start justify-between gap-4"><div><h3 className="font-semibold text-amber-950">Compor diferença de {money(selectedDifference)}</h3><p className="mt-1 text-sm text-amber-800">Escolha títulos elegíveis e/ou registre Outros até explicar exatamente o valor. O servidor recalculará tudo antes de concluir.</p></div><button aria-label="Fechar" className="text-amber-800" onClick={resetDifferenceComposition} type="button"><X className="h-5 w-5" /></button></div>
-        <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
-          <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Entradas</p><p className="mt-1 font-semibold">{money(selectedEntryTotal)}</p></div>
-          <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Remessas</p><p className="mt-1 font-semibold">{money(selectedRemittanceTotal)}</p></div>
-          <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Diferença</p><p className="mt-1 font-semibold">{money(selectedDifference)}</p></div>
-          <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Títulos selecionados</p><p className="mt-1 font-semibold">{money(differenceState.titleTotal)}</p></div>
-          <div className="rounded border border-amber-200 bg-white p-3"><p className="text-xs text-slate-500">Outros</p><p className="mt-1 font-semibold">{money(differenceState.otherTotal)}</p></div>
-          <div className={`rounded border bg-white p-3 ${differenceState.unexplainedCents === BigInt(0) ? "border-emerald-300" : "border-red-300"}`}><p className="text-xs text-slate-500">Falta explicar</p><p className={`mt-1 font-semibold ${differenceState.unexplainedCents === BigInt(0) ? "text-emerald-700" : "text-red-700"}`}>{money(differenceState.unexplainedCents)}</p></div>
+        <div className="mt-4 flex flex-wrap items-end gap-x-10 gap-y-4 border-y border-amber-200 py-4">
+          <div><p className="text-xs text-amber-800">Títulos selecionados</p><p className="mt-1 text-lg font-semibold leading-none tabular-nums text-amber-950">{money(differenceState.titleTotal)}</p></div>
+          <div><p className="text-xs text-amber-800">Outros</p><p className="mt-1 text-lg font-semibold leading-none tabular-nums text-amber-950">{money(differenceState.otherTotal)}</p></div>
+          <div><p className="text-xs text-amber-800">Falta explicar</p><p className={differenceState.unexplainedCents === BigInt(0) ? "mt-1 text-lg font-semibold leading-none tabular-nums text-emerald-deep" : "mt-1 text-lg font-semibold leading-none tabular-nums text-red-700"}>{money(differenceState.unexplainedCents)}</p></div>
         </div>
         <div className="mt-4"><ConsignadoDifferenceComposer difference={selectedDifference} direction={differenceDirection} disabled={pending} exclusions={eligibleExclusions} onOtherDifferencesChange={setOtherDifferences} onSelectedIdsChange={setSelectedExclusionIds} otherDifferences={otherDifferences} selectedIds={selectedExclusionIds} /></div>
         <div className="mt-4 flex justify-end gap-2"><button className="h-9 rounded border border-slate-300 bg-white px-3 text-sm font-semibold" disabled={pending} onClick={resetDifferenceComposition} type="button">Cancelar</button><button aria-describedby="difference-composer-status difference-composer-errors" className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || !differenceState.canSubmit} onClick={() => void submitReconciliation()} type="button">Concluir conciliação</button></div>
-      </div> : null}
-    </section> : null}
+    </div> : null}
+    </> : null}
     </div>
 
-    <section className="overflow-hidden rounded border border-slate-200 bg-white shadow-executive">
-      <div className="border-b border-slate-200 p-5"><h2 className="font-semibold">Histórico de conciliações</h2></div>
+    <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-slate-200 px-5 py-4"><h2 className="text-sm font-semibold text-navy-900">Histórico de conciliações</h2><a className="text-xs text-ink-600 transition hover:text-navy-900" href="/dashboard/operacional/financeiro/conciliacao/consignado/conciliacao-bancaria/diferencas">Diferenças e ajustes →</a></div>
       {workspace.reconciliations.length ? <div className="divide-y">{workspace.reconciliations.map((item) => {
         const titleTotal = item.differenceTitles.reduce((sum, title) => sum + cents(title.amount), BigInt(0));
         const otherTotal = item.otherDifferences.reduce((sum, other) => sum + cents(other.amount), BigInt(0));
@@ -350,6 +342,6 @@ export function ConsignadoBankReconciliationPanel({
       })}</div> : <div className="p-8 text-center text-sm text-slate-500"><Landmark className="mx-auto mb-2 h-5 w-5" />Nenhuma conciliação registrada.</div>}
     </section>
 
-    <details className="rounded border border-slate-200 bg-white p-5 shadow-executive"><summary className="cursor-pointer font-semibold">Histórico de importações bancárias</summary><div className="mt-4 divide-y">{workspace.imports.map((item) => <div className="flex justify-between gap-3 py-3 text-sm" key={item.id}><span>{item.fileName} · {item.importedBy.name}</span><span className="text-slate-500">{item.importedRows} novas · {item.duplicateRows} repetidas · {item.ignoredRows} ignoradas</span></div>)}</div></details>
+    <details className="rounded-lg border border-slate-200 bg-white p-5"><summary className="cursor-pointer text-sm font-semibold text-navy-900">Histórico de importações bancárias</summary><div className="mt-4 divide-y">{workspace.imports.map((item) => <div className="flex justify-between gap-3 py-3 text-sm" key={item.id}><span>{item.fileName} · {item.importedBy.name}</span><span className="text-slate-500">{item.importedRows} novas · {item.duplicateRows} repetidas · {item.ignoredRows} ignoradas</span></div>)}</div></details>
   </div>;
 }
