@@ -107,6 +107,18 @@ Cada posição do estoque é alocada a um único item, e posições já aprovada
 A aplicação recalcula as sugestões no servidor e só aceita `itemIds` do cliente, nunca o título de destino.
 
 **Atenção ao formato do documento:** o estoque grava `debtor_document` formatado (`NNN.NNN.NNN-NN`) e o parser de baixas grava só dígitos. Qualquer comparação de documento entre as duas bases precisa normalizar os dois lados.
+### Reabertura do lote
+
+A geração da remessa marca como `EXCLUDED` todo título que não estava aprovado, com o motivo `Não incluído na remessa aprovada.`. Como a tela de revisão não lista títulos excluídos, esses títulos desapareciam do lote sem nenhum caminho de volta — o cartão do lote continuava contando "Fora/revisão", mas a classificação exibia "Todos os títulos estão aptos" e nada abaixo.
+
+O botão **Reabrir lote**, no cabeçalho do lote, devolve esses títulos para a revisão com o status que tinham antes da remessa.
+
+- Reabrir e cancelar remessa são ações independentes. Reabrir nunca cancela remessa.
+- Só voltam os títulos excluídos automaticamente pela geração. Um título que o operador excluiu com "Seguir sem este título" permanece excluído, porque foi uma decisão deliberada.
+- Para restaurar o status exato, a geração passou a gravar um `ConsignadoStatusEvent` por título excluído, com `fromStatus` igual ao status original e `metadata.reason = REMITTANCE_GENERATED`. Isso preserva casos que dependem do status, como o `DUPLICATE` de "Título já baixado via OSHER", que não pode perder a trava ao voltar.
+- Em lotes anteriores a essa mudança não existe evento. Nesses casos o status é derivado: `NOT_FOUND` quando o título não tem posição de estoque casada, `DIVERGENT` quando tem. O `statusReason` original nunca foi sobrescrito, então o texto exibido continua correto.
+- Com remessa ativa o lote é reaberto apenas para conferência: os títulos voltam a aparecer, mas as ações de ajuste são substituídas pelo aviso "Cancele a remessa para ajustar os títulos". Assim o lote nunca diverge do arquivo já enviado ao custodiante.
+- `refreshBatchTotals` passou a preservar os status `GENERATED`, `RECONCILING`, `RECONCILED` e `CANCELLED` ao recalcular os totais. Sem isso, reabrir um lote com remessa ativa devolveria o lote a `REVIEW_REQUIRED` e destravaria por acidente as ações de item, que são guardadas por `status === "GENERATED"`.
 
 ### Conciliação bancária
 
