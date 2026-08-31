@@ -408,6 +408,26 @@ Tela e Excel percorrem no máximo 50.000 registros candidatos por consulta. Cada
 
 As rotas validam a permissão no servidor. Ocultar um botão não substitui o bloqueio da API. Não existe uma permissão alternativa `operational.manage` neste fluxo.
 
+## Painel de pendências da conciliação bancária
+
+A tela de conciliação bancária abre com o indicador **Conciliado sem baixa**: o total de dinheiro que já entrou no extrato, já foi conciliado, e cujo título não foi enviado na remessa. Antes desse painel a tela exibia apenas o badge de ajustes `Outro` em aberto, que mede outra coisa e é ordens de grandeza menor — em 31/08/2026 o badge mostrava R$ 997,58 enquanto o conciliado sem baixa era R$ 60.612,73.
+
+O número é a soma de `differenceAmount` das conciliações `ACTIVE` **em que o total de entradas supera o total de remessas**. A comparação entre as duas colunas é obrigatória: `differenceAmount` é gravado em valor absoluto (`signedDifference.abs()` em `consignado-reconciliation.ts`), logo somar a coluna sozinha misturaria a direção inversa — remessa maior que entrada, que é dinheiro enviado para baixa e não recebido, o problema oposto. Por isso `consignado-bank-pendencies.ts` lê as três colunas das conciliações ativas e filtra a direção em memória, em vez de usar um `aggregate` sobre a coluna. O volume é pequeno por construção: uma conciliação por evento de fechamento, 32 registros no primeiro mês de uso.
+
+`summarizeUnsettledReconciliations` é uma função pura e testada isoladamente; a consulta é uma linha ao redor dela. O indicador é carregado por `loadBankReconciliationView`, o mesmo ponto compartilhado pela página e pela rota de refresh, então o valor acompanha cada conciliação concluída sem recarregar a tela. Uma falha exclusiva dessa consulta degrada o card para "indisponível" e não derruba o workspace, que é o dado essencial da tela.
+
+O card leva ao relatório `Títulos fora da remessa` já filtrado em `situation=ACTIVE_RECONCILIATION`, que é a lista nominal por trás do total. Em 31/08/2026, 817 dos 833 títulos nessa situação eram `NOT_FOUND_IN_STOCK`, o que faz deste painel o placar direto do cruzamento de títulos não encontrados.
+
+### Estrutura da tela
+
+Três blocos, nessa ordem:
+
+1. **Pendências** — conciliado sem baixa e entradas em aberto, mais o link para diferenças e ajustes.
+2. **Selecionar e conciliar** — filtro por data, entradas e remessas lado a lado, e a barra de totais da seleção (entradas, remessas, será alocado, diferença) fixa no rodapé enquanto se percorre as listas. A barra desgruda quando o compositor de diferença abre, senão ele ficaria espremido no rodapé.
+3. **Registros** — histórico de conciliações e de importações. O formulário de importar extrato fica recolhido logo abaixo das pendências, por ser ação pontual.
+
+Observação registrada em 31/08/2026, não corrigida: os quatro ajustes `Outro` em aberto (R$ 997,58) têm valores que casam um a um com títulos que seguem disponíveis para conciliação — R$ 258,81 de FRANCINI DORNELES BORGES e R$ 54,42 de MARCOS VINICIUS DA CRUZ DE OLIVEIRA, entre outros. É o mesmo dinheiro registrado de duas formas, por escolha do operador em 19/08. Nenhum lançamento foi alterado.
+
 ## Rollout seguro da migration
 
 Não execute os passos seguintes diretamente em produção sem janela aprovada, backup testado e identificação explícita do schema `OSHER`. Nunca cole `DATABASE_URL`, senha ou token em terminal compartilhado, relatório, ticket ou Git.

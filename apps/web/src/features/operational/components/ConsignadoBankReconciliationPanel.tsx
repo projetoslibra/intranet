@@ -91,14 +91,17 @@ export function ConsignadoBankReconciliationPanel({
   initialWorkspace,
   canManage,
   openDifferences,
+  unsettled,
 }: {
   initialWorkspace: Workspace;
   canManage: boolean;
   openDifferences: { count: number; amount: string } | null;
+  unsettled: { count: number; amount: string } | null;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [openDifferenceOverview, setOpenDifferenceOverview] = useState(openDifferences);
+  const [unsettledOverview, setUnsettledOverview] = useState(unsettled);
   const [entryIds, setEntryIds] = useState<string[]>([]);
   const [remittanceIds, setRemittanceIds] = useState<string[]>([]);
   const [transactionDate, setTransactionDate] = useState("");
@@ -151,6 +154,7 @@ export function ConsignadoBankReconciliationPanel({
     if (!payload.ok) throw new Error(payload.message);
     setWorkspace(payload.workspace);
     setOpenDifferenceOverview(payload.openDifferences ?? null);
+    setUnsettledOverview(payload.unsettled ?? null);
   }
 
   function resetDifferenceComposition() {
@@ -242,28 +246,40 @@ export function ConsignadoBankReconciliationPanel({
   }
 
   return <div className="space-y-6">
-    <section className="flex flex-wrap items-center justify-between gap-4 rounded border border-slate-200 bg-white px-5 py-4 shadow-executive">
-      <div><h2 className="font-semibold">Acompanhamento das diferenças</h2><p className="mt-1 text-sm text-slate-500">Consulte e resolva os ajustes “Outro” sem sair do fluxo bancário.</p></div>
-      <a className="inline-flex items-center gap-2 rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" href="/dashboard/operacional/financeiro/conciliacao/consignado/conciliacao-bancaria/diferencas">Diferenças e ajustes{openDifferenceOverview ? <span className={openDifferenceOverview.count ? "rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800" : "rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600"}>{openDifferenceOverview.count.toLocaleString("pt-BR")} · {money(openDifferenceOverview.amount)}</span> : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500">indisponível</span>}</a>
+    <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div><h2 className="font-semibold">Pendências da conciliação</h2><p className="mt-1 text-sm text-slate-500">Dinheiro que já entrou no banco e ainda não virou baixa.</p></div>
+        <a className="inline-flex items-center gap-2 rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700" href="/dashboard/operacional/financeiro/conciliacao/consignado/conciliacao-bancaria/diferencas">Diferenças e ajustes{openDifferenceOverview ? <span className={openDifferenceOverview.count ? "rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800" : "rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600"}>{openDifferenceOverview.count.toLocaleString("pt-BR")} · {money(openDifferenceOverview.amount)}</span> : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500">indisponível</span>}</a>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <a className="rounded border border-amber-200 bg-amber-50 p-4 transition hover:border-amber-400" href="/dashboard/operacional/financeiro/conciliacao/consignado/baixas/titulos-fora-remessa?situation=ACTIVE_RECONCILIATION">
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">Conciliado sem baixa</p>
+          <p className="mt-1 text-3xl font-semibold tabular-nums text-amber-950">{unsettledOverview ? money(unsettledOverview.amount) : "—"}</p>
+          <p className="mt-1 text-xs text-amber-800">{unsettledOverview ? `${unsettledOverview.count.toLocaleString("pt-BR")} conciliações com sobra · ver os títulos` : "Indicador indisponível no momento."}</p>
+        </a>
+        <div className="rounded border border-slate-200 bg-slate-50 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Entradas em aberto</p>
+          <p className="mt-1 text-3xl font-semibold tabular-nums text-slate-950">{money(workspace.summary.openEntryAmount)}</p>
+          <p className="mt-1 text-xs text-slate-500">{workspace.summary.openEntryCount.toLocaleString("pt-BR")} entradas aguardando conciliação</p>
+        </div>
+      </div>
     </section>
 
-    {canManage ? <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
-      <h2 className="font-semibold">Importar extrato Bradesco</h2>
+    {canManage ? <details className="rounded border border-slate-200 bg-white p-5 shadow-executive">
+      <summary className="cursor-pointer font-semibold">Importar extrato Bradesco</summary>
       <p className="mt-1 text-sm text-slate-500">Somente créditos positivos novos serão exibidos. Uploads sobrepostos são deduplicados.</p>
       <form className="mt-4 flex flex-wrap items-end gap-3" onSubmit={upload}>
         <label className="min-w-72 flex-1 text-sm">Arquivo CSV<input accept=".csv,text/csv" className="mt-1 block h-10 w-full rounded border border-slate-200 px-3 py-2" ref={fileRef} required type="file" /></label>
         <button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60" disabled={pending}><UploadCloud className="h-4 w-4" />Importar entradas</button>
       </form>
-    </section> : null}
+    </details> : null}
 
     <div aria-atomic="true" aria-live="polite" className={feedback ? "rounded border border-slate-200 bg-white px-4 py-3 text-sm shadow-executive" : "sr-only"} id="bank-reconciliation-feedback" role="status">{feedback}</div>
 
+    <div className="space-y-6">
     <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
       <div className="flex flex-wrap items-end justify-between gap-5">
-        <div className="grid min-w-72 flex-1 gap-3 sm:grid-cols-2">
-          <div className="rounded border border-slate-200 bg-slate-50 p-3"><p className="text-xs text-slate-500">Entradas não conciliadas</p><p className="mt-1 text-lg font-semibold">{workspace.summary.openEntryCount.toLocaleString("pt-BR")}</p></div>
-          <div className="rounded border border-slate-200 bg-slate-50 p-3"><p className="text-xs text-slate-500">Saldo em aberto</p><p className="mt-1 text-lg font-semibold">{money(workspace.summary.openEntryAmount)}</p></div>
-        </div>
+        <div className="min-w-72 flex-1"><h2 className="font-semibold">Selecionar e conciliar</h2><p className="mt-1 text-sm text-slate-500">Marque entradas e remessas em qualquer combinação; os totais da seleção acompanham você no rodapé.</p></div>
         <form className="flex flex-wrap items-end gap-2" onSubmit={filterEntries}>
           <label className="text-sm">Data da entrada<input className="mt-1 block h-10 rounded border border-slate-200 px-3" onChange={(event) => setTransactionDate(event.target.value)} type="date" value={transactionDate} /></label>
           <button className="h-10 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-60" disabled={pending || !transactionDate}>Filtrar</button>
@@ -290,8 +306,16 @@ export function ConsignadoBankReconciliationPanel({
       </section>
     </div>
 
-    {canManage ? <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
-      <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="font-semibold">Relacionar seleções</p><p className="mt-1 text-sm text-slate-500">Entradas: {money(selectedEntryTotal)} · Remessas: {money(selectedRemittanceTotal)} · Será alocado: {money(selectedEntryTotal < selectedRemittanceTotal ? selectedEntryTotal : selectedRemittanceTotal)} · Diferença: {money(selectedDifference)}</p></div><button className="inline-flex h-10 items-center gap-2 rounded bg-primary px-4 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || showDifferenceBox || !entryIds.length || !remittanceIds.length} onClick={beginReconciliation} type="button"><Link2 className="h-4 w-4" />Conciliar selecionados</button></div>
+    {canManage ? <section className={showDifferenceBox ? "rounded border border-slate-300 bg-white p-5 shadow-executive" : "sticky bottom-4 z-20 rounded border border-slate-300 bg-white p-5 shadow-lg"}>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="grid min-w-72 flex-1 grid-cols-2 gap-4 lg:grid-cols-4">
+          <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Entradas</p><p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{money(selectedEntryTotal)}</p><p className="mt-0.5 text-xs text-slate-500">{entryIds.length} selecionada(s)</p></div>
+          <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Remessas</p><p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{money(selectedRemittanceTotal)}</p><p className="mt-0.5 text-xs text-slate-500">{remittanceIds.length} selecionada(s)</p></div>
+          <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Será alocado</p><p className="mt-1 text-2xl font-semibold tabular-nums text-emerald-700">{money(selectedEntryTotal < selectedRemittanceTotal ? selectedEntryTotal : selectedRemittanceTotal)}</p><p className="mt-0.5 text-xs text-slate-500">menor dos dois lados</p></div>
+          <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Diferença</p><p className={selectedDifferenceCents === BigInt(0) ? "mt-1 text-2xl font-semibold tabular-nums text-slate-400" : "mt-1 text-2xl font-semibold tabular-nums text-amber-700"}>{money(selectedDifference)}</p><p className="mt-0.5 text-xs text-slate-500">{selectedDifferenceCents === BigInt(0) ? "sem diferença" : differenceDirection === "ENTRY_EXCESS" ? "entrada maior" : "remessa maior"}</p></div>
+        </div>
+        <button className="inline-flex h-11 items-center gap-2 rounded bg-primary px-5 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || showDifferenceBox || !entryIds.length || !remittanceIds.length} onClick={beginReconciliation} type="button"><Link2 className="h-4 w-4" />Conciliar selecionados</button>
+      </div>
       {showDifferenceBox ? <div className="mt-5 rounded border border-amber-300 bg-amber-50 p-4">
         <div className="flex items-start justify-between gap-4"><div><h3 className="font-semibold text-amber-950">Compor diferença de {money(selectedDifference)}</h3><p className="mt-1 text-sm text-amber-800">Escolha títulos elegíveis e/ou registre Outros até explicar exatamente o valor. O servidor recalculará tudo antes de concluir.</p></div><button aria-label="Fechar" className="text-amber-800" onClick={resetDifferenceComposition} type="button"><X className="h-5 w-5" /></button></div>
         <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
@@ -306,6 +330,7 @@ export function ConsignadoBankReconciliationPanel({
         <div className="mt-4 flex justify-end gap-2"><button className="h-9 rounded border border-slate-300 bg-white px-3 text-sm font-semibold" disabled={pending} onClick={resetDifferenceComposition} type="button">Cancelar</button><button aria-describedby="difference-composer-status difference-composer-errors" className="h-9 rounded bg-primary px-3 text-sm font-semibold text-white disabled:opacity-50" disabled={pending || !differenceState.canSubmit} onClick={() => void submitReconciliation()} type="button">Concluir conciliação</button></div>
       </div> : null}
     </section> : null}
+    </div>
 
     <section className="overflow-hidden rounded border border-slate-200 bg-white shadow-executive">
       <div className="border-b border-slate-200 p-5"><h2 className="font-semibold">Histórico de conciliações</h2></div>
