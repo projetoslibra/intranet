@@ -552,6 +552,11 @@ export async function getSettlementWorkspace(input: { createdDate?: string; orig
         },
         items: {
           orderBy: { sourceRow: "asc" },
+          // sourceRaw e a linha CNAB crua de 444 caracteres. A tela nunca a le, mas
+          // ela respondia por 31% do payload (8,58 MB em 20.265 itens). Quem precisa
+          // dela e generateSettlementRemittance, que carrega os itens pela propria
+          // consulta -- nao por esta. Nao remova o omit sem medir de novo.
+          omit: { sourceRaw: true },
           include: {
             matchedStockPosition: { select: { id: true, yourNumber: true, documentNumber: true, debtorName: true, debtorDocument: true, nominalValue: true, adjustedDueDate: true, originalDueDate: true } },
             matchedPddTitle: { select: { id: true, remittanceFile: true, generatedAt: true, yourNumberUsed: true, documentNumber: true, debtorName: true, debtorDocument: true, nominalValue: true, pddValue: true, dueDate: true, writeOffType: true, originator: true } },
