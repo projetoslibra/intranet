@@ -92,6 +92,20 @@ O desenho deve permitir que, futuramente, uma API substitua o upload manual do e
 - O valor, o título original, o substituto, o usuário, a data e a justificativa ficam auditados.
 - Um título substituto não pode ser usado duas vezes no mesmo lote nem em outra remessa ativa.
 
+### Desempenho do processamento
+
+O arquivo de baixa é processado numa única requisição, com teto de 300 segundos na Vercel (`maxDuration` da rota). Três pontos cresciam multiplicando o tamanho do arquivo pelo tamanho da base e estouravam esse teto em arquivos grandes.
+
+**Filtro de documento na carga de candidatos.** `loadCandidates` repetia, a cada bloco de 150 linhas, um `debtorDocument: { contains: <dígitos> }` por item — uma varredura do estoque por bloco. Esse filtro é incapaz de casar quando os documentos do estoque estão formatados: um padrão de 11 dígitos não existe dentro de um texto cujo maior bloco numérico é 3. Medido em 1.219.129 posições, nenhuma tem sequer 4 dígitos consecutivos. Hoje uma consulta de guarda decide, com uma varredura só, se algum documento do estoque contém uma corrida de dígitos do tamanho do padrão procurado; se não contém, o filtro é dispensado. Padrão vazio casa com tudo e mantém o filtro, e qualquer erro na guarda também o mantém — o caminho antigo volta sozinho se um estoque futuro trouxer documento sem pontuação.
+
+**Pontuação contra o pool inteiro.** `chooseCandidate` percorria todos os candidatos carregados para cada linha do arquivo. A pontuação só alcança o corte de 60 por quatro caminhos: `yourNumber` (120), `documentNumber` (70), `contractNumber` contra `documentNumber` (60), ou os quatro sinais fracos somados — documento (25) + nome (15) + valor (15) + vencimento (5). Todo candidato capaz de passar no corte aparece em pelo menos um dos três baldes de `buildStockCandidateIndex`, então pontuar apenas a união desses baldes devolve o mesmo resultado. A função de pontuação não foi alterada.
+
+**Varredura do histórico de remessas.** `findPreviouslyRemittedTitle` percorria todos os títulos já remetidos para cada linha. `buildPreviousRemittanceIndex` indexa por `yourNumber`, `documentNumber` e pela trinca contrato/parcela/documento, e a seleção devolve o subconjunto na ordem original do array — que chega ordenado da remessa mais recente para a mais antiga. Rodar o mesmo predicado sobre esse subconjunto encontra exatamente o mesmo título.
+
+A equivalência das duas últimas mudanças é verificada por teste diferencial em `consignado-matching.test.ts`: a mesma função de decisão roda sobre o pool inteiro e sobre o subconjunto indexado, e as saídas são comparadas. O teste foi validado por mutação — remover um balde do índice o faz falhar.
+
+As transações de import e de geração de remessa também passaram a declarar timeout e a inserir em blocos. O padrão do Prisma é de 5 segundos, insuficiente para inserir mais de dez mil itens.
+
 ### Reabertura do lote
 
 A geração da remessa marca como `EXCLUDED` todo título que não estava aprovado, com o motivo `Não incluído na remessa aprovada.`. Como a tela de revisão não lista títulos excluídos, esses títulos desapareciam do lote sem nenhum caminho de volta — o cartão do lote continuava contando "Fora/revisão", mas a classificação exibia "Todos os títulos estão aptos" e nada abaixo.
