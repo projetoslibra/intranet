@@ -105,6 +105,8 @@ function canonicalAsset(row: ParsedSourceRow): { name: string; value: Prisma.Dec
       return { name: `Auditoria - ${title}`, value: negativeMagnitude(row.value) };
     case "23702":
       return { name: `Taxa de Administração - ${title}`, value: negativeMagnitude(row.value) };
+    case "23703":
+      return { name: `Despesa - Imposto de Renda - ${title}`, value: negativeMagnitude(row.value) };
     case "23711":
       return { name: `Taxa de Gestão - ${title}`, value: negativeMagnitude(row.value) };
     case "23719":
