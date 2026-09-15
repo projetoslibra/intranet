@@ -235,7 +235,7 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
   const selectedFund = findDefaultFund(funds, searchParams?.fundId);
   const carteiraFundo = selectedFund ? resolveCarteiraFundo(selectedFund) : null;
 
-  const [carteiras, caixas, latestQuote] = selectedFund
+  const [carteiras, caixas] = selectedFund
     ? await Promise.all([
         carteiraFundo
           ? prisma.carteira.findMany({
@@ -268,19 +268,8 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
               },
             })
           : Promise.resolve([]),
-        prisma.fundQuote.findFirst({
-          where: {
-            fundId: selectedFund.id,
-          },
-          orderBy: {
-            quoteDate: "desc",
-          },
-          select: {
-            sharesQuantity: true,
-          },
-        }),
       ])
-    : [[], [], null];
+    : [[], []];
   const latestStock =
     carteiraFundo
       ? await prisma.fidcEstoque.findFirst({
@@ -508,7 +497,6 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
 
   return (
     <QuotaForecastPlanner
-      baseShareQuantity={Number(latestQuote?.sharesQuantity ?? 0)}
       funds={funds}
       historicalRows={historicalRows}
       selectedFundId={selectedFund?.id ?? ""}

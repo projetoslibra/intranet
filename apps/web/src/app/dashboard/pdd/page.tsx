@@ -30,8 +30,10 @@ type StockTitle = {
   debtorName: string;
   debtorDocument: string | null;
   dueDate: string;
+  pddRange: string | null;
   presentValue: number;
   currentPdd: number;
+  situation: string | null;
 };
 
 type HistoricalStockTitle = StockTitle & {
@@ -175,6 +177,23 @@ function calculateDebtorProjection(date: string, titles: StockTitle[]) {
   };
 }
 
+function isWopTitle(title: Pick<StockTitle, "pddRange" | "situation">) {
+  return (
+    normalizeText(title.pddRange).includes("WOP") ||
+    normalizeText(title.situation).includes("WOP")
+  );
+}
+
+function isFullyProvisionedDebtor(date: string, titles: StockTitle[]) {
+  if (titles.length === 0) {
+    return false;
+  }
+
+  const projection = calculateDebtorProjection(date, titles);
+
+  return projection.rate >= 1 || titles.every(isWopTitle);
+}
+
 function groupTitlesByDebtor(titles: StockTitle[]) {
   const debtors = new Map<string, StockTitle[]>();
 
@@ -220,6 +239,8 @@ function buildMatrix(titles: StockTitle[], dates: PddMatrixDate[]) {
       debtorMap: Map<string, PddCedentMatrixRow["debtors"][number]>;
     }
   >();
+  const baseDate = dates[0]?.key ?? "";
+  const baseDebtors = groupTitlesByDebtor(titles);
 
   dates.forEach((date) => {
     const debtorProjections = buildDebtorProjections(date.key, titles);
@@ -239,6 +260,7 @@ function buildMatrix(titles: StockTitle[], dates: PddMatrixDate[]) {
         document: title.cedentDocument,
         titleCount: 0,
         debtorCount: 0,
+        isFullyProvisioned: false,
         presentValue: 0,
         currentPdd: 0,
         values: {},
@@ -249,6 +271,7 @@ function buildMatrix(titles: StockTitle[], dates: PddMatrixDate[]) {
         key: debtorKey,
         name: title.debtorName,
         document: title.debtorDocument,
+        isFullyProvisioned: false,
         titleCount: 0,
         presentValue: 0,
         currentPdd: 0,
@@ -273,14 +296,26 @@ function buildMatrix(titles: StockTitle[], dates: PddMatrixDate[]) {
   });
 
   return Array.from(cedents.values())
-    .map((cedent) => ({
-      ...cedent,
-      debtorCount: cedent.debtorMap.size,
-      debtors: Array.from(cedent.debtorMap.values()).sort(
-        (left, right) => right.currentPdd - left.currentPdd
-      ),
-      debtorMap: undefined,
-    }))
+    .map((cedent) => {
+      const debtors = Array.from(cedent.debtorMap.values())
+        .map((debtor) => ({
+          ...debtor,
+          isFullyProvisioned: isFullyProvisionedDebtor(
+            baseDate,
+            baseDebtors.get(debtor.key) ?? []
+          ),
+        }))
+        .sort((left, right) => right.currentPdd - left.currentPdd);
+
+      return {
+        ...cedent,
+        debtorCount: debtors.length,
+        debtors,
+        isFullyProvisioned:
+          debtors.length > 0 && debtors.every((debtor) => debtor.isFullyProvisioned),
+        debtorMap: undefined,
+      };
+    })
     .sort((left, right) => right.currentPdd - left.currentPdd);
 }
 
@@ -297,6 +332,7 @@ function buildHistoricalMatrix(
     }
   >();
   const historicalByDate = new Map<string, HistoricalStockTitle[]>();
+  const baseDebtors = groupTitlesByDebtor(latestTitles);
 
   historicalTitles.forEach((title) => {
     const group = historicalByDate.get(title.referenceDate) ?? [];
@@ -330,6 +366,7 @@ function buildHistoricalMatrix(
         document: title.cedentDocument,
         titleCount: 0,
         debtorCount: 0,
+        isFullyProvisioned: false,
         presentValue: 0,
         currentPdd: 0,
         values: {},
@@ -340,6 +377,7 @@ function buildHistoricalMatrix(
         key: debtorKey,
         name: title.debtorName,
         document: title.debtorDocument,
+        isFullyProvisioned: false,
         titleCount: 0,
         presentValue: 0,
         currentPdd: 0,
@@ -364,14 +402,26 @@ function buildHistoricalMatrix(
   });
 
   return Array.from(cedents.values())
-    .map((cedent) => ({
-      ...cedent,
-      debtorCount: cedent.debtorMap.size,
-      debtors: Array.from(cedent.debtorMap.values()).sort(
-        (left, right) => right.currentPdd - left.currentPdd
-      ),
-      debtorMap: undefined,
-    }))
+    .map((cedent) => {
+      const debtors = Array.from(cedent.debtorMap.values())
+        .map((debtor) => ({
+          ...debtor,
+          isFullyProvisioned: isFullyProvisionedDebtor(
+            referenceDate,
+            baseDebtors.get(debtor.key) ?? []
+          ),
+        }))
+        .sort((left, right) => right.currentPdd - left.currentPdd);
+
+      return {
+        ...cedent,
+        debtorCount: debtors.length,
+        debtors,
+        isFullyProvisioned:
+          debtors.length > 0 && debtors.every((debtor) => debtor.isFullyProvisioned),
+        debtorMap: undefined,
+      };
+    })
     .sort((left, right) => right.currentPdd - left.currentPdd);
 }
 
@@ -550,6 +600,8 @@ export default async function PddPage({ searchParams }: PddPageProps) {
           dataVencimentoOriginal: true,
           valorPresente: true,
           valorPdd: true,
+          faixaPdd: true,
+          situacaoRecebivel: true,
         },
       })
     : [];
@@ -580,6 +632,8 @@ export default async function PddPage({ searchParams }: PddPageProps) {
             dataVencimentoOriginal: true,
             valorPresente: true,
             valorPdd: true,
+            faixaPdd: true,
+            situacaoRecebivel: true,
           },
         })
       : [];
@@ -593,8 +647,10 @@ export default async function PddPage({ searchParams }: PddPageProps) {
       debtorName: row.nomeSacado,
       debtorDocument: row.docSacado,
       dueDate: dateKey(row.dataVencimentoOriginal),
+      pddRange: row.faixaPdd,
       presentValue: Number(row.valorPresente),
       currentPdd: Math.max(0, Number(row.valorPdd)),
+      situation: row.situacaoRecebivel,
     }));
   const historicalTitles: HistoricalStockTitle[] = historicalStockRows
     .filter((row) => row.dataVencimentoOriginal)
@@ -606,8 +662,10 @@ export default async function PddPage({ searchParams }: PddPageProps) {
       debtorName: row.nomeSacado,
       debtorDocument: row.docSacado,
       dueDate: dateKey(row.dataVencimentoOriginal),
+      pddRange: row.faixaPdd,
       presentValue: Number(row.valorPresente),
       currentPdd: Math.max(0, Number(row.valorPdd)),
+      situation: row.situacaoRecebivel,
     }));
   const referenceDate = latestStock ? dateKey(latestStock.dataReferencia) : null;
   const dates = referenceDate ? buildDates(referenceDate) : [];
