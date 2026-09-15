@@ -15,6 +15,7 @@ export type PddDebtorMatrixRow = {
   key: string;
   name: string;
   document: string | null;
+  isFullyProvisioned: boolean;
   titleCount: number;
   presentValue: number;
   currentPdd: number;
@@ -27,6 +28,7 @@ export type PddCedentMatrixRow = {
   document: string | null;
   titleCount: number;
   debtorCount: number;
+  isFullyProvisioned: boolean;
   presentValue: number;
   currentPdd: number;
   values: Record<string, number>;
@@ -328,6 +330,38 @@ function rowHasMonthlyChange(row: PddCedentMatrixRow, dates: PddMatrixDate[]) {
   });
 }
 
+function hideFullyProvisionedRows(rows: PddCedentMatrixRow[]) {
+  return rows
+    .map((row) => {
+      const debtors = row.debtors.filter((debtor) => !debtor.isFullyProvisioned);
+
+      if (debtors.length === 0) {
+        return null;
+      }
+
+      return {
+        ...row,
+        currentPdd: debtors.reduce((total, debtor) => total + debtor.currentPdd, 0),
+        debtorCount: debtors.length,
+        debtors,
+        isFullyProvisioned: false,
+        presentValue: debtors.reduce(
+          (total, debtor) => total + debtor.presentValue,
+          0
+        ),
+        titleCount: debtors.reduce((total, debtor) => total + debtor.titleCount, 0),
+        values: debtors.reduce<Record<string, number>>((totals, debtor) => {
+          Object.entries(debtor.values).forEach(([date, value]) => {
+            totals[date] = (totals[date] ?? 0) + value;
+          });
+
+          return totals;
+        }, {}),
+      };
+    })
+    .filter((row): row is PddCedentMatrixRow => Boolean(row));
+}
+
 export function PddDashboard({
   dailySummary,
   dates,
@@ -345,12 +379,20 @@ export function PddDashboard({
     useState<MatrixSortMode>("alpha");
   const [showOnlyMonthTurnovers, setShowOnlyMonthTurnovers] = useState(false);
   const [showPast, setShowPast] = useState(false);
+  const [hideFullyProvisioned, setHideFullyProvisioned] = useState(false);
   const pddDeltaSevenDays = summary.projectedSevenDaysPdd - summary.currentPdd;
   const pddDeltaFifteenDays =
     summary.projectedFifteenDaysPdd - summary.currentPdd;
   const hasAnyExpansion = expandedCedents.size > 0;
   const activeDates = showPast ? historicalDates : dates;
   const activeRows = showPast ? historicalRows : rows;
+  const filteredActiveRows = useMemo(
+    () =>
+      hideFullyProvisioned
+        ? hideFullyProvisionedRows(activeRows)
+        : activeRows,
+    [activeRows, hideFullyProvisioned]
+  );
   const topIncrease = dailySummary?.analiseJson.aumentos[0] ?? null;
   const topReversal = dailySummary?.analiseJson.reversoes[0] ?? null;
   const topTurnover =
@@ -436,8 +478,8 @@ export function PddDashboard({
   );
   const visibleRows = useMemo(() => {
     const filteredRows = showOnlyMonthTurnovers
-      ? activeRows.filter((row) => rowHasMonthlyChange(row, activeDates))
-      : activeRows;
+      ? filteredActiveRows.filter((row) => rowHasMonthlyChange(row, activeDates))
+      : filteredActiveRows;
 
     return filteredRows.slice().sort((left, right) => {
       if (matrixSortMode === "pdd_desc") {
@@ -450,7 +492,7 @@ export function PddDashboard({
 
       return left.name.localeCompare(right.name, "pt-BR");
     });
-  }, [activeDates, activeRows, matrixSortMode, showOnlyMonthTurnovers]);
+  }, [activeDates, filteredActiveRows, matrixSortMode, showOnlyMonthTurnovers]);
   const excelData = useMemo(
     () =>
       buildMatrixExcelData({
@@ -745,17 +787,26 @@ export function PddDashboard({
                 />
                 Viram no mes
               </label>
-              <button
-                className={
-                  showPast
-                    ? "h-9 rounded border border-primary bg-primary px-3 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
-                    : "h-9 rounded border border-slate-200 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                }
-                onClick={() => setShowPast((current) => !current)}
-                type="button"
-              >
-                {showPast ? "Ocultar passado" : "Mostrar passado"}
-              </button>
+              <label className="flex h-9 items-center gap-2 rounded border border-slate-200 px-3 text-sm font-medium text-slate-700">
+                <input
+                  checked={showPast}
+                  className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                  onChange={(event) => setShowPast(event.target.checked)}
+                  type="checkbox"
+                />
+                Mostrar passado
+              </label>
+              <label className="flex h-9 items-center gap-2 rounded border border-slate-200 px-3 text-sm font-medium text-slate-700">
+                <input
+                  checked={hideFullyProvisioned}
+                  className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                  onChange={(event) =>
+                    setHideFullyProvisioned(event.target.checked)
+                  }
+                  type="checkbox"
+                />
+                Ocultar 100% PDD
+              </label>
               <button
                 className="h-9 rounded border border-slate-200 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                 onClick={hasAnyExpansion ? collapseAll : expandAll}

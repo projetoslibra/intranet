@@ -31,6 +31,7 @@ type HistoricalRow = {
 
 type ForecastInput = {
   pddDelta: number;
+  pddDeltaRaw?: string;
 };
 
 type ForecastPddMovement = {
@@ -73,18 +74,12 @@ type QuotaForecastPlannerProps = {
   funds: FundOption[];
   selectedFundId: string;
   historicalRows: HistoricalRow[];
-  baseShareQuantity: number;
   stockData: ForecastStockData;
 };
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",
-});
-
-const decimalFormatter = new Intl.NumberFormat("pt-BR", {
-  minimumFractionDigits: 6,
-  maximumFractionDigits: 6,
 });
 
 const percentFormatter = new Intl.NumberFormat("pt-BR", {
@@ -153,6 +148,10 @@ function formatDate(value: string) {
 }
 
 function toInputNumber(value: string) {
+  if (value.trim() === "-") {
+    return 0;
+  }
+
   const normalized = value.replace(/\./g, "").replace(",", ".");
   const number = Number(normalized);
   return Number.isFinite(number) ? number : 0;
@@ -486,6 +485,48 @@ function monthlyCalculationRows(rows: HistoricalRow[]) {
   return monthRows.slice(1, -1);
 }
 
+function median(values: number[]) {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+function flatAverage(values: number[]) {
+  const positiveValues = values.filter((value) => value > 0.005);
+
+  if (positiveValues.length === 0) {
+    return 0;
+  }
+
+  if (positiveValues.length < 4) {
+    return positiveValues.reduce((total, value) => total + value, 0) / positiveValues.length;
+  }
+
+  const center = median(positiveValues);
+  const deviations = positiveValues.map((value) => Math.abs(value - center));
+  const medianDeviation = median(deviations);
+  const tolerance =
+    medianDeviation > 0
+      ? medianDeviation * 3
+      : Math.max(Math.abs(center) * 0.25, 1);
+  const flatValues = positiveValues.filter(
+    (value) => Math.abs(value - center) <= tolerance
+  );
+  const averageValues = flatValues.length > 0 ? flatValues : positiveValues;
+
+  return (
+    averageValues.reduce((total, value) => total + value, 0) /
+    averageValues.length
+  );
+}
+
 function calculateAverageCreditRightsRevenue(rows: HistoricalRow[]) {
   const calculationRows = monthlyCalculationRows(rows);
 
@@ -493,13 +534,7 @@ function calculateAverageCreditRightsRevenue(rows: HistoricalRow[]) {
     return 0;
   }
 
-  const revenueTotal = calculationRows.reduce((total, row) => {
-    return row.creditRightsVariation > 0
-      ? total + row.creditRightsVariation
-      : total;
-  }, 0);
-
-  return revenueTotal / calculationRows.length;
+  return flatAverage(calculationRows.map((row) => row.creditRightsVariation));
 }
 
 function calculateAverageFundCost(rows: HistoricalRow[]) {
@@ -509,12 +544,7 @@ function calculateAverageFundCost(rows: HistoricalRow[]) {
     return 0;
   }
 
-  const costTotal = calculationRows.reduce(
-    (total, row) => total + row.costVariation,
-    0
-  );
-
-  return costTotal / calculationRows.length;
+  return flatAverage(calculationRows.map((row) => row.costVariation));
 }
 
 type StockReductionPanelProps = {
@@ -1597,7 +1627,6 @@ export function QuotaForecastPlanner({
   funds,
   selectedFundId,
   historicalRows,
-  baseShareQuantity,
   stockData,
 }: QuotaForecastPlannerProps) {
   const lastHistorical = historicalRows.at(-1) ?? null;
@@ -1605,7 +1634,6 @@ export function QuotaForecastPlanner({
     ? dateKey(addDays(parseDateKey(lastHistorical.date), 10))
     : dateKey(new Date());
   const [viewDate, setViewDate] = useState(defaultViewDate);
-  const [shareQuantity, setShareQuantity] = useState(baseShareQuantity);
   const [inputs, setInputs] = useState<Record<string, ForecastInput>>({});
   const [appliedReductionBatches, setAppliedReductionBatches] = useState<
     AppliedReductionBatch[]
@@ -1647,9 +1675,7 @@ export function QuotaForecastPlanner({
     let previousPl = lastPatrimonio;
     let previousCreditRights = lastCreditRights;
     let previousPdd = lastPdd;
-    const quantity = shareQuantity > 0 ? shareQuantity : 0;
-    let previousReturnBase =
-      quantity > 0 ? lastPatrimonio / quantity : lastPatrimonio;
+    let previousReturnBase = lastPatrimonio;
     const baseReturnValue = previousReturnBase;
     const baseMonthReturn = lastMonthlyReturn / 100;
     const baseYearReturn = lastYearlyReturn / 100;
@@ -1670,8 +1696,7 @@ export function QuotaForecastPlanner({
       previousPdd -= pddDelta;
       previousPl =
         previousPl + averageCreditRightsRevenue - averageFundCost - pddDelta;
-      const quotaValue = quantity > 0 ? previousPl / quantity : 0;
-      const returnBase = quantity > 0 ? quotaValue : previousPl;
+      const returnBase = previousPl;
       const dailyReturn =
         previousReturnBase > 0 ? ((returnBase / previousReturnBase) - 1) * 100 : 0;
       const returnFromBase =
@@ -1689,7 +1714,6 @@ export function QuotaForecastPlanner({
         fundCost: averageFundCost,
         pdd: previousPdd,
         patrimonio: previousPl,
-        quotaValue,
         dailyReturn,
         monthlyReturn,
         yearlyReturn,
@@ -1713,19 +1737,16 @@ export function QuotaForecastPlanner({
     lastPdd,
     lastYearlyReturn,
     pddMovementsByDate,
-    shareQuantity,
   ]);
 
   const finalProjection = projections.at(-1);
-  const baseQuota =
-    shareQuantity > 0 && lastHistorical ? lastHistorical.patrimonio / shareQuantity : 0;
-  const projectedQuota = finalProjection?.quotaValue ?? baseQuota;
 
   function updatePddInput(date: string, value: string) {
     setInputs((current) => ({
       ...current,
       [date]: {
         pddDelta: toInputNumber(value),
+        pddDeltaRaw: value,
       },
     }));
   }
@@ -1739,7 +1760,7 @@ export function QuotaForecastPlanner({
   return (
     <div className="space-y-6">
       <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
-        <form className="grid gap-4 md:grid-cols-[minmax(220px,1fr)_180px_220px_auto] md:items-end">
+        <form className="grid gap-4 md:grid-cols-[minmax(220px,1fr)_180px_auto] md:items-end">
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700" htmlFor="fundId">
               Fundo
@@ -1772,20 +1793,6 @@ export function QuotaForecastPlanner({
             />
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700" htmlFor="shareQuantity">
-              Quantidade de cotas
-            </label>
-            <input
-              className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-              id="shareQuantity"
-              onChange={(event) => setShareQuantity(toInputNumber(event.target.value))}
-              step="0.000001"
-              type="number"
-              value={shareQuantity || ""}
-            />
-          </div>
-
           <button
             className="h-10 rounded bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
             type="submit"
@@ -1811,7 +1818,7 @@ export function QuotaForecastPlanner({
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-[1780px] border-collapse text-sm">
+            <table className="min-w-[1660px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
                   <th className="px-4 py-3 text-left font-semibold">Data</th>
@@ -1854,7 +1861,7 @@ export function QuotaForecastPlanner({
                   <th className="px-4 py-3 text-right font-semibold">
                     <span
                       className="inline-flex items-center justify-end gap-1"
-                      title="Média aritmética dos últimos 15 valores de Direitos Creditórios da DRE/Variação: DC de hoje menos DC de ontem, menos compras e mais liquidações. Esse valor é replicado em cada data futura da projeção."
+                      title="Média flat dos valores positivos de Direitos Creditórios da DRE/Variação no mês atual, desconsiderando a última data e pontos muito distantes da mediana para evitar eventos atípicos."
                     >
                       Receita média DC
                       <Info className="h-3.5 w-3.5 text-slate-400" />
@@ -1863,7 +1870,7 @@ export function QuotaForecastPlanner({
                   <th className="px-4 py-3 text-right font-semibold">
                     <span
                       className="inline-flex items-center justify-end gap-1"
-                      title="Media dos ultimos 15 custos positivos calculados pela DRE/Variacao: Total Superiores mais Total Despesas, ignorando despesas positivas. Esse custo e descontado do PL em cada data futura."
+                      title="Média flat dos custos positivos da DRE/Variação no mês atual, desconsiderando a última data e pontos muito distantes da mediana para evitar eventos atípicos."
                     >
                       Custo medio
                       <Info className="h-3.5 w-3.5 text-slate-400" />
@@ -1872,7 +1879,6 @@ export function QuotaForecastPlanner({
                   <th className="px-4 py-3 text-right font-semibold">DC projetado</th>
                   <th className="px-4 py-3 text-right font-semibold">PDD projetada</th>
                   <th className="px-4 py-3 text-right font-semibold">PL projetado</th>
-                  <th className="px-4 py-3 text-right font-semibold">Cota projetada</th>
                   <th className="px-4 py-3 text-right font-semibold">Rent. diária</th>
                   <th className="px-4 py-3 text-right font-semibold">Rent. mensal acum.</th>
                   <th className="px-4 py-3 text-right font-semibold">Rent. anual acum.</th>
@@ -1913,9 +1919,13 @@ export function QuotaForecastPlanner({
                         onChange={(event) =>
                           updatePddInput(row.date, event.target.value)
                         }
-                        placeholder="0,00"
+                        placeholder="+/- 0,00"
+                        inputMode="decimal"
                         type="text"
-                        value={formatInputNumber(inputs[row.date]?.pddDelta)}
+                        value={
+                          inputs[row.date]?.pddDeltaRaw ??
+                          formatInputNumber(inputs[row.date]?.pddDelta)
+                        }
                       />
                     </td>
                     <td className="px-4 py-3 text-right text-emerald-700">
@@ -1940,9 +1950,6 @@ export function QuotaForecastPlanner({
                     </td>
                     <td className="px-4 py-3 text-right font-medium text-slate-950">
                       {currencyFormatter.format(row.patrimonio)}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium text-slate-950">
-                      {decimalFormatter.format(row.quotaValue)}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-700">
                       {percentFormatter.format(row.dailyReturn)}%
@@ -2017,9 +2024,6 @@ export function QuotaForecastPlanner({
                     {currencyFormatter.format(
                       finalProjection?.patrimonio ?? lastHistorical?.patrimonio ?? 0
                     )}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {decimalFormatter.format(projectedQuota)}
                   </td>
                   <td className="px-4 py-3 text-right">
                     {percentFormatter.format(projectedDailyReturn)}%
