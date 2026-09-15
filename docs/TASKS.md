@@ -96,3 +96,7 @@
 - Resumo diário de PDD: OSHER já calcula, salva em `PDD_RESUMOS_DIARIOS`, exibe o card na tela PDD e devolve `analiseTexto` para o N8N. Paramos em 2026-08-14 na etapa de disparo de e-mail pelo N8N porque SMTP/Outlook exigiu configuração Microsoft Entra/OAuth; retomar depois definindo se o envio ficará no N8N via Microsoft Graph, SMTP AUTH habilitado ou outro provedor.
 - pnpm v11 bloqueia build scripts → o wrapper `corepack pnpm --filter ... <script>` falha. Workaround documentado no `CLAUDE.md` (rodar Prisma pelo binário). _Resolver de vez configurando `onlyBuiltDependencies`._
 - [2026-08-20] A senha do Postgres já havia sido rotacionada no Railway, mas só o `.env` da raiz tinha o valor novo — `packages/database/.env` e `apps/web/.env` ainda estavam com a senha antiga (por isso `prisma migrate status/deploy` falhava com `P1000` mesmo com a app rodando normalmente). Os três `.env` locais foram sincronizados com a senha atual. **Falta confirmar/atualizar a `DATABASE_URL` na Vercel** com o mesmo valor.
+
+# Módulos arquivados
+
+- [x] **[2026-09-15] Conciliação de Fundos temporariamente arquivada** — acesso visual desativado no Financeiro, páginas profundas redirecionadas e APIs operacionais do Consignado bloqueadas; código, histórico, banco e migrations preservados para futura reativação.
