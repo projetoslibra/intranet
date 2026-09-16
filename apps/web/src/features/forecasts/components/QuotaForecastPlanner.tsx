@@ -123,6 +123,16 @@ function nextBusinessDay(value: Date) {
   return date;
 }
 
+function lastBusinessDayOfMonth(value: Date) {
+  let date = new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + 1, 0));
+
+  while (!isBusinessDay(date)) {
+    date = addDays(date, -1);
+  }
+
+  return date;
+}
+
 function buildFutureDates(startKey: string | null, endKey: string) {
   if (!startKey || !endKey) {
     return [];
@@ -1631,7 +1641,7 @@ export function QuotaForecastPlanner({
 }: QuotaForecastPlannerProps) {
   const lastHistorical = historicalRows.at(-1) ?? null;
   const defaultViewDate = lastHistorical
-    ? dateKey(addDays(parseDateKey(lastHistorical.date), 10))
+    ? dateKey(lastBusinessDayOfMonth(parseDateKey(lastHistorical.date)))
     : dateKey(new Date());
   const [viewDate, setViewDate] = useState(defaultViewDate);
   const [inputs, setInputs] = useState<Record<string, ForecastInput>>({});
