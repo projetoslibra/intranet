@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { authorizeCronRequest, statusForVopSync } from "./route";
+import { authorizeCronRequest, statusForVopSync } from "./route-logic";
 
 test("recusa execução quando CRON_SECRET não está configurado", () => {
   assert.deepEqual(authorizeCronRequest(new Headers(), undefined), {
