@@ -261,8 +261,22 @@ model Fund {
   bankCreditEntries     ConsignadoBankCreditEntry[]
   consignadoPddImports  ConsignadoPddImport[]
   consignadoPddTitles   ConsignadoPddTitle[]
+  vopSnapshots          FundVopSnapshot[]
 
   @@map("funds")
+}
+
+model FundVopSnapshot {
+  id            String   @id @default(cuid())
+  fundId        String   @map("fund_id")
+  referenceDate DateTime @map("reference_date") @db.Date
+  amount        Decimal  @db.Decimal(24, 10)
+  createdAt     DateTime @default(now()) @map("created_at")
+  fund          Fund     @relation(fields: [fundId], references: [id], onDelete: Restrict)
+
+  @@unique([fundId, referenceDate])
+  @@index([referenceDate])
+  @@map("fund_vop_snapshots")
 }
 
 model UserFundAccess {
