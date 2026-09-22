@@ -23,6 +23,7 @@
 |------|-------------|--------|--------|-------|
 | Validar DRE/Variação contra cálculos manuais | João | `chore/validacao-dre` | 2026-08-19 | Conferir valores da aba DRE/Variação com a planilha/cálculo manual antes de mexer em metodologia |
 | Previsões: Viradas, Reversão e Líquido PDD | João | `feat/previsoes-viradas-reversao-pdd` | 2026-08-24 | Adicionar colunas de PDD projetada e atualizar a régua oficial para A-F |
+| Dashboard: snapshots de VOP para APUAMA e BRISTOL | Juan | `feat/dashboard-vop-snapshots` | 2026-09-22 | Criar snapshot imutável diário a partir de `FIDC_ESTOQUES`, acumulado mensal e indicadores no Dashboard. Exige nova tabela/migration no schema `OSHER`; design em `docs/superpowers/specs/2026-09-22-dashboard-vop-snapshots-design.md` |
 
 ---
 
