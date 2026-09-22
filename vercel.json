@@ -7,6 +7,14 @@
     {
       "path": "/api/cron/singulare-import",
       "schedule": "0 20 * * *"
+    },
+    {
+      "path": "/api/cron/vop-snapshots",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/vop-snapshots",
+      "schedule": "30 18 * * *"
     }
   ]
 }
