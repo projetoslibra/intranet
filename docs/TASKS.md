@@ -23,6 +23,7 @@
 |------|-------------|--------|--------|-------|
 | Validar DRE/Variação contra cálculos manuais | João | `chore/validacao-dre` | 2026-08-19 | Conferir valores da aba DRE/Variação com a planilha/cálculo manual antes de mexer em metodologia |
 | Previsões: Viradas, Reversão e Líquido PDD | João | `feat/previsoes-viradas-reversao-pdd` | 2026-08-24 | Adicionar colunas de PDD projetada e atualizar a régua oficial para A-F |
+| Visibilidade de fundos por módulo | Juan | `feat/fund-module-visibility` | 2026-09-23 | Chaves por fundo para Dashboard, Caixa, DRE, Previsões e PDD. ANTENA somente no Caixa; CONSIGNADO oculto nos cinco módulos. Exige migration no schema `OSHER`; design em `docs/superpowers/specs/2026-09-23-fund-module-visibility-design.md` |
 
 ---
 
