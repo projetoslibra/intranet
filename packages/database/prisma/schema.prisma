@@ -29,6 +29,14 @@ enum FundStatus {
   CLOSED
 }
 
+enum FundModule {
+  DASHBOARD
+  CASH
+  DRE
+  FORECASTS
+  PDD
+}
+
 enum FundAccessLevel {
   VIEW
   MANAGE
@@ -194,6 +202,7 @@ model User {
   resolvedBankOtherDifferences ConsignadoBankOtherDifference[] @relation("BankOtherDifferenceResolvedBy")
   operationalStatusEvents   ConsignadoStatusEvent[]
   pddImports                ConsignadoPddImport[]
+  fundModuleVisibilityUpdates FundModuleVisibility[]
 
   @@map("users")
 }
@@ -262,8 +271,24 @@ model Fund {
   consignadoPddImports  ConsignadoPddImport[]
   consignadoPddTitles   ConsignadoPddTitle[]
   vopSnapshots          FundVopSnapshot[]
+  moduleVisibilities    FundModuleVisibility[]
 
   @@map("funds")
+}
+
+model FundModuleVisibility {
+  fundId          String     @map("fund_id")
+  module          FundModule
+  enabled         Boolean    @default(false)
+  updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at")
+  updatedByUserId String?    @map("updated_by_user_id")
+  fund            Fund       @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  updatedBy       User?      @relation(fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@id([fundId, module])
+  @@index([module, enabled])
+  @@index([updatedByUserId])
+  @@map("fund_module_visibilities")
 }
 
 model FundVopSnapshot {
