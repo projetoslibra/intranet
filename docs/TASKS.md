@@ -21,6 +21,7 @@
 
 | Task | Responsável | Branch | Início | Notas |
 |------|-------------|--------|--------|-------|
+| Dashboard: prazo e taxa média ponderados das aquisições | Juan | `feat/dashboard-operation-indicators` | 2026-09-23 | Ampliar snapshots de VOP com componentes ponderados imutáveis; taxa efetiva a.m.; reservar uma migration aditiva no schema `OSHER` |
 | Validar DRE/Variação contra cálculos manuais | João | `chore/validacao-dre` | 2026-08-19 | Conferir valores da aba DRE/Variação com a planilha/cálculo manual antes de mexer em metodologia |
 | Previsões: Viradas, Reversão e Líquido PDD | João | `feat/previsoes-viradas-reversao-pdd` | 2026-08-24 | Adicionar colunas de PDD projetada e atualizar a régua oficial para A-F |
 
