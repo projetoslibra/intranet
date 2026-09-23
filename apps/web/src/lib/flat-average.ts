@@ -46,7 +46,7 @@ export function calculateFlatAverage(values: number[]): FlatAverageResult {
   const medianDeviation = median(deviations);
   const tolerance =
     medianDeviation > 0
-      ? medianDeviation * 3
+      ? medianDeviation * 4
       : Math.max(Math.abs(center) * 0.25, 1);
   const flatValues = positiveValues.filter(
     (value) => Math.abs(value - center) <= tolerance
