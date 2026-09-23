@@ -13,6 +13,7 @@ export type SnapshotIndicatorValues = {
   termWeightAmount: string | null;
   monthlyRateWeightedValue: string | null;
   monthlyRateWeightAmount: string | null;
+  indicatorsLastAttemptedAt: Date | null;
   indicatorsCalculatedAt: Date | null;
 };
 
@@ -55,6 +56,10 @@ export type VopSnapshotRepository = {
     end: Date
   ): Promise<StoredSnapshot[]>;
   listPendingSnapshots(fundId: string, limit: number): Promise<StoredSnapshot[]>;
+  findStockPositionLatestCreatedAt(
+    fundKey: VopFundKey,
+    referenceDate: Date
+  ): Promise<Date | null>;
   loadStockOperations(
     fundKey: VopFundKey,
     referenceDate: Date
@@ -65,6 +70,11 @@ export type VopSnapshotRepository = {
     referenceDate: Date,
     values: SnapshotIndicatorValues
   ): Promise<boolean>;
+  markSnapshotIndicatorsAttempt(
+    fundId: string,
+    referenceDate: Date,
+    attemptedAt: Date
+  ): Promise<void>;
   findLatestSnapshot(fundId: string): Promise<StoredSnapshot | null>;
   sumSnapshots(fundId: string, start: Date, end: Date): Promise<string>;
 };
@@ -164,6 +174,7 @@ function serializeIndicators(
       termWeightAmount: null,
       monthlyRateWeightedValue: null,
       monthlyRateWeightAmount: null,
+      indicatorsLastAttemptedAt: calculatedAt,
       indicatorsCalculatedAt: null,
     };
   }
@@ -176,6 +187,7 @@ function serializeIndicators(
       calculation.monthlyRateWeightedValue?.toString() ?? null,
     monthlyRateWeightAmount:
       calculation.monthlyRateWeightAmount?.toString() ?? null,
+    indicatorsLastAttemptedAt: calculatedAt,
     indicatorsCalculatedAt: calculatedAt,
   };
 }
@@ -202,6 +214,7 @@ function serializeStoredSnapshot(row: {
   termWeightAmount: Prisma.Decimal | null;
   monthlyRateWeightedValue: Prisma.Decimal | null;
   monthlyRateWeightAmount: Prisma.Decimal | null;
+  indicatorsLastAttemptedAt: Date | null;
   indicatorsCalculatedAt: Date | null;
 }): StoredSnapshot {
   return {
@@ -215,6 +228,7 @@ function serializeStoredSnapshot(row: {
       row.monthlyRateWeightedValue?.toString() ?? null,
     monthlyRateWeightAmount:
       row.monthlyRateWeightAmount?.toString() ?? null,
+    indicatorsLastAttemptedAt: row.indicatorsLastAttemptedAt,
     indicatorsCalculatedAt: row.indicatorsCalculatedAt,
   };
 }
@@ -230,6 +244,7 @@ async function getPrismaRepository(): Promise<VopSnapshotRepository> {
     termWeightAmount: true,
     monthlyRateWeightedValue: true,
     monthlyRateWeightAmount: true,
+    indicatorsLastAttemptedAt: true,
     indicatorsCalculatedAt: true,
   } as const;
 
@@ -278,11 +293,25 @@ async function getPrismaRepository(): Promise<VopSnapshotRepository> {
     async listPendingSnapshots(fundId, limit) {
       const rows = await prisma.fundVopSnapshot.findMany({
         where: { fundId, indicatorsCalculatedAt: null },
-        orderBy: { referenceDate: "desc" },
+        orderBy: [
+          { indicatorsLastAttemptedAt: { sort: "asc", nulls: "first" } },
+          { referenceDate: "desc" },
+        ],
         take: limit,
         select: snapshotSelect,
       });
       return rows.map(serializeStoredSnapshot);
+    },
+
+    async findStockPositionLatestCreatedAt(fundKey, referenceDate) {
+      const result = await prisma.fidcEstoque.aggregate({
+        where: {
+          nomeFundo: { contains: fundKey, mode: "insensitive" },
+          dataReferencia: referenceDate,
+        },
+        _max: { createdAt: true },
+      });
+      return result._max.createdAt;
     },
 
     async loadStockOperations(fundKey, referenceDate) {
@@ -308,6 +337,13 @@ async function getPrismaRepository(): Promise<VopSnapshotRepository> {
         data: values,
       });
       return result.count === 1;
+    },
+
+    async markSnapshotIndicatorsAttempt(fundId, referenceDate, attemptedAt) {
+      await prisma.fundVopSnapshot.updateMany({
+        where: { fundId, referenceDate, indicatorsCalculatedAt: null },
+        data: { indicatorsLastAttemptedAt: attemptedAt },
+      });
     },
 
     async findLatestSnapshot(fundId) {
@@ -380,6 +416,29 @@ export async function syncVopSnapshots(options?: {
 
       for (const pending of pendingSnapshots) {
         const key = dateKey(pending.referenceDate);
+        const latestCreatedAt =
+          await repository.findStockPositionLatestCreatedAt(
+            fundKey,
+            pending.referenceDate
+          );
+        if (!latestCreatedAt) {
+          incompleteDates.push(key);
+          await repository.markSnapshotIndicatorsAttempt(
+            fund.id,
+            pending.referenceDate,
+            now
+          );
+          continue;
+        }
+        if (!isStablePosition(latestCreatedAt, now)) {
+          waitingDates.push(key);
+          await repository.markSnapshotIndicatorsAttempt(
+            fund.id,
+            pending.referenceDate,
+            now
+          );
+          continue;
+        }
         const calculation = calculateStockOperations(
           await repository.loadStockOperations(fundKey, pending.referenceDate)
         );
@@ -388,6 +447,11 @@ export async function syncVopSnapshots(options?: {
           !new Prisma.Decimal(pending.amount).equals(calculation.amount)
         ) {
           incompleteDates.push(key);
+          await repository.markSnapshotIndicatorsAttempt(
+            fund.id,
+            pending.referenceDate,
+            now
+          );
           continue;
         }
         if (

@@ -128,6 +128,7 @@ para a mesma combinação de fundo e data. Além de `amount`, cada snapshot ter�
 - `termWeightAmount`: peso total usado no prazo;
 - `monthlyRateWeightedValue`: soma de `valorAquisicao * taxaMensal`;
 - `monthlyRateWeightAmount`: peso total usado na taxa;
+- `indicatorsLastAttemptedAt`: instante da última tentativa de backfill;
 - `indicatorsCalculatedAt`: instante em que os novos componentes foram
   congelados.
 
@@ -167,7 +168,12 @@ do cron: ambas podem calcular, mas somente uma poderá congelar o resultado.
 
 O backfill desta entrega consulta snapshots pendentes independentemente do mês
 da posição mais recente, em lotes limitados a cem registros por fundo e
-execução. Assim, uma virada de mês não abandona snapshots antigos. Uma futura
+execução. Cada tentativa atualiza `indicatorsLastAttemptedAt`, e a fila prioriza
+registros nunca tentados ou tentados há mais tempo. Assim, dados inválidos não
+impedem o avanço para snapshots posteriores ao limite e uma virada de mês não
+abandona snapshots antigos. Antes de calcular cada pendência, o serviço também
+confirma que a posição histórica não recebeu linhas nos últimos dez minutos.
+Uma futura
 importação de histórico anterior ao início dos snapshots será uma entrega
 separada.
 

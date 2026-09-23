@@ -31,6 +31,7 @@ function completeSnapshot(input: {
     termWeightAmount: input.amount,
     monthlyRateWeightedValue: "1",
     monthlyRateWeightAmount: input.amount,
+    indicatorsLastAttemptedAt: now,
     indicatorsCalculatedAt: now,
   };
 }
@@ -51,6 +52,7 @@ function fakeRepository(input?: {
     Array<{ referenceDate: Date; latestCreatedAt: Date }>
   >;
   operations?: Record<string, StockOperation[]>;
+  latestCreatedAtByFundDate?: Record<string, Date | null>;
 }) {
   const snapshots = [...(input?.existing ?? [])];
   const repository: VopSnapshotRepository = {
@@ -70,12 +72,26 @@ function fakeRepository(input?: {
           snapshot.referenceDate >= start &&
           snapshot.referenceDate <= end
       ),
-    listPendingSnapshots: async (fundId) =>
-      snapshots.filter(
-        (snapshot) =>
-          snapshot.fundId === fundId &&
-          snapshot.indicatorsCalculatedAt === null
-      ),
+    listPendingSnapshots: async (fundId, limit) =>
+      snapshots
+        .filter(
+          (snapshot) =>
+            snapshot.fundId === fundId &&
+            snapshot.indicatorsCalculatedAt === null
+        )
+        .sort((left, right) => {
+          const leftAttempt = left.indicatorsLastAttemptedAt?.getTime() ?? -1;
+          const rightAttempt = right.indicatorsLastAttemptedAt?.getTime() ?? -1;
+          return leftAttempt - rightAttempt || right.referenceDate.getTime() - left.referenceDate.getTime();
+        })
+        .slice(0, limit),
+    findStockPositionLatestCreatedAt: async (fundKey, referenceDate) => {
+      const key = `${fundKey}:${dateKey(referenceDate)}`;
+      if (key in (input?.latestCreatedAtByFundDate ?? {})) {
+        return input?.latestCreatedAtByFundDate?.[key] ?? null;
+      }
+      return new Date(referenceDate.getTime() + 15 * 60 * 60 * 1000);
+    },
     loadStockOperations: async (fundKey, referenceDate) =>
       input?.operations?.[`${fundKey}:${dateKey(referenceDate)}`] ?? [],
     createSnapshots: async (rows) => {
@@ -97,6 +113,14 @@ function fakeRepository(input?: {
       if (!snapshot || snapshot.indicatorsCalculatedAt !== null) return false;
       Object.assign(snapshot, values);
       return true;
+    },
+    markSnapshotIndicatorsAttempt: async (fundId, referenceDate, attemptedAt) => {
+      const snapshot = snapshots.find(
+        (row) => row.fundId === fundId && dateKey(row.referenceDate) === dateKey(referenceDate)
+      );
+      if (snapshot && snapshot.indicatorsCalculatedAt === null) {
+        snapshot.indicatorsLastAttemptedAt = attemptedAt;
+      }
     },
     findLatestSnapshot: async () => null,
     sumSnapshots: async () => "0",
@@ -158,7 +182,7 @@ test("completa snapshot antigo uma única vez sem alterar o VOP", async () => {
     fundId: "apuama", referenceDate: apuamaDate, amount: "100",
     operationCount: null, termWeightedValue: null, termWeightAmount: null,
     monthlyRateWeightedValue: null, monthlyRateWeightAmount: null,
-    indicatorsCalculatedAt: null,
+    indicatorsLastAttemptedAt: null, indicatorsCalculatedAt: null,
   };
   const { repository, snapshots } = fakeRepository({
     existing: [existing],
@@ -185,7 +209,7 @@ test("não completa snapshot quando o VOP histórico diverge da origem", async (
     fundId: "apuama", referenceDate: apuamaDate, amount: "100",
     operationCount: null, termWeightedValue: null, termWeightAmount: null,
     monthlyRateWeightedValue: null, monthlyRateWeightAmount: null,
-    indicatorsCalculatedAt: null,
+    indicatorsLastAttemptedAt: null, indicatorsCalculatedAt: null,
   };
   const { repository, snapshots } = fakeRepository({
     existing: [existing], latestByFund: { APUAMA: apuamaDate },
@@ -226,7 +250,7 @@ test("completa snapshot pendente de mês anterior ao da última posição", asyn
     fundId: "apuama", referenceDate: septemberDate, amount: "100",
     operationCount: null, termWeightedValue: null, termWeightAmount: null,
     monthlyRateWeightedValue: null, monthlyRateWeightAmount: null,
-    indicatorsCalculatedAt: null,
+    indicatorsLastAttemptedAt: null, indicatorsCalculatedAt: null,
   };
   const { repository, snapshots } = fakeRepository({
     existing: [existing],
@@ -246,7 +270,7 @@ test("duas sincronizações concorrentes congelam o backfill somente uma vez", a
     fundId: "apuama", referenceDate: apuamaDate, amount: "100",
     operationCount: null, termWeightedValue: null, termWeightAmount: null,
     monthlyRateWeightedValue: null, monthlyRateWeightAmount: null,
-    indicatorsCalculatedAt: null,
+    indicatorsLastAttemptedAt: null, indicatorsCalculatedAt: null,
   };
   const { repository } = fakeRepository({
     existing: [existing], latestByFund: { APUAMA: apuamaDate },
@@ -261,6 +285,65 @@ test("duas sincronizações concorrentes congelam o backfill somente uma vez", a
   const completions = results.flatMap((result) => result.funds[0]?.completedDates ?? []);
 
   assert.deepEqual(completions, ["2026-09-21"]);
+});
+
+test("adia backfill enquanto a posição histórica ainda recebe linhas", async () => {
+  const existing: NewVopSnapshot = {
+    fundId: "apuama", referenceDate: apuamaDate, amount: "100",
+    operationCount: null, termWeightedValue: null, termWeightAmount: null,
+    monthlyRateWeightedValue: null, monthlyRateWeightAmount: null,
+    indicatorsCalculatedAt: null, indicatorsLastAttemptedAt: null,
+  };
+  const { repository, snapshots } = fakeRepository({
+    existing: [existing], latestByFund: { APUAMA: apuamaDate },
+    positionsByFund: { APUAMA: [] },
+    operations: { "APUAMA:2026-09-21": [operation("100")] },
+    latestCreatedAtByFundDate: {
+      "APUAMA:2026-09-21": new Date("2026-09-22T18:25:00.000Z"),
+    },
+  });
+
+  const waiting = await syncVopSnapshots({ now, repository });
+  const completed = await syncVopSnapshots({ now: new Date("2026-09-22T18:40:00.000Z"), repository });
+
+  assert.deepEqual(waiting.funds[0]?.waitingDates, ["2026-09-21"]);
+  assert.equal(
+    snapshots[0]?.indicatorsCalculatedAt?.getTime(),
+    new Date("2026-09-22T18:40:00.000Z").getTime()
+  );
+  assert.deepEqual(completed.funds[0]?.completedDates, ["2026-09-21"]);
+});
+
+test("rotaciona pendências inválidas para não bloquear snapshots além do limite", async () => {
+  const dates = Array.from({ length: 101 }, (_, index) =>
+    new Date(Date.UTC(2026, 0, index + 1))
+  );
+  const existing: NewVopSnapshot[] = dates.map((referenceDate) => ({
+    fundId: "apuama", referenceDate, amount: "100",
+    operationCount: null, termWeightedValue: null, termWeightAmount: null,
+    monthlyRateWeightedValue: null, monthlyRateWeightAmount: null,
+    indicatorsCalculatedAt: null, indicatorsLastAttemptedAt: null,
+  }));
+  const operations = Object.fromEntries(
+    dates.map((referenceDate, index) => [
+      `APUAMA:${dateKey(referenceDate)}`,
+      index === 0
+        ? [operation("100", 30)]
+        : [{ acquisitionValue: "100", termDays: null, annualAssignmentRate: "0.2" }],
+    ])
+  );
+  const { repository, snapshots } = fakeRepository({
+    existing,
+    latestByFund: { APUAMA: dates[100] },
+    positionsByFund: { APUAMA: [] },
+    operations,
+  });
+
+  await syncVopSnapshots({ now, repository });
+  const second = await syncVopSnapshots({ now: new Date(now.getTime() + 60_000), repository });
+
+  assert.equal(snapshots[0]?.indicatorsCalculatedAt?.getTime(), now.getTime() + 60_000);
+  assert.ok(second.funds[0]?.completedDates.includes(dateKey(dates[0])));
 });
 
 test("isola as operações e os componentes de APUAMA e BRISTOL", async () => {
@@ -335,6 +418,7 @@ test("resume o último VOP, componentes e acumulado do mês", async () => {
     fundId: "apuama", referenceDate: apuamaDate, amount: "200.75",
     operationCount: 2, termWeightedValue: "12045", termWeightAmount: "200.75",
     monthlyRateWeightedValue: "6.583", monthlyRateWeightAmount: "200.75",
+    indicatorsLastAttemptedAt: now,
     indicatorsCalculatedAt: now,
   });
   repository.sumSnapshots = async (fundId, start, end) => {
@@ -364,6 +448,7 @@ test("mantém médias indisponíveis enquanto o snapshot não estiver concluído
     fundId: "apuama", referenceDate: apuamaDate, amount: "100",
     operationCount: 1, termWeightedValue: "3000", termWeightAmount: "100",
     monthlyRateWeightedValue: "1", monthlyRateWeightAmount: "100",
+    indicatorsLastAttemptedAt: now,
     indicatorsCalculatedAt: null,
   });
 
