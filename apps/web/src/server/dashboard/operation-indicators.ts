@@ -21,6 +21,25 @@ const ZERO = new Prisma.Decimal(0);
 const ONE = new Prisma.Decimal(1);
 const MONTHS_PER_YEAR = new Prisma.Decimal(12);
 
+export function weightedAverageFromComponents(
+  components: Array<{
+    weightedValue: Prisma.Decimal;
+    weightAmount: Prisma.Decimal;
+  }>
+) {
+  const totals = components.reduce(
+    (result, component) => ({
+      weightedValue: result.weightedValue.plus(component.weightedValue),
+      weightAmount: result.weightAmount.plus(component.weightAmount),
+    }),
+    { weightedValue: ZERO, weightAmount: ZERO }
+  );
+
+  return totals.weightAmount.isZero()
+    ? null
+    : totals.weightedValue.dividedBy(totals.weightAmount);
+}
+
 function withoutIndicators(
   status: "empty" | "invalid",
   amount: Prisma.Decimal,
@@ -65,6 +84,15 @@ export function calculateOperationIndicators(
         amount,
         rows.length,
         "Prazo ausente em operação com valor de aquisição positivo."
+      );
+    }
+
+    if (row.termDays < 0) {
+      return withoutIndicators(
+        "invalid",
+        amount,
+        rows.length,
+        "Prazo inválido em operação com valor de aquisição positivo."
       );
     }
 

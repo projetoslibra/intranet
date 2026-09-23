@@ -102,6 +102,7 @@ decimais e o sufixo `% a.m.`.
 - `valorAquisicao = 0` participa do VOP, mas não altera as médias.
 - `valorAquisicao < 0` torna os indicadores da data pendentes por erro de
   qualidade; pesos negativos não serão tratados silenciosamente.
+- `prazo < 0` também é erro de qualidade; prazo zero continua válido.
 - `taxaCessao <= -1` é inválida para a conversão efetiva e também deixa os
   indicadores pendentes por erro de qualidade.
 - Se houver peso positivo e qualquer operação ponderável estiver sem `prazo` ou
@@ -147,7 +148,9 @@ de um snapshot processado cujo prazo e taxa são legitimamente indisponíveis.
 ## Imutabilidade e backfill
 
 Para novos dias, VOP e componentes ponderados serão calculados a partir da mesma
-lista de operações e inseridos juntos no snapshot.
+lista de operações e inseridos juntos no snapshot. Se a lista tiver dados
+inválidos, nenhum snapshot novo será criado; a data ficará pendente para que uma
+correção na origem possa ser capturada integralmente na execução seguinte.
 
 Para snapshots existentes:
 
@@ -162,7 +165,9 @@ Depois do primeiro preenchimento, nenhuma execução poderá atualizar os
 componentes. A condição atômica também protege contra duas chamadas concorrentes
 do cron: ambas podem calcular, mas somente uma poderá congelar o resultado.
 
-O backfill desta entrega cobre os snapshots já existentes. Uma futura
+O backfill desta entrega consulta snapshots pendentes independentemente do mês
+da posição mais recente, em lotes limitados a cem registros por fundo e
+execução. Assim, uma virada de mês não abandona snapshots antigos. Uma futura
 importação de histórico anterior ao início dos snapshots será uma entrega
 separada.
 
@@ -239,8 +244,9 @@ diferente de VOP ausente.
 ## Tratamento de falhas
 
 - Posição instável: nenhum valor novo da data será congelado.
-- Prazo ou taxa ausente com peso positivo: VOP existente é preservado e os novos
-  indicadores permanecem pendentes.
+- Prazo ou taxa ausente com peso positivo: um VOP existente é preservado e os
+  novos indicadores permanecem pendentes; para uma data nova, nenhum snapshot é
+  criado até a correção da origem.
 - Peso negativo: indicadores pendentes e erro de qualidade registrado no
   resultado do cron.
 - Peso total zero: indicadores processados como indisponíveis.

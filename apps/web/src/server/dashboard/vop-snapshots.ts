@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import {
   calculateOperationIndicators,
+  weightedAverageFromComponents,
   type OperationIndicatorCalculation,
 } from "./operation-indicators";
 
@@ -53,6 +54,7 @@ export type VopSnapshotRepository = {
     start: Date,
     end: Date
   ): Promise<StoredSnapshot[]>;
+  listPendingSnapshots(fundId: string, limit: number): Promise<StoredSnapshot[]>;
   loadStockOperations(
     fundKey: VopFundKey,
     referenceDate: Date
@@ -94,6 +96,7 @@ export type FundVopSummary = {
 
 const SUPPORTED_FUNDS: VopFundKey[] = ["APUAMA", "BRISTOL"];
 const STABILITY_WINDOW_MS = 10 * 60 * 1000;
+const PENDING_BACKFILL_LIMIT = 100;
 
 function normalizeName(value: string) {
   return value
@@ -272,6 +275,16 @@ async function getPrismaRepository(): Promise<VopSnapshotRepository> {
       return rows.map(serializeStoredSnapshot);
     },
 
+    async listPendingSnapshots(fundId, limit) {
+      const rows = await prisma.fundVopSnapshot.findMany({
+        where: { fundId, indicatorsCalculatedAt: null },
+        orderBy: { referenceDate: "desc" },
+        take: limit,
+        select: snapshotSelect,
+      });
+      return rows.map(serializeStoredSnapshot);
+    },
+
     async loadStockOperations(fundKey, referenceDate) {
       const rows = await prisma.fidcEstoque.findMany({
         where: vopStockWhere(fundKey, referenceDate),
@@ -352,9 +365,10 @@ export async function syncVopSnapshots(options?: {
       }
 
       const { start, end } = monthBounds(latestDate);
-      const [positions, existingSnapshots] = await Promise.all([
+      const [positions, existingSnapshots, pendingSnapshots] = await Promise.all([
         repository.listStockPositions(fundKey, start, end),
         repository.listExistingSnapshots(fund.id, start, end),
+        repository.listPendingSnapshots(fund.id, PENDING_BACKFILL_LIMIT),
       ]);
       const existingByDate = new Map(
         existingSnapshots.map((snapshot) => [dateKey(snapshot.referenceDate), snapshot])
@@ -364,10 +378,33 @@ export async function syncVopSnapshots(options?: {
       const waitingDates: string[] = [];
       const incompleteDates: string[] = [];
 
+      for (const pending of pendingSnapshots) {
+        const key = dateKey(pending.referenceDate);
+        const calculation = calculateStockOperations(
+          await repository.loadStockOperations(fundKey, pending.referenceDate)
+        );
+        if (
+          calculation.status === "invalid" ||
+          !new Prisma.Decimal(pending.amount).equals(calculation.amount)
+        ) {
+          incompleteDates.push(key);
+          continue;
+        }
+        if (
+          await repository.completeSnapshotIndicatorsOnce(
+            fund.id,
+            pending.referenceDate,
+            serializeIndicators(calculation, now)
+          )
+        ) {
+          completedDates.push(key);
+        }
+      }
+
       for (const position of positions) {
         const key = dateKey(position.referenceDate);
         const existing = existingByDate.get(key);
-        if (existing?.indicatorsCalculatedAt) continue;
+        if (existing) continue;
         if (!isStablePosition(position.latestCreatedAt, now)) {
           waitingDates.push(key);
           continue;
@@ -378,23 +415,8 @@ export async function syncVopSnapshots(options?: {
         );
         const indicatorValues = serializeIndicators(calculation, now);
 
-        if (existing) {
-          if (
-            calculation.status === "invalid" ||
-            !new Prisma.Decimal(existing.amount).equals(calculation.amount)
-          ) {
-            incompleteDates.push(key);
-            continue;
-          }
-          if (
-            await repository.completeSnapshotIndicatorsOnce(
-              fund.id,
-              position.referenceDate,
-              indicatorValues
-            )
-          ) {
-            completedDates.push(key);
-          }
+        if (calculation.status === "invalid") {
+          incompleteDates.push(key);
           continue;
         }
 
@@ -404,7 +426,6 @@ export async function syncVopSnapshots(options?: {
           amount: calculation.amount.toString(),
           ...indicatorValues,
         });
-        if (calculation.status === "invalid") incompleteDates.push(key);
       }
 
       await repository.createSnapshots(rows);
@@ -430,9 +451,13 @@ export async function syncVopSnapshots(options?: {
 
 function weightedAverage(numerator: string | null, denominator: string | null) {
   if (numerator === null || denominator === null) return null;
-  const weight = new Prisma.Decimal(denominator);
-  if (weight.isZero()) return null;
-  return Number(new Prisma.Decimal(numerator).dividedBy(weight));
+  const result = weightedAverageFromComponents([
+    {
+      weightedValue: new Prisma.Decimal(numerator),
+      weightAmount: new Prisma.Decimal(denominator),
+    },
+  ]);
+  return result === null ? null : Number(result);
 }
 
 export async function loadFundVopSummary(
@@ -452,13 +477,14 @@ export async function loadFundVopSummary(
     referenceDate: latest.referenceDate,
     dailyAmount: Number(latest.amount),
     monthlyAmount: Number(monthlyAmount),
-    weightedAverageTermDays: weightedAverage(
-      latest.termWeightedValue,
-      latest.termWeightAmount
-    ),
-    weightedAverageMonthlyRate: weightedAverage(
-      latest.monthlyRateWeightedValue,
-      latest.monthlyRateWeightAmount
-    ),
+    weightedAverageTermDays: latest.indicatorsCalculatedAt
+      ? weightedAverage(latest.termWeightedValue, latest.termWeightAmount)
+      : null,
+    weightedAverageMonthlyRate: latest.indicatorsCalculatedAt
+      ? weightedAverage(
+          latest.monthlyRateWeightedValue,
+          latest.monthlyRateWeightAmount
+        )
+      : null,
   };
 }

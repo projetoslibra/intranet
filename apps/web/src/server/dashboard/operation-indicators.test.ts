@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Prisma } from "@prisma/client";
-import { calculateOperationIndicators } from "./operation-indicators";
+import {
+  calculateOperationIndicators,
+  weightedAverageFromComponents,
+} from "./operation-indicators";
 
 const decimal = (value: string) => new Prisma.Decimal(value);
 
@@ -96,4 +99,26 @@ test("recusa taxa anual menor ou igual a menos cem por cento", () => {
 
   assert.equal(result.status, "invalid");
   assert.match(result.issue ?? "", /taxa de cessão inválida/i);
+});
+
+test("recusa prazo negativo como erro de qualidade", () => {
+  const result = calculateOperationIndicators([
+    {
+      acquisitionValue: decimal("100"),
+      termDays: -1,
+      annualAssignmentRate: decimal("0.20"),
+    },
+  ]);
+
+  assert.equal(result.status, "invalid");
+  assert.match(result.issue ?? "", /prazo inválido/i);
+});
+
+test("consolida snapshots somando componentes em vez de fazer média de médias", () => {
+  const average = weightedAverageFromComponents([
+    { weightedValue: decimal("3000"), weightAmount: decimal("100") },
+    { weightedValue: decimal("18000"), weightAmount: decimal("200") },
+  ]);
+
+  assert.equal(average?.toFixed(2), "70.00");
 });
