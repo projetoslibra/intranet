@@ -22,6 +22,14 @@ export type ConcentrationRow = {
   share: number;
 };
 
+export type StockConcentrationPosition = {
+  nomeCedente: string;
+  docCedente: string | null;
+  nomeSacado: string;
+  docSacado: string | null;
+  valorPresente: Prisma.Decimal;
+};
+
 export type StockComplianceSummary = {
   fundId: string;
   fundName: string;
@@ -231,6 +239,41 @@ function toRows(
     .sort((a, b) => b.value - a.value);
 }
 
+export function buildStockConcentrations(
+  positions: StockConcentrationPosition[],
+  pl: number
+) {
+  const cedents = new Map<string, { name: string; document: string; value: number }>();
+  const debtors = new Map<string, { name: string; document: string; value: number }>();
+
+  for (const position of positions) {
+    const replaceCedent = SPECIAL_CEDENTS.has(normalizeAtivo(position.nomeCedente));
+    const cedentName = replaceCedent ? position.nomeSacado : position.nomeCedente;
+    const cedentDocument = replaceCedent ? position.docSacado : position.docCedente;
+    const presentValue = toNumber(position.valorPresente);
+
+    addConcentration(
+      cedents,
+      concentrationKey(cedentDocument, cedentName),
+      cedentName,
+      cedentDocument ?? "",
+      presentValue
+    );
+    addConcentration(
+      debtors,
+      concentrationKey(position.docSacado, position.nomeSacado),
+      position.nomeSacado,
+      position.docSacado ?? "",
+      presentValue
+    );
+  }
+
+  return {
+    cedents: toRows(cedents, pl),
+    debtors: toRows(debtors, pl),
+  };
+}
+
 async function getPlForFund(
   fund: { name: string; shortName: string },
   referenceDate?: Date
@@ -354,7 +397,7 @@ async function getStockSummaries(
           docCedente: true,
           nomeSacado: true,
           docSacado: true,
-          valorNominal: true,
+          valorPresente: true,
         },
       });
 
@@ -369,33 +412,11 @@ async function getStockSummaries(
         fund,
         useLatestStockAndPl ? undefined : referenceDate
       );
-      const cedents = new Map<string, { name: string; document: string; value: number }>();
-      const debtors = new Map<string, { name: string; document: string; value: number }>();
-
-      for (const position of positions) {
-        const replaceCedent = SPECIAL_CEDENTS.has(normalizeAtivo(position.nomeCedente));
-        const cedentName = replaceCedent ? position.nomeSacado : position.nomeCedente;
-        const cedentDocument = replaceCedent ? position.docSacado : position.docCedente;
-
-        addConcentration(
-          cedents,
-          concentrationKey(cedentDocument, cedentName),
-          cedentName,
-          cedentDocument ?? "",
-          toNumber(position.valorNominal)
-        );
-        addConcentration(
-          debtors,
-          concentrationKey(position.docSacado, position.nomeSacado),
-          position.nomeSacado,
-          position.docSacado ?? "",
-          toNumber(position.valorNominal)
-        );
-      }
-
       const limits = LIMITS[fundKey] ?? LIMITS.APUAMA;
-      const cedentRows = toRows(cedents, pl);
-      const debtorRows = toRows(debtors, pl);
+      const { cedents: cedentRows, debtors: debtorRows } = buildStockConcentrations(
+        positions,
+        pl
+      );
 
       const summary: StockComplianceSummary = {
         fundId: `fidc:${normalizeAtivo(snapshot.nomeFundo)}`,

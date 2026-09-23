@@ -80,7 +80,7 @@ function ConcentrationTable({ rows }: { rows: ConcentrationRow[] }) {
           <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
             <th className="px-4 py-3 text-left font-semibold">Nome</th>
             <th className="px-4 py-3 text-left font-semibold">Documento</th>
-            <th className="px-4 py-3 text-right font-semibold">Valor</th>
+            <th className="px-4 py-3 text-right font-semibold">Valor presente</th>
             <th className="px-4 py-3 text-right font-semibold">% PL</th>
           </tr>
         </thead>
