@@ -214,4 +214,3 @@ Ordem de implantação:
 4. Validar as cinco telas com uma sessão autorizada.
 5. Confirmar que ANTENA aceita leitura e gravação no Caixa e não aparece nas demais telas.
 6. Confirmar que CONSIGNADO não aparece em nenhuma das cinco telas.
-
