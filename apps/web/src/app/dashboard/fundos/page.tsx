@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/formatters";
 import { sortFundsByDisplayPriority } from "@/lib/fund-order";
 import { hasPermission } from "@/lib/permissions";
+import { normalizeFundModules } from "@/lib/fund-modules";
 
 export default async function FundsPage() {
   const canView = await hasPermission("funds.view");
@@ -37,6 +38,12 @@ export default async function FundsPage() {
       fundType: true,
       status: true,
       startDate: true,
+      moduleVisibilities: {
+        select: {
+          module: true,
+          enabled: true,
+        },
+      },
     },
     }),
   ]);
@@ -44,10 +51,13 @@ export default async function FundsPage() {
   return (
     <FundsTable
       canManage={canManage}
-      funds={sortFundsByDisplayPriority(funds).map((fund) => ({
-        ...fund,
-        startDate: formatDate(fund.startDate),
-      }))}
+      funds={sortFundsByDisplayPriority(funds).map(
+        ({ moduleVisibilities, ...fund }) => ({
+          ...fund,
+          modules: normalizeFundModules(moduleVisibilities),
+          startDate: formatDate(fund.startDate),
+        })
+      )}
     />
   );
 }

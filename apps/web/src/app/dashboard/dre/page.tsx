@@ -1,6 +1,7 @@
 import { Download } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { findDefaultFund, sortFundsByDisplayPriority } from "@/lib/fund-order";
+import { fundListWhere } from "@/lib/fund-modules";
 import { hasPermission } from "@/lib/permissions";
 import { CarteiraImportPanel } from "@/features/carteiras/components/CarteiraImportPanel";
 import { ConsignadoCarteiraImportPanel } from "@/features/carteiras/components/ConsignadoCarteiraImportPanel";
@@ -597,12 +598,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
   const selectedView = searchParams?.view === "variacao" ? "variacao" : "carteira";
   const defaultImportDate = toDateKey(getMostRecentBusinessDate());
   const funds = sortFundsByDisplayPriority(await prisma.fund.findMany({
-    where: {
-      status: "ACTIVE",
-      cnpj: {
-        not: "00.000.000/0001-00",
-      },
-    },
+    where: fundListWhere("DRE"),
     orderBy: {
       name: "asc",
     },
@@ -622,7 +618,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
         <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
           <h2 className="text-lg font-semibold text-slate-950">DRE dos Fundos</h2>
           <p className="mt-2 text-sm text-slate-500">
-            Nenhum fundo ativo encontrado para exibir a DRE.
+            Nenhum fundo esta habilitado para exibir a DRE.
           </p>
         </section>
       </div>

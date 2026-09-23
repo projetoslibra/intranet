@@ -1,4 +1,5 @@
 import { findDefaultFund, sortFundsByDisplayPriority } from "@/lib/fund-order";
+import { fundListWhere } from "@/lib/fund-modules";
 import {
   pddDaysLate,
   pddDebtorKey,
@@ -545,12 +546,7 @@ export default async function PddPage({ searchParams }: PddPageProps) {
 
   const funds = sortFundsByDisplayPriority(
     await prisma.fund.findMany({
-      where: {
-        status: "ACTIVE",
-        cnpj: {
-          not: "00.000.000/0001-00",
-        },
-      },
+      where: fundListWhere("PDD"),
       orderBy: {
         name: "asc",
       },
@@ -562,6 +558,18 @@ export default async function PddPage({ searchParams }: PddPageProps) {
     })
   );
   const selectedFund = findDefaultFund(funds, searchParams?.fundId);
+
+  if (!selectedFund) {
+    return (
+      <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
+        <h2 className="text-lg font-semibold text-slate-950">PDD</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Nenhum fundo esta habilitado para exibir o painel de PDD.
+        </p>
+      </section>
+    );
+  }
+
   const stockFundToken = selectedFund ? resolveStockFundToken(selectedFund) : null;
   const latestStock = stockFundToken
     ? await prisma.fidcEstoque.findFirst({

@@ -9,12 +9,19 @@ import {
   useReactTable,
   type ColumnDef,
 } from "@tanstack/react-table";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Loader2, Plus, Power } from "lucide-react";
 import { useFormState, useFormStatus } from "react-dom";
 import {
   deleteFundAction,
+  setFundModuleVisibilityAction,
   type DeleteFundState,
 } from "@/app/dashboard/fundos/actions";
+import {
+  FUND_MODULES,
+  type FundModuleKey,
+  type FundModuleVisibilityMap,
+} from "@/lib/fund-modules";
+import { resolveFundModuleToggle } from "@/server/funds/module-visibility";
 
 type FundRow = {
   id: string;
@@ -24,6 +31,7 @@ type FundRow = {
   fundType: string;
   status: string;
   startDate: string;
+  modules: FundModuleVisibilityMap;
 };
 
 type FundsTableProps = {
@@ -68,6 +76,66 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function FundModuleToggle({
+  fundId,
+  module,
+  label,
+  initialEnabled,
+  canManage,
+}: {
+  fundId: string;
+  module: FundModuleKey;
+  label: string;
+  initialEnabled: boolean;
+  canManage: boolean;
+}) {
+  const [enabled, setEnabled] = useState(initialEnabled);
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function toggle() {
+    const previous = enabled;
+    const next = !previous;
+    setEnabled(next);
+    setPending(true);
+    setMessage("");
+
+    const result = await setFundModuleVisibilityAction({
+      fundId,
+      module,
+      enabled: next,
+    });
+
+    setEnabled(resolveFundModuleToggle(previous, result));
+    setMessage(result.ok ? "" : result.message);
+    setPending(false);
+  }
+
+  return (
+    <div className="flex min-w-[92px] flex-col gap-1">
+      <span className="text-[11px] font-medium text-slate-500">{label}</span>
+      <button
+        aria-checked={enabled}
+        aria-label={`${label}: ${enabled ? "ligado" : "desligado"}`}
+        className={`relative h-6 w-11 rounded-full transition ${
+          enabled ? "bg-emerald-500" : "bg-slate-300"
+        } disabled:cursor-not-allowed disabled:opacity-60`}
+        disabled={!canManage || pending}
+        onClick={toggle}
+        role="switch"
+        type="button"
+      >
+        <span
+          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${
+            enabled ? "left-[22px]" : "left-0.5"
+          }`}
+        />
+      </button>
+      {message ? <span className="text-[10px] text-red-700">{message}</span> : null}
+    </div>
+  );
+}
+
 function DeleteFundButton() {
   const { pending } = useFormStatus();
 
@@ -80,9 +148,9 @@ function DeleteFundButton() {
       {pending ? (
         <Loader2 className="h-4 w-4 animate-spin" />
       ) : (
-        <Trash2 className="h-4 w-4" />
+        <Power className="h-4 w-4" />
       )}
-      {pending ? "Excluindo..." : "Excluir"}
+      {pending ? "Desativando..." : "Desativar"}
     </button>
   );
 }
@@ -95,7 +163,11 @@ function DeleteFundForm({ fund }: { fund: FundRow }) {
       action={formAction}
       className="flex flex-col items-start gap-1"
       onSubmit={(event) => {
-        if (!window.confirm(`Excluir ${fund.name} das telas operacionais?`)) {
+        if (
+          !window.confirm(
+            `Desativar ${fund.name}? A inatividade global oculta o fundo em todos os modulos.`
+          )
+        ) {
           event.preventDefault();
         }
       }}
@@ -178,6 +250,24 @@ export function FundsTable({ canManage, funds }: FundsTableProps) {
       {
         accessorKey: "startDate",
         header: "Data de Início",
+      },
+      {
+        id: "modules",
+        header: "Modulos",
+        cell: ({ row }) => (
+          <div className="flex min-w-[500px] flex-wrap gap-3">
+            {FUND_MODULES.map(({ key, label }) => (
+              <FundModuleToggle
+                canManage={canManage}
+                fundId={row.original.id}
+                initialEnabled={row.original.modules[key]}
+                key={key}
+                label={label}
+                module={key}
+              />
+            ))}
+          </div>
+        ),
       },
       ...(canManage
         ? [

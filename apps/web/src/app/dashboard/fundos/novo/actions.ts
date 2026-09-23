@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { hasPermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
+import { createDisabledFundModules } from "@/server/funds/module-visibility";
 
 export type CreateFundState = {
   message: string;
@@ -49,15 +50,21 @@ export async function createFundAction(
   }
 
   try {
-    await prisma.fund.create({
-      data: {
-        name: parsed.data.name,
-        shortName: parsed.data.shortName,
-        cnpj: parsed.data.cnpj,
-        fundType: parsed.data.fundType,
-        status: parsed.data.status,
-        startDate: new Date(`${parsed.data.startDate}T00:00:00.000Z`),
-      },
+    await prisma.$transaction(async (transaction) => {
+      const fund = await transaction.fund.create({
+        data: {
+          name: parsed.data.name,
+          shortName: parsed.data.shortName,
+          cnpj: parsed.data.cnpj,
+          fundType: parsed.data.fundType,
+          status: parsed.data.status,
+          startDate: new Date(`${parsed.data.startDate}T00:00:00.000Z`),
+        },
+      });
+
+      await transaction.fundModuleVisibility.createMany({
+        data: createDisabledFundModules(fund.id),
+      });
     });
   } catch (error) {
     if (

@@ -1,5 +1,6 @@
 import { QuotaForecastPlanner } from "@/features/forecasts/components/QuotaForecastPlanner";
 import { findDefaultFund, sortFundsByDisplayPriority } from "@/lib/fund-order";
+import { fundListWhere } from "@/lib/fund-modules";
 import { hasPermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
@@ -216,12 +217,7 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
   }
 
   const funds = sortFundsByDisplayPriority(await prisma.fund.findMany({
-    where: {
-      status: "ACTIVE",
-      cnpj: {
-        not: "00.000.000/0001-00",
-      },
-    },
+    where: fundListWhere("FORECASTS"),
     orderBy: {
       name: "asc",
     },
@@ -233,6 +229,18 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
   }));
 
   const selectedFund = findDefaultFund(funds, searchParams?.fundId);
+
+  if (!selectedFund) {
+    return (
+      <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
+        <h2 className="text-lg font-semibold text-slate-950">Previsoes</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Nenhum fundo esta habilitado para exibir previsoes.
+        </p>
+      </section>
+    );
+  }
+
   const carteiraFundo = selectedFund ? resolveCarteiraFundo(selectedFund) : null;
 
   const [carteiras, caixas] = selectedFund

@@ -1,7 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { calculateFlatAverage } from "@/lib/flat-average";
 import { sortFundsByDisplayPriority } from "@/lib/fund-order";
+import { fundListWhere } from "@/lib/fund-modules";
 import { hasPermission } from "@/lib/permissions";
+import { toVopDisplay, type VopDisplay } from "@/server/dashboard/vop-display";
+import { loadFundVopSummary } from "@/server/dashboard/vop-snapshots";
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -38,6 +41,7 @@ type FundDashboardData = {
   dailyReturn: number;
   monthReturn: number;
   yearReturn: number;
+  vopDisplay: VopDisplay | null;
 };
 
 function resolveCarteiraFundo(fund: { name: string; shortName: string }) {
@@ -442,12 +446,7 @@ export default async function DashboardPage() {
   }
 
   const activeFunds = sortFundsByDisplayPriority(await prisma.fund.findMany({
-    where: {
-      status: "ACTIVE",
-      cnpj: {
-        not: "00.000.000/0001-00",
-      },
-    },
+    where: fundListWhere("DASHBOARD"),
     orderBy: {
       name: "asc",
     },
@@ -458,6 +457,17 @@ export default async function DashboardPage() {
       shortName: true,
     },
   }));
+
+  if (activeFunds.length === 0) {
+    return (
+      <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
+        <h2 className="text-lg font-semibold text-slate-950">Dashboard</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Nenhum fundo esta habilitado para exibir o dashboard.
+        </p>
+      </section>
+    );
+  }
 
   const fundsData = await Promise.all(
     activeFunds.map(async (fund) => {
@@ -526,6 +536,10 @@ export default async function DashboardPage() {
         carteiras: monthlyCarteiras,
         caixas: monthlyCaixas,
       });
+      const vopDisplay =
+        carteiraFundo === "APUAMA" || carteiraFundo === "BRISTOL"
+          ? toVopDisplay(await loadFundVopSummary(fund.id))
+          : null;
 
       let seniorValue = 0;
       let mezzanineValue = 0;
@@ -570,6 +584,7 @@ export default async function DashboardPage() {
         dailyReturn,
         monthReturn,
         yearReturn,
+        vopDisplay,
       };
     })
   );
@@ -639,6 +654,30 @@ export default async function DashboardPage() {
                 {formatCurrency(fund.totalPl)}
               </p>
             </div>
+
+            {fund.vopDisplay ? (
+              <div className="mt-6 grid grid-cols-2 overflow-hidden rounded border border-slate-200 bg-slate-50">
+                <div className="p-4">
+                  <p className="text-xs font-semibold uppercase text-slate-500">
+                    VOP do dia
+                  </p>
+                  <p className="mt-2 text-lg font-semibold tracking-normal text-slate-950">
+                    {fund.vopDisplay.dailyLabel}
+                  </p>
+                </div>
+                <div className="border-l border-slate-200 p-4">
+                  <p className="text-xs font-semibold uppercase text-slate-500">
+                    VOP no mês
+                  </p>
+                  <p className="mt-2 text-lg font-semibold tracking-normal text-slate-950">
+                    {fund.vopDisplay.monthlyLabel}
+                  </p>
+                </div>
+                <p className="col-span-2 border-t border-slate-200 px-4 py-2 text-xs font-medium text-slate-500">
+                  {fund.vopDisplay.dateLabel}
+                </p>
+              </div>
+            ) : null}
 
             <div className="mt-6 grid grid-cols-3 overflow-hidden border-y border-slate-200">
               {[

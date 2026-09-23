@@ -4,9 +4,11 @@ import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { sortFundsByDisplayPriority } from "@/lib/fund-order";
+import { fundListWhere } from "@/lib/fund-modules";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
+import { validateCashFundIdsWithDependencies } from "@/server/funds/cash-access";
 import type {
   CashActionResult,
   CashBatchInput,
@@ -87,6 +89,20 @@ function balanceData(input: CashBalanceInput) {
   };
 }
 
+async function validateCashFundIds(fundIds: readonly string[]) {
+  return validateCashFundIdsWithDependencies(fundIds, async (requestedIds) => {
+    const funds = await prisma.fund.findMany({
+      where: {
+        ...fundListWhere("CASH"),
+        id: { in: requestedIds },
+      },
+      select: { id: true },
+    });
+
+    return funds.map(({ id }) => id);
+  });
+}
+
 /** Lista os fundos ativos (colunas/cards do Caixa). Não hardcoda nomes. */
 export async function getActiveCashFunds(): Promise<CashFund[]> {
   if (!(await hasPermission("cash.view"))) {
@@ -94,12 +110,7 @@ export async function getActiveCashFunds(): Promise<CashFund[]> {
   }
 
   return sortFundsByDisplayPriority(await prisma.fund.findMany({
-    where: {
-      status: "ACTIVE",
-      cnpj: {
-        not: "00.000.000/0001-00",
-      },
-    },
+    where: fundListWhere("CASH"),
     orderBy: { name: "asc" },
     select: { id: true, name: true, shortName: true },
   }));
@@ -111,6 +122,7 @@ export async function getAvailableCashDates(): Promise<string[]> {
   }
 
   const rows = await prisma.companyCashDailyBalance.findMany({
+    where: { fund: fundListWhere("CASH") },
     distinct: ["referenceDate"],
     select: { referenceDate: true },
     orderBy: { referenceDate: "desc" },
@@ -127,7 +139,10 @@ export async function getCashDailyBalancesByDate(
   }
 
   const rows = await prisma.companyCashDailyBalance.findMany({
-    where: { referenceDate: parseDateOnly(dateStr) },
+    where: {
+      referenceDate: parseDateOnly(dateStr),
+      fund: fundListWhere("CASH"),
+    },
     include: { fund: { select: { id: true, name: true, shortName: true } } },
     orderBy: { fund: { name: "asc" } },
   });
@@ -152,6 +167,9 @@ export async function upsertCashDailyBalance(
   }
 
   const { referenceDate, ...balance } = parsed.data;
+  const access = await validateCashFundIds([balance.fundId]);
+  if (!access.ok) return access;
+
   const date = normalizeDate(referenceDate);
   const data = balanceData(balance);
   const userId = session.user.id;
@@ -193,6 +211,11 @@ export async function upsertBatchCashDailyBalances(
   }
 
   const { referenceDate, balances } = parsed.data;
+  const access = await validateCashFundIds(
+    balances.map(({ fundId }) => fundId)
+  );
+  if (!access.ok) return access;
+
   const date = normalizeDate(referenceDate);
   const userId = session.user.id;
 
