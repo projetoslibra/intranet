@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { calculateFlatAverage } from "@/lib/flat-average";
 import { sortFundsByDisplayPriority } from "@/lib/fund-order";
 import { hasPermission } from "@/lib/permissions";
 import { toVopDisplay, type VopDisplay } from "@/server/dashboard/vop-display";
@@ -30,7 +31,8 @@ type FundDashboardData = {
   averageMonthlyCost: number;
   monthlyRevenueTotal: number;
   monthlyCostTotal: number;
-  monthlyPeriods: number;
+  monthlyRevenuePeriods: number;
+  monthlyCostPeriods: number;
   seniorValue: number;
   mezzanineValue: number;
   juniorValue: number;
@@ -140,26 +142,6 @@ function monthStart(value: Date) {
 
 function addToMap(map: Map<string, number>, key: string, value: number) {
   map.set(key, (map.get(key) ?? 0) + value);
-}
-
-function sumMapValuesForDates(map: Map<string, number>, dates: string[]) {
-  return dates.reduce((total, key) => total + (map.get(key) ?? 0), 0);
-}
-
-function sumPositiveMapValuesForDates(map: Map<string, number>, dates: string[]) {
-  return dates.reduce((total, key) => {
-    const value = map.get(key) ?? 0;
-
-    return value > 0 ? total + value : total;
-  }, 0);
-}
-
-function sumNegativeMapValuesForDates(map: Map<string, number>, dates: string[]) {
-  return dates.reduce((total, key) => {
-    const value = map.get(key) ?? 0;
-
-    return value < 0 ? total + value : total;
-  }, 0);
 }
 
 function sumMaps(dates: string[], maps: Array<Map<string, number>>) {
@@ -367,7 +349,8 @@ function calculateMonthlyAverages(params: {
       averageMonthlyCost: 0,
       monthlyRevenueTotal: 0,
       monthlyCostTotal: 0,
-      monthlyPeriods: 0,
+      monthlyRevenuePeriods: 0,
+      monthlyCostPeriods: 0,
     };
   }
 
@@ -396,26 +379,26 @@ function calculateMonthlyAverages(params: {
     redemptions("mezzanine")
   );
   const expensesDelta = deltaMap(dates, expenses);
-  const monthlyRevenueTotal = sumPositiveMapValuesForDates(
-    revenueByDate,
-    calculationDates
+  const superiorByDate = sumMaps(dates, [seniorDelta, mezzanineDelta]);
+  const revenueAverage = calculateFlatAverage(
+    calculationDates.map((key) => revenueByDate.get(key) ?? 0)
   );
-  const monthlySuperiorTotal = sumMapValuesForDates(
-    sumMaps(dates, [seniorDelta, mezzanineDelta]),
-    calculationDates
+  const costAverage = calculateFlatAverage(
+    calculationDates.map((key) => {
+      const superior = superiorByDate.get(key) ?? 0;
+      const expense = expensesDelta.get(key) ?? 0;
+
+      return -(superior + Math.min(expense, 0));
+    })
   );
-  const monthlyExpenseTotal = sumNegativeMapValuesForDates(
-    expensesDelta,
-    calculationDates
-  );
-  const monthlyCostTotal = -(monthlySuperiorTotal + monthlyExpenseTotal);
 
   return {
-    averageMonthlyRevenue: monthlyRevenueTotal / periods,
-    averageMonthlyCost: monthlyCostTotal / periods,
-    monthlyRevenueTotal,
-    monthlyCostTotal,
-    monthlyPeriods: periods,
+    averageMonthlyRevenue: revenueAverage.average,
+    averageMonthlyCost: costAverage.average,
+    monthlyRevenueTotal: revenueAverage.total,
+    monthlyCostTotal: costAverage.total,
+    monthlyRevenuePeriods: revenueAverage.periods,
+    monthlyCostPeriods: costAverage.periods,
   };
 }
 
@@ -740,13 +723,15 @@ export default async function DashboardPage() {
                   "Receita media do mes",
                   fund.averageMonthlyRevenue,
                   fund.monthlyRevenueTotal,
+                  fund.monthlyRevenuePeriods,
                 ],
                 [
                   "Custo medio do mes",
                   fund.averageMonthlyCost,
                   fund.monthlyCostTotal,
+                  fund.monthlyCostPeriods,
                 ],
-              ].map(([label, average, total]) => (
+              ].map(([label, average, total, periods]) => (
                 <div className="rounded border border-slate-200 p-4" key={label}>
                   <p className="text-xs font-semibold uppercase text-slate-500">
                     {label}
@@ -755,7 +740,7 @@ export default async function DashboardPage() {
                     {formatCurrency(Number(average))}
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
-                    Total {formatCurrency(Number(total))} / {fund.monthlyPeriods} periodos
+                    Total {formatCurrency(Number(total))} / {Number(periods)} periodos
                   </p>
                 </div>
               ))}
