@@ -292,12 +292,18 @@ model FundModuleVisibility {
 }
 
 model FundVopSnapshot {
-  id            String   @id @default(cuid())
-  fundId        String   @map("fund_id")
-  referenceDate DateTime @map("reference_date") @db.Date
-  amount        Decimal  @db.Decimal(24, 10)
-  createdAt     DateTime @default(now()) @map("created_at")
-  fund          Fund     @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  id                       String    @id @default(cuid())
+  fundId                   String    @map("fund_id")
+  referenceDate            DateTime  @map("reference_date") @db.Date
+  amount                   Decimal   @db.Decimal(24, 10)
+  operationCount           Int?      @map("operation_count")
+  termWeightedValue        Decimal?  @map("term_weighted_value") @db.Decimal(38, 10)
+  termWeightAmount         Decimal?  @map("term_weight_amount") @db.Decimal(24, 10)
+  monthlyRateWeightedValue Decimal?  @map("monthly_rate_weighted_value") @db.Decimal(38, 20)
+  monthlyRateWeightAmount  Decimal?  @map("monthly_rate_weight_amount") @db.Decimal(24, 10)
+  indicatorsCalculatedAt   DateTime? @map("indicators_calculated_at") @db.Timestamp(3)
+  createdAt                DateTime  @default(now()) @map("created_at")
+  fund                     Fund      @relation(fields: [fundId], references: [id], onDelete: Restrict)
 
   @@unique([fundId, referenceDate])
   @@index([referenceDate])
