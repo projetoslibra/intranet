@@ -1,5 +1,6 @@
 import { QuotaForecastPlanner } from "@/features/forecasts/components/QuotaForecastPlanner";
 import { findDefaultFund, sortFundsByDisplayPriority } from "@/lib/fund-order";
+import { fundListWhere } from "@/lib/fund-modules";
 import { hasPermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
@@ -216,12 +217,7 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
   }
 
   const funds = sortFundsByDisplayPriority(await prisma.fund.findMany({
-    where: {
-      status: "ACTIVE",
-      cnpj: {
-        not: "00.000.000/0001-00",
-      },
-    },
+    where: fundListWhere("FORECASTS"),
     orderBy: {
       name: "asc",
     },

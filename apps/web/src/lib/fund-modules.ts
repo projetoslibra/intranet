@@ -26,6 +26,15 @@ export function fundEnabledFor(module: FundModuleKey) {
   };
 }
 
+export function fundListWhere(module: FundModuleKey) {
+  return {
+    ...fundEnabledFor(module),
+    cnpj: {
+      not: "00.000.000/0001-00",
+    },
+  };
+}
+
 export function normalizeFundModules(
   rows: readonly FundModuleRow[]
 ): FundModuleVisibilityMap {

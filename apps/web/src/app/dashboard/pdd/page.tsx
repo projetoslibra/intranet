@@ -1,4 +1,5 @@
 import { findDefaultFund, sortFundsByDisplayPriority } from "@/lib/fund-order";
+import { fundListWhere } from "@/lib/fund-modules";
 import {
   pddDaysLate,
   pddDebtorKey,
@@ -545,12 +546,7 @@ export default async function PddPage({ searchParams }: PddPageProps) {
 
   const funds = sortFundsByDisplayPriority(
     await prisma.fund.findMany({
-      where: {
-        status: "ACTIVE",
-        cnpj: {
-          not: "00.000.000/0001-00",
-        },
-      },
+      where: fundListWhere("PDD"),
       orderBy: {
         name: "asc",
       },

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   fundEnabledFor,
+  fundListWhere,
   normalizeFundModules,
 } from "./fund-modules";
 
@@ -61,4 +62,14 @@ test("aplica o último valor persistido de cada módulo sem contaminar os demais
       PDD: true,
     }
   );
+});
+
+test("exclui o fundo placeholder da lista de cada módulo", () => {
+  assert.deepEqual(fundListWhere("PDD"), {
+    status: "ACTIVE",
+    cnpj: { not: "00.000.000/0001-00" },
+    moduleVisibilities: {
+      some: { module: "PDD", enabled: true },
+    },
+  });
 });

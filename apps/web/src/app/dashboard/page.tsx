@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { calculateFlatAverage } from "@/lib/flat-average";
 import { sortFundsByDisplayPriority } from "@/lib/fund-order";
+import { fundListWhere } from "@/lib/fund-modules";
 import { hasPermission } from "@/lib/permissions";
 import { toVopDisplay, type VopDisplay } from "@/server/dashboard/vop-display";
 import { loadFundVopSummary } from "@/server/dashboard/vop-snapshots";
@@ -445,12 +446,7 @@ export default async function DashboardPage() {
   }
 
   const activeFunds = sortFundsByDisplayPriority(await prisma.fund.findMany({
-    where: {
-      status: "ACTIVE",
-      cnpj: {
-        not: "00.000.000/0001-00",
-      },
-    },
+    where: fundListWhere("DASHBOARD"),
     orderBy: {
       name: "asc",
     },
