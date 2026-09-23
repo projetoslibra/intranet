@@ -656,24 +656,25 @@ export default async function DashboardPage() {
             </div>
 
             {fund.vopDisplay ? (
-              <div className="mt-6 grid grid-cols-2 overflow-hidden rounded border border-slate-200 bg-slate-50">
-                <div className="p-4">
-                  <p className="text-xs font-semibold uppercase text-slate-500">
-                    VOP do dia
-                  </p>
-                  <p className="mt-2 text-lg font-semibold tracking-normal text-slate-950">
-                    {fund.vopDisplay.dailyLabel}
-                  </p>
+              <div className="mt-6 overflow-hidden rounded border border-slate-200 bg-slate-200">
+                <div className="grid grid-cols-2 gap-px 2xl:grid-cols-4">
+                  {[
+                    ["VOP do dia", fund.vopDisplay.dailyLabel],
+                    ["VOP no mês", fund.vopDisplay.monthlyLabel],
+                    ["Prazo médio", fund.vopDisplay.termLabel],
+                    ["Taxa média a.m.", fund.vopDisplay.monthlyRateLabel],
+                  ].map(([label, value]) => (
+                    <div className="bg-slate-50 p-4" key={label}>
+                      <p className="text-xs font-semibold uppercase text-slate-500">
+                        {label}
+                      </p>
+                      <p className="mt-2 text-lg font-semibold tracking-normal text-slate-950">
+                        {value}
+                      </p>
+                    </div>
+                  ))}
                 </div>
-                <div className="border-l border-slate-200 p-4">
-                  <p className="text-xs font-semibold uppercase text-slate-500">
-                    VOP no mês
-                  </p>
-                  <p className="mt-2 text-lg font-semibold tracking-normal text-slate-950">
-                    {fund.vopDisplay.monthlyLabel}
-                  </p>
-                </div>
-                <p className="col-span-2 border-t border-slate-200 px-4 py-2 text-xs font-medium text-slate-500">
+                <p className="border-t border-slate-200 bg-slate-50 px-4 py-2 text-xs font-medium text-slate-500">
                   {fund.vopDisplay.dateLabel}
                 </p>
               </div>
