@@ -458,6 +458,17 @@ export default async function DashboardPage() {
     },
   }));
 
+  if (activeFunds.length === 0) {
+    return (
+      <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
+        <h2 className="text-lg font-semibold text-slate-950">Dashboard</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Nenhum fundo esta habilitado para exibir o dashboard.
+        </p>
+      </section>
+    );
+  }
+
   const fundsData = await Promise.all(
     activeFunds.map(async (fund) => {
       const carteiraFundo = resolveCarteiraFundo(fund);

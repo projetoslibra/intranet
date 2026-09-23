@@ -163,7 +163,11 @@ function DeleteFundForm({ fund }: { fund: FundRow }) {
       action={formAction}
       className="flex flex-col items-start gap-1"
       onSubmit={(event) => {
-        if (!window.confirm(`Desativar ${fund.name}?`)) {
+        if (
+          !window.confirm(
+            `Desativar ${fund.name}? A inatividade global oculta o fundo em todos os modulos.`
+          )
+        ) {
           event.preventDefault();
         }
       }}

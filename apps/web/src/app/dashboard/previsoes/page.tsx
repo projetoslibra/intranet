@@ -229,6 +229,18 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
   }));
 
   const selectedFund = findDefaultFund(funds, searchParams?.fundId);
+
+  if (!selectedFund) {
+    return (
+      <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
+        <h2 className="text-lg font-semibold text-slate-950">Previsoes</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Nenhum fundo esta habilitado para exibir previsoes.
+        </p>
+      </section>
+    );
+  }
+
   const carteiraFundo = selectedFund ? resolveCarteiraFundo(selectedFund) : null;
 
   const [carteiras, caixas] = selectedFund

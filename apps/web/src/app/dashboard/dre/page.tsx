@@ -618,7 +618,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
         <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
           <h2 className="text-lg font-semibold text-slate-950">DRE dos Fundos</h2>
           <p className="mt-2 text-sm text-slate-500">
-            Nenhum fundo ativo encontrado para exibir a DRE.
+            Nenhum fundo esta habilitado para exibir a DRE.
           </p>
         </section>
       </div>

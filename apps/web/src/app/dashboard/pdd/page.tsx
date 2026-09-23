@@ -558,6 +558,18 @@ export default async function PddPage({ searchParams }: PddPageProps) {
     })
   );
   const selectedFund = findDefaultFund(funds, searchParams?.fundId);
+
+  if (!selectedFund) {
+    return (
+      <section className="rounded border border-slate-200 bg-white p-6 shadow-executive">
+        <h2 className="text-lg font-semibold text-slate-950">PDD</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Nenhum fundo esta habilitado para exibir o painel de PDD.
+        </p>
+      </section>
+    );
+  }
+
   const stockFundToken = selectedFund ? resolveStockFundToken(selectedFund) : null;
   const latestStock = stockFundToken
     ? await prisma.fidcEstoque.findFirst({
