@@ -2,6 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Download } from "lucide-react";
+import { SyncedHorizontalScroll } from "@/components/synced-horizontal-scroll";
 import { formatCurrency } from "@/lib/formatters";
 
 export type PddMatrixDate = {
@@ -826,7 +827,7 @@ export function PddDashboard({
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <SyncedHorizontalScroll label="Matriz de PDD por cedente">
           <table className="min-w-[1280px] border-separate border-spacing-0 text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
@@ -958,7 +959,7 @@ export function PddDashboard({
               })}
             </tbody>
           </table>
-        </div>
+        </SyncedHorizontalScroll>
       </section>
     </div>
   );
