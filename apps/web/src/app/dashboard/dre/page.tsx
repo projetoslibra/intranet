@@ -1,4 +1,5 @@
 import { Download } from "lucide-react";
+import { SyncedHorizontalScroll } from "@/components/synced-horizontal-scroll";
 import { prisma } from "@/lib/prisma";
 import { findDefaultFund, sortFundsByDisplayPriority } from "@/lib/fund-order";
 import { fundListWhere } from "@/lib/fund-modules";
@@ -1237,7 +1238,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
             Nenhum dado encontrado para o período selecionado.
           </p>
         ) : (
-          <div className="overflow-x-auto">
+          <SyncedHorizontalScroll label="DRE dos Fundos">
             <table className="min-w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
@@ -1278,7 +1279,7 @@ export default async function DrePage({ searchParams }: DrePageProps) {
                 ))}
               </tbody>
             </table>
-          </div>
+          </SyncedHorizontalScroll>
         )}
       </section>
     </div>

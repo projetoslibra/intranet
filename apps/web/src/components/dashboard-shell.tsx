@@ -13,12 +13,16 @@ import {
   FileBarChart,
   LayoutDashboard,
   LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
   ShieldAlert,
   TrendingUp,
   Users,
   Wallet,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { OsherLogo } from "@/components/brand/osher-logo";
+import { parseSidebarCollapsedState } from "@/components/dashboard-layout-behavior";
 import { cn } from "@/lib/utils";
 
 type DashboardShellProps = {
@@ -101,6 +105,8 @@ const todayFormatter = new Intl.DateTimeFormat("pt-BR", {
   year: "numeric",
 });
 
+const sidebarStorageKey = "osher.sidebar.collapsed";
+
 // Item de navegacao correspondente a rota: o match MAIS ESPECIFICO. Sem isso
 // "/dashboard" casa com "/dashboard/dre" via startsWith e dois itens ficam
 // marcados como ativos ao mesmo tempo.
@@ -179,6 +185,7 @@ function getInitials(name: string) {
 }
 
 export function DashboardShell({ children, permissions, user }: DashboardShellProps) {
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const pathname = usePathname();
   const activeHref = getActiveHref(pathname);
   const breadcrumbs = getBreadcrumbs(pathname);
@@ -189,18 +196,58 @@ export function DashboardShell({ children, permissions, user }: DashboardShellPr
     permissionSet.has(item.permissionKey)
   );
 
+  useEffect(() => {
+    setIsSidebarCollapsed(
+      parseSidebarCollapsedState(window.localStorage.getItem(sidebarStorageKey))
+    );
+  }, []);
+
+  const toggleSidebar = () => {
+    setIsSidebarCollapsed((current) => {
+      const next = !current;
+      window.localStorage.setItem(sidebarStorageKey, String(next));
+      return next;
+    });
+  };
+
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-950">
-      <aside className="osher-sidebar fixed inset-y-0 left-0 z-20 flex w-[240px] flex-col">
-        <div className="osher-sidebar-divider border-b px-5 py-6">
-          <div className="flex items-center gap-3">
+      <aside
+        className={cn(
+          "osher-sidebar fixed inset-y-0 left-0 z-20 flex flex-col transition-[width] duration-200",
+          isSidebarCollapsed ? "w-[72px]" : "w-[240px]"
+        )}
+      >
+        <div
+          className={cn(
+            "osher-sidebar-divider relative border-b py-6",
+            isSidebarCollapsed ? "px-4" : "px-5"
+          )}
+        >
+          <div className="flex items-center gap-3 overflow-hidden">
             <OsherLogo
               className="osher-mark-glow h-10 w-10 shrink-0"
               color="var(--osher-emerald-bright)"
               variant="mark"
             />
-            <p className="osher-brand-name leading-5">OSHER</p>
+            {!isSidebarCollapsed ? (
+              <p className="osher-brand-name leading-5">OSHER</p>
+            ) : null}
           </div>
+          <button
+            aria-expanded={!isSidebarCollapsed}
+            aria-label={isSidebarCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
+            className="absolute -right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-600 bg-[#0e1524] text-slate-300 shadow transition hover:border-primary hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+            onClick={toggleSidebar}
+            title={isSidebarCollapsed ? "Expandir menu" : "Recolher menu"}
+            type="button"
+          >
+            {isSidebarCollapsed ? (
+              <PanelLeftOpen className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" />
+            )}
+          </button>
         </div>
 
         <nav className="flex-1 space-y-1 px-3 py-5">
@@ -213,43 +260,52 @@ export function DashboardShell({ children, permissions, user }: DashboardShellPr
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "osher-nav-item",
+                  isSidebarCollapsed && "osher-nav-item--collapsed",
                   isActive && "osher-nav-item--active"
                 )}
                 href={item.href}
                 key={item.href}
+                title={isSidebarCollapsed ? item.title : undefined}
               >
                 <Icon className="osher-nav-icon h-4 w-4 shrink-0" />
-                {item.title}
+                {!isSidebarCollapsed ? item.title : null}
               </Link>
             );
           })}
         </nav>
 
-        <div className="osher-sidebar-divider border-t p-4">
-          <div className="flex items-center gap-3">
-            <div className="osher-avatar">
-              {getInitials(user.name) || "OS"}
+        {!isSidebarCollapsed ? (
+          <div className="osher-sidebar-divider border-t p-4">
+            <div className="flex items-center gap-3">
+              <div className="osher-avatar">
+                {getInitials(user.name) || "OS"}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-ink-100">
+                  {user.name}
+                </p>
+                <p className="truncate text-xs text-ink-400">{user.role}</p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-ink-100">
-                {user.name}
-              </p>
-              <p className="truncate text-xs text-ink-400">{user.role}</p>
-            </div>
-          </div>
 
-          <button
-            className="osher-sidebar-btn mt-4"
-            onClick={() => signOut({ callbackUrl: "/login" })}
-            type="button"
-          >
-            <LogOut className="h-4 w-4" />
-            Sair
-          </button>
-        </div>
+            <button
+              className="osher-sidebar-btn mt-4"
+              onClick={() => signOut({ callbackUrl: "/login" })}
+              type="button"
+            >
+              <LogOut className="h-4 w-4" />
+              Sair
+            </button>
+          </div>
+        ) : null}
       </aside>
 
-      <div className="min-h-screen pl-[240px]">
+      <div
+        className={cn(
+          "min-h-screen transition-[padding] duration-200",
+          isSidebarCollapsed ? "pl-[72px]" : "pl-[240px]"
+        )}
+      >
         <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-6 border-b border-slate-200 bg-white px-8">
           <div className="flex min-w-0 items-center gap-3">
             {previousPage ? (
