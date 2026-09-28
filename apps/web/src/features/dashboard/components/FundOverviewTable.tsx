@@ -182,7 +182,7 @@ export function FundOverviewTable({ funds }: { funds: DashboardFundRow[] }) {
       ) : (
         <SyncedHorizontalScroll label="Comparativo dos fundos">
           <table className="min-w-[1320px] border-separate border-spacing-0 text-sm">
-            <thead className="sticky top-16 z-20">
+            <thead className="sticky top-0 z-20">
               <tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <th className="sticky left-0 z-20 min-w-[230px] border-b border-r border-slate-200 bg-slate-50 px-4 py-3 text-left font-semibold">Fundo</th>
                 <th className="min-w-[125px] border-b border-slate-200 px-4 py-3 text-left font-semibold">Atualização</th>
