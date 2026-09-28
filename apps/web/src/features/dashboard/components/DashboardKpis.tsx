@@ -14,6 +14,10 @@ const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
 });
 
 export function DashboardKpis({ overview }: { overview: DashboardOverview }) {
+  const fundsWithPosition = overview.funds.filter(
+    (fund) => fund.financialStatus === "ready"
+  ).length;
+  const partialPlCoverage = fundsWithPosition < overview.activeFundCount;
   const coverage = `${overview.vop.integratedFunds} de ${overview.vop.totalFunds} fundos integrados`;
   const cutoff = overview.vop.cutoffDate
     ? `Posição em ${dateFormatter.format(overview.vop.cutoffDate)}`
@@ -25,10 +29,12 @@ export function DashboardKpis({ overview }: { overview: DashboardOverview }) {
     {
       label: "PL consolidado",
       value: currencyFormatter.format(overview.consolidatedPl),
-      detail: "Últimas posições disponíveis",
+      detail: `${fundsWithPosition} de ${overview.activeFundCount} fundos com posição`,
       icon: Landmark,
-      iconClass: "bg-blue-50 text-blue-700",
-      accentClass: "border-t-blue-600",
+      iconClass: partialPlCoverage
+        ? "bg-amber-50 text-amber-700"
+        : "bg-blue-50 text-blue-700",
+      accentClass: partialPlCoverage ? "border-t-amber-500" : "border-t-blue-600",
     },
     {
       label: "Fundos ativos",
