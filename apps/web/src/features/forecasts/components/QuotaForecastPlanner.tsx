@@ -12,6 +12,10 @@ import {
   pddRateForDelay,
   type LogicaPddTitle,
 } from "@/lib/logica-pdd";
+import {
+  selectionTotals as buildSelectionTotals,
+  toggleAllVisibleTitleIds,
+} from "@/features/forecasts/stock-title-selection";
 
 type FundOption = {
   id: string;
@@ -945,9 +949,16 @@ function StockReductionPanel({
       ),
     [appliedTitleReductions, cedentTitles, selectedTitleIds]
   );
-  const selectedNominalValue = selectedTitles.reduce(
-    (total, title) => total + title.nominalValue,
-    0
+  const availableVisibleTitles = useMemo(
+    () =>
+      cedentTitles.filter((title) => !appliedTitleReductions.has(title.id)),
+    [appliedTitleReductions, cedentTitles]
+  );
+  const allVisibleTitlesSelected =
+    availableVisibleTitles.length > 0 &&
+    availableVisibleTitles.every((title) => selectedTitleIds.has(title.id));
+  const someVisibleTitlesSelected = availableVisibleTitles.some((title) =>
+    selectedTitleIds.has(title.id)
   );
   const appliedDebtorSourceByKey = useMemo(() => {
     const result = new Map<string, string>();
@@ -1067,6 +1078,10 @@ function StockReductionPanel({
       affectedDebtors: affectedDebtorKeys.size,
     };
   }, [appliedTitleIds, reductionDate, selectedTitles, stockData]);
+  const selectedTotals = buildSelectionTotals(
+    selectedTitles,
+    -reductionSimulation.reversalValue
+  );
 
   function toggleTitle(titleId: string) {
     const title = cedentTitles.find((item) => item.id === titleId);
@@ -1089,12 +1104,8 @@ function StockReductionPanel({
   }
 
   function selectAllVisibleTitles() {
-    setSelectedTitleIds(
-      new Set(
-        cedentTitles
-          .filter((title) => !appliedTitleReductions.has(title.id))
-          .map((title) => title.id)
-      )
+    setSelectedTitleIds((current) =>
+      toggleAllVisibleTitleIds(cedentTitles, current, appliedTitleIds)
     );
   }
 
@@ -1156,24 +1167,33 @@ function StockReductionPanel({
               Estoque {stockData.fundName} em {formatDate(stockData.latestDate)}
             </p>
           </div>
-          <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-3 lg:min-w-[520px]">
+          <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-2 xl:min-w-[720px] xl:grid-cols-4">
             <div className="rounded border border-slate-200 px-3 py-2">
-              <p className="text-xs uppercase text-slate-500">Títulos</p>
-              <p className="font-semibold text-slate-950">{selectedTitles.length}</p>
+              <p className="text-xs uppercase text-slate-500">Títulos selecionados</p>
+              <p className="font-semibold text-slate-950">{selectedTotals.titleCount}</p>
             </div>
             <div className="rounded border border-slate-200 px-3 py-2">
-              <p className="text-xs uppercase text-slate-500">Valor nominal</p>
+              <p className="text-xs uppercase text-slate-500">Risco total</p>
               <p className="font-semibold text-slate-950">
-                {currencyFormatter.format(selectedNominalValue)}
+                {currencyFormatter.format(selectedTotals.riskTotal)}
               </p>
             </div>
             <div className="rounded border border-slate-200 px-3 py-2">
-              <p className="text-xs uppercase text-slate-500">Reversão PDD</p>
+              <p className="text-xs uppercase text-slate-500">Valor total PDD</p>
+              <p className="font-semibold text-slate-950">
+                {currencyFormatter.format(selectedTotals.pddTotal)}
+              </p>
+            </div>
+            <div className="rounded border border-slate-200 px-3 py-2">
+              <p className="text-xs uppercase text-slate-500">Variação PDD</p>
               <p className="font-semibold text-emerald-700">
                 <PddCompositionTooltip
-                  caption="Cedentes que formam a reversao estimada da selecao atual."
-                  items={reductionSimulation.pddItems}
-                  value={reductionSimulation.reversalValue}
+                  caption="Cedentes que formam a variação estimada da seleção atual."
+                  items={reductionSimulation.pddItems.map((item) => ({
+                    ...item,
+                    value: -item.value,
+                  }))}
+                  value={selectedTotals.pddVariation}
                 />
               </p>
             </div>
@@ -1182,7 +1202,7 @@ function StockReductionPanel({
       </div>
 
       <div className="space-y-4 p-5">
-        <div className="grid gap-4 lg:grid-cols-[minmax(260px,1fr)_minmax(260px,1fr)_180px_auto_auto] lg:items-start">
+        <div className="grid gap-4 lg:grid-cols-[minmax(260px,1fr)_minmax(260px,1fr)_180px_auto] lg:items-start">
           <div className="relative space-y-2">
             <label className="text-sm font-medium text-slate-700" htmlFor="cedentSearch">
               Buscar cedente
@@ -1346,14 +1366,6 @@ function StockReductionPanel({
           </div>
 
           <button
-            className="h-10 rounded border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 lg:self-end"
-            onClick={selectAllVisibleTitles}
-            type="button"
-          >
-            Selecionar todos
-          </button>
-
-          <button
             onClick={clearSelectedTitles}
             type="button"
             className="h-10 rounded border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 lg:self-end"
@@ -1366,7 +1378,23 @@ function StockReductionPanel({
           <table className="min-w-[980px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
-                <th className="w-12 px-4 py-3 text-left font-semibold"></th>
+                <th className="w-12 px-4 py-3 text-left font-semibold">
+                  <input
+                    aria-label="Selecionar todos os títulos exibidos"
+                    checked={allVisibleTitlesSelected}
+                    className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={availableVisibleTitles.length === 0}
+                    onChange={selectAllVisibleTitles}
+                    ref={(input) => {
+                      if (input) {
+                        input.indeterminate =
+                          someVisibleTitlesSelected && !allVisibleTitlesSelected;
+                      }
+                    }}
+                    title="Selecionar todos os títulos exibidos"
+                    type="checkbox"
+                  />
+                </th>
                 <th className="px-4 py-3 text-left font-semibold">Vencimento</th>
                 <th className="px-4 py-3 text-left font-semibold">Documento</th>
                 <th className="px-4 py-3 text-left font-semibold">Sacado</th>
