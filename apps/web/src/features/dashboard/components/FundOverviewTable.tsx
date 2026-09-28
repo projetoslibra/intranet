@@ -74,6 +74,12 @@ function MonthlyReturnChart({ fund }: { fund: DashboardFundRow }) {
     date: point.referenceDate.getTime(),
     value: point.value,
   }));
+  const chartDescriptionId = `monthly-return-chart-${fund.id}`;
+  const firstPoint = data[0];
+  const lastPoint = data.at(-1);
+  const chartSummary = firstPoint && lastPoint
+    ? `De ${shortDateFormatter.format(new Date(firstPoint.date))} a ${shortDateFormatter.format(new Date(lastPoint.date))}, a rentabilidade mensal acumulada passou de ${formatReturn(firstPoint.value)} para ${formatReturn(lastPoint.value)}, em ${data.length} posições.`
+    : "";
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4 xl:col-span-3">
@@ -86,7 +92,15 @@ function MonthlyReturnChart({ fund }: { fund: DashboardFundRow }) {
           Histórico insuficiente para exibir o gráfico.
         </div>
       ) : (
-        <div className="mt-4 h-64 w-full" aria-label={`Gráfico de rentabilidade mensal de ${fund.name}`} role="img">
+        <div
+          aria-describedby={chartDescriptionId}
+          aria-label={`Gráfico de rentabilidade mensal de ${fund.name}`}
+          className="mt-4 h-64 w-full"
+          role="img"
+        >
+          <p className="sr-only" id={chartDescriptionId}>
+            {chartSummary}
+          </p>
           <ResponsiveContainer height="100%" width="100%">
             <LineChart data={data} margin={{ left: 0, right: 16, top: 8, bottom: 0 }}>
               <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />

@@ -468,6 +468,11 @@ export async function loadDashboardOverview(options?: {
   const carteiras = carteirasResult.status === "fulfilled" ? carteirasResult.value : [];
   const caixas = caixasResult.status === "fulfilled" ? caixasResult.value : [];
   const latestByKey = new Map(latestDates.map((row) => [row.fundKey, row.referenceDate]));
+  const reportingMonth = latestDates
+    .map((row) => dateKey(row.referenceDate))
+    .sort()
+    .at(-1)
+    ?.slice(0, 7) ?? null;
 
   const dashboardFunds = funds.map<DashboardFundInput>((fund) => {
     const fundKey = resolveCarteiraFundKey(fund);
@@ -503,7 +508,9 @@ export async function loadDashboardOverview(options?: {
     const monthlyReturnsByDate = new Map<string, number>();
     for (const row of fundCarteiras) {
       if (classifyCarteiraAtivo(row.ativo) !== "variacao_mensal") continue;
-      addToMap(monthlyReturnsByDate, dateKey(row.referenceDate), Number(row.valor));
+      const rowDate = dateKey(row.referenceDate);
+      if (reportingMonth === null || !rowDate.startsWith(reportingMonth)) continue;
+      addToMap(monthlyReturnsByDate, rowDate, Number(row.valor));
     }
     const monthlyReturnHistory = Array.from(monthlyReturnsByDate.entries())
       .sort(([left], [right]) => left.localeCompare(right))

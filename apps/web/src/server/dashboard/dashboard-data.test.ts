@@ -95,3 +95,42 @@ test("carrega fontes em lote e mantém os fundos quando uma fonte secundária fa
     ]
   );
 });
+
+test("não apresenta histórico de mês anterior como rentabilidade do mês corrente", async () => {
+  const repository: DashboardDataRepository = {
+    async listDashboardFunds() {
+      return [
+        { id: "apuama", name: "Apuama", shortName: "Apuama", cnpj: "1" },
+        { id: "bristol", name: "Bristol", shortName: "Bristol", cnpj: "2" },
+      ];
+    },
+    async listLatestCarteiraDates() {
+      return [
+        { fundKey: "APUAMA", referenceDate: new Date("2026-09-25T00:00:00.000Z") },
+        { fundKey: "BRISTOL", referenceDate: new Date("2026-08-31T00:00:00.000Z") },
+      ];
+    },
+    async listCarteirasForRanges() {
+      return [
+        { fundKey: "APUAMA", referenceDate: new Date("2026-09-25T00:00:00.000Z"), ativo: "PATRIMONIO", valor: "100" },
+        { fundKey: "APUAMA", referenceDate: new Date("2026-09-25T00:00:00.000Z"), ativo: "Variação Mensal", valor: "2" },
+        { fundKey: "BRISTOL", referenceDate: new Date("2026-08-01T00:00:00.000Z"), ativo: "Variação Mensal", valor: "0.5" },
+        { fundKey: "BRISTOL", referenceDate: new Date("2026-08-31T00:00:00.000Z"), ativo: "PATRIMONIO", valor: "200" },
+        { fundKey: "BRISTOL", referenceDate: new Date("2026-08-31T00:00:00.000Z"), ativo: "Variação Mensal", valor: "1.5" },
+      ];
+    },
+    async listCaixasForRanges() {
+      return [];
+    },
+    async listVopSnapshots() {
+      return [];
+    },
+  };
+
+  const result = await loadDashboardOverview({ repository });
+
+  assert.deepEqual(
+    result.funds.find((fund) => fund.id === "bristol")?.monthlyReturnHistory,
+    []
+  );
+});
