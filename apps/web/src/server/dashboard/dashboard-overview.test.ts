@@ -21,6 +21,7 @@ const fund = (id: string, integrated = true) => ({
   monthlyCostTotal: 50,
   monthlyRevenuePeriods: 10,
   monthlyCostPeriods: 10,
+  economicsStatus: "ready" as const,
   vopIntegrated: integrated,
 });
 

@@ -25,6 +25,7 @@ export type DashboardFundInput = {
   monthlyCostTotal: number;
   monthlyRevenuePeriods: number;
   monthlyCostPeriods: number;
+  economicsStatus: "ready" | "no_data";
   vopIntegrated: boolean;
 };
 
