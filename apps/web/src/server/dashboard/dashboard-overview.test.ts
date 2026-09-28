@@ -15,6 +15,7 @@ const fund = (id: string, integrated = true) => ({
   dailyReturn: 0.1,
   monthReturn: 0.2,
   yearReturn: 0.3,
+  monthlyReturnHistory: [],
   averageMonthlyRevenue: 10,
   averageMonthlyCost: 5,
   monthlyRevenueTotal: 100,

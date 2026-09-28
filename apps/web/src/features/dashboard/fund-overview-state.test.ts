@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  allFundsExpanded,
   filterAndSortFunds,
+  initialExpandedFundIds,
+  toggleAllFunds,
   toggleExpandedFund,
 } from "./fund-overview-state";
 import type { DashboardFundRow } from "@/server/dashboard/dashboard-overview";
@@ -22,6 +25,7 @@ const row = (
   dailyReturn: 0,
   monthReturn: 0,
   yearReturn: 0,
+  monthlyReturnHistory: [],
   averageMonthlyRevenue: 0,
   averageMonthlyCost: 0,
   monthlyRevenueTotal: 0,
@@ -67,8 +71,21 @@ test("ordena indicadores decrescentes e mantém valores ausentes por último", (
   );
 });
 
-test("abre somente uma linha e recolhe a linha selecionada novamente", () => {
-  assert.equal(toggleExpandedFund(null, "apuama"), "apuama");
-  assert.equal(toggleExpandedFund("apuama", "bristol"), "bristol");
-  assert.equal(toggleExpandedFund("bristol", "bristol"), null);
+test("inicia todos os fundos abertos somente quando existem no máximo dois", () => {
+  assert.deepEqual(initialExpandedFundIds(["apuama", "bristol"]), ["apuama", "bristol"]);
+  assert.deepEqual(initialExpandedFundIds(["apuama", "bristol", "antena"]), []);
+});
+
+test("abre e recolhe fundos individualmente sem fechar os demais", () => {
+  assert.deepEqual(toggleExpandedFund(["apuama"], "bristol"), ["apuama", "bristol"]);
+  assert.deepEqual(toggleExpandedFund(["apuama", "bristol"], "apuama"), ["bristol"]);
+});
+
+test("expande e recolhe todos os fundos em conjunto", () => {
+  const fundIds = ["apuama", "bristol", "antena"];
+
+  assert.deepEqual(toggleAllFunds(["apuama"], fundIds), fundIds);
+  assert.deepEqual(toggleAllFunds(fundIds, fundIds), []);
+  assert.equal(allFundsExpanded(fundIds, fundIds), true);
+  assert.equal(allFundsExpanded(["apuama", "bristol"], fundIds), false);
 });

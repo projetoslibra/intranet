@@ -305,6 +305,7 @@ function emptyFinancials(
     dailyReturn: 0,
     monthReturn: 0,
     yearReturn: 0,
+    monthlyReturnHistory: [],
     averageMonthlyRevenue: 0,
     averageMonthlyCost: 0,
     monthlyRevenueTotal: 0,
@@ -499,6 +500,17 @@ export async function loadDashboardOverview(options?: {
       else if (category === "variacao_mensal") monthReturn += value;
       else if (category === "variacao_anual") yearReturn += value;
     }
+    const monthlyReturnsByDate = new Map<string, number>();
+    for (const row of fundCarteiras) {
+      if (classifyCarteiraAtivo(row.ativo) !== "variacao_mensal") continue;
+      addToMap(monthlyReturnsByDate, dateKey(row.referenceDate), Number(row.valor));
+    }
+    const monthlyReturnHistory = Array.from(monthlyReturnsByDate.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([date, value]) => ({
+        referenceDate: new Date(`${date}T00:00:00.000Z`),
+        value,
+      }));
     const economicsStatus =
       caixasResult.status === "fulfilled" ? "ready" : "no_data";
     const averages =
@@ -519,6 +531,7 @@ export async function loadDashboardOverview(options?: {
       dailyReturn,
       monthReturn,
       yearReturn,
+      monthlyReturnHistory,
       ...averages,
       economicsStatus,
       vopIntegrated,

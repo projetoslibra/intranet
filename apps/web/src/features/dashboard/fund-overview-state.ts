@@ -69,9 +69,26 @@ export function filterAndSortFunds(
   });
 }
 
+export function initialExpandedFundIds(fundIds: string[]) {
+  return fundIds.length <= 2 ? fundIds.slice() : [];
+}
+
 export function toggleExpandedFund(
-  currentFundId: string | null,
+  currentFundIds: string[],
   selectedFundId: string
 ) {
-  return currentFundId === selectedFundId ? null : selectedFundId;
+  return currentFundIds.includes(selectedFundId)
+    ? currentFundIds.filter((fundId) => fundId !== selectedFundId)
+    : [...currentFundIds, selectedFundId];
+}
+
+export function allFundsExpanded(
+  currentFundIds: string[],
+  fundIds: string[]
+) {
+  return fundIds.length > 0 && fundIds.every((fundId) => currentFundIds.includes(fundId));
+}
+
+export function toggleAllFunds(currentFundIds: string[], fundIds: string[]) {
+  return allFundsExpanded(currentFundIds, fundIds) ? [] : fundIds.slice();
 }

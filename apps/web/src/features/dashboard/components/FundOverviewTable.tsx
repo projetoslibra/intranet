@@ -1,10 +1,23 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, Search } from "lucide-react";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { SyncedHorizontalScroll } from "@/components/synced-horizontal-scroll";
 import {
+  allFundsExpanded,
   filterAndSortFunds,
+  initialExpandedFundIds,
+  toggleAllFunds,
   toggleExpandedFund,
   type FundSortMode,
 } from "@/features/dashboard/fund-overview-state";
@@ -18,6 +31,7 @@ const percentFormatter = new Intl.NumberFormat("pt-BR", { minimumFractionDigits:
 const termFormatter = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const monthlyRateFormatter = new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 4, maximumFractionDigits: 4 });
 const dateFormatter = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" });
+const shortDateFormatter = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
 
 function operationalFallback(status: FundOperationalStatus) {
   if (status === "no_operations") return "Sem operações";
@@ -52,6 +66,63 @@ function DetailCard({ label, value, detail, valueClassName = "text-slate-950" }:
       <p className={`mt-2 text-base font-semibold ${valueClassName}`}>{value}</p>
       {detail ? <p className="mt-1 text-xs text-slate-500">{detail}</p> : null}
     </div>
+  );
+}
+
+function MonthlyReturnChart({ fund }: { fund: DashboardFundRow }) {
+  const data = fund.monthlyReturnHistory.map((point) => ({
+    date: point.referenceDate.getTime(),
+    value: point.value,
+  }));
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4 xl:col-span-3">
+      <div>
+        <h3 className="text-sm font-semibold text-slate-950">Evolução da rentabilidade no mês</h3>
+        <p className="mt-1 text-xs text-slate-500">Rentabilidade mensal acumulada por posição da carteira.</p>
+      </div>
+      {data.length < 2 ? (
+        <div className="mt-4 flex h-56 items-center justify-center rounded-md bg-slate-50 text-sm text-slate-500">
+          Histórico insuficiente para exibir o gráfico.
+        </div>
+      ) : (
+        <div className="mt-4 h-64 w-full" aria-label={`Gráfico de rentabilidade mensal de ${fund.name}`} role="img">
+          <ResponsiveContainer height="100%" width="100%">
+            <LineChart data={data} margin={{ left: 0, right: 16, top: 8, bottom: 0 }}>
+              <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                axisLine={false}
+                dataKey="date"
+                minTickGap={24}
+                tickFormatter={(value) => shortDateFormatter.format(new Date(Number(value)))}
+                tickLine={false}
+                type="number"
+                domain={["dataMin", "dataMax"]}
+              />
+              <YAxis
+                axisLine={false}
+                tickFormatter={(value) => `${percentFormatter.format(Number(value))}%`}
+                tickLine={false}
+                width={72}
+              />
+              <Tooltip
+                formatter={(value) => [`${percentFormatter.format(Number(value))}%`, "Rentabilidade"]}
+                labelFormatter={(value) => dateFormatter.format(new Date(Number(value)))}
+              />
+              <ReferenceLine stroke="#94a3b8" strokeDasharray="4 4" y={0} />
+              <Line
+                activeDot={{ r: 5 }}
+                dataKey="value"
+                dot={false}
+                stroke="#2563eb"
+                strokeWidth={2.5}
+                type="monotone"
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -127,6 +198,8 @@ function FundDetails({ fund }: { fund: DashboardFundRow }) {
           />
         </div>
       </section>
+
+      <MonthlyReturnChart fund={fund} />
     </div>
   );
 }
@@ -134,7 +207,10 @@ function FundDetails({ fund }: { fund: DashboardFundRow }) {
 export function FundOverviewTable({ funds }: { funds: DashboardFundRow[] }) {
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState<FundSortMode>("name");
-  const [expandedFundId, setExpandedFundId] = useState<string | null>(null);
+  const fundIds = useMemo(() => funds.map((fund) => fund.id), [funds]);
+  const [expandedFundIds, setExpandedFundIds] = useState<string[]>(() =>
+    initialExpandedFundIds(funds.map((fund) => fund.id))
+  );
   const visibleFunds = useMemo(
     () => filterAndSortFunds(funds, query, sortMode),
     [funds, query, sortMode]
@@ -149,6 +225,14 @@ export function FundOverviewTable({ funds }: { funds: DashboardFundRow[] }) {
           <p className="mt-1 text-sm text-slate-500">Compare os principais indicadores e expanda uma linha para ver os detalhes.</p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
+          <button
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition hover:border-primary/40 hover:bg-primary/5 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+            onClick={() => setExpandedFundIds((current) => toggleAllFunds(current, fundIds))}
+            type="button"
+          >
+            {allFundsExpanded(expandedFundIds, fundIds) ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            {allFundsExpanded(expandedFundIds, fundIds) ? "Recolher todos" : "Expandir todos"}
+          </button>
           <label className="relative min-w-[240px]">
             <span className="sr-only">Buscar fundo</span>
             <Search aria-hidden="true" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -197,7 +281,7 @@ export function FundOverviewTable({ funds }: { funds: DashboardFundRow[] }) {
             </thead>
             <tbody>
               {visibleFunds.map((fund) => {
-                const expanded = expandedFundId === fund.id;
+                const expanded = expandedFundIds.includes(fund.id);
                 const stale = fund.positionDate !== null && fund.positionDate.getTime() < latestPositionTime;
                 return (
                   <Fragment key={fund.id}>
@@ -229,7 +313,7 @@ export function FundOverviewTable({ funds }: { funds: DashboardFundRow[] }) {
                           aria-expanded={expanded}
                           aria-label={`${expanded ? "Recolher" : "Expandir"} detalhes de ${fund.name}`}
                           className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:border-primary/40 hover:bg-primary/5 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-                          onClick={() => setExpandedFundId((current) => toggleExpandedFund(current, fund.id))}
+                          onClick={() => setExpandedFundIds((current) => toggleExpandedFund(current, fund.id))}
                           type="button"
                         >
                           {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}

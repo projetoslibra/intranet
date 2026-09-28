@@ -29,9 +29,12 @@ test("carrega fontes em lote e mantém os fundos quando uma fonte secundária fa
     async listCarteirasForRanges() {
       calls.carteiras += 1;
       return [
+        { fundKey: "APUAMA", referenceDate: new Date("2026-09-01T00:00:00.000Z"), ativo: "Variação Mensal", valor: "0.25" },
+        { fundKey: "APUAMA", referenceDate: new Date("2026-09-15T00:00:00.000Z"), ativo: "Variação Mensal", valor: "1.5" },
         { fundKey: "APUAMA", referenceDate: new Date("2026-09-25T00:00:00.000Z"), ativo: "SRP", valor: "60" },
         { fundKey: "APUAMA", referenceDate: new Date("2026-09-25T00:00:00.000Z"), ativo: "MEZAN", valor: "30" },
         { fundKey: "APUAMA", referenceDate: new Date("2026-09-25T00:00:00.000Z"), ativo: "PATRIMONIO", valor: "10" },
+        { fundKey: "APUAMA", referenceDate: new Date("2026-09-25T00:00:00.000Z"), ativo: "Variação Mensal", valor: "2.75" },
         { fundKey: "BRISTOL", referenceDate: new Date("2026-09-24T00:00:00.000Z"), ativo: "SRP", valor: "150" },
       ];
     },
@@ -83,4 +86,12 @@ test("carrega fontes em lote e mantém os fundos quando uma fonte secundária fa
   assert.equal(result.funds.find((fund) => fund.id === "antena")?.financialStatus, "no_data");
   assert.equal(result.funds.find((fund) => fund.id === "apuama")?.economicsStatus, "no_data");
   assert.equal(result.funds.find((fund) => fund.id === "apuama")?.averageMonthlyRevenue, 0);
+  assert.deepEqual(
+    result.funds.find((fund) => fund.id === "apuama")?.monthlyReturnHistory,
+    [
+      { referenceDate: new Date("2026-09-01T00:00:00.000Z"), value: 0.25 },
+      { referenceDate: new Date("2026-09-15T00:00:00.000Z"), value: 1.5 },
+      { referenceDate: new Date("2026-09-25T00:00:00.000Z"), value: 2.75 },
+    ]
+  );
 });

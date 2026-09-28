@@ -19,6 +19,10 @@ export type DashboardFundInput = {
   dailyReturn: number;
   monthReturn: number;
   yearReturn: number;
+  monthlyReturnHistory: Array<{
+    referenceDate: Date;
+    value: number;
+  }>;
   averageMonthlyRevenue: number;
   averageMonthlyCost: number;
   monthlyRevenueTotal: number;
