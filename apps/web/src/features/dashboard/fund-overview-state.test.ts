@@ -71,8 +71,9 @@ test("ordena indicadores decrescentes e mantém valores ausentes por último", (
   );
 });
 
-test("inicia todos os fundos abertos somente quando existem no máximo dois", () => {
-  assert.deepEqual(initialExpandedFundIds(["apuama", "bristol"]), ["apuama", "bristol"]);
+test("inicia todos os fundos recolhidos independentemente da quantidade", () => {
+  assert.deepEqual(initialExpandedFundIds([]), []);
+  assert.deepEqual(initialExpandedFundIds(["apuama", "bristol"]), []);
   assert.deepEqual(initialExpandedFundIds(["apuama", "bristol", "antena"]), []);
 });
 

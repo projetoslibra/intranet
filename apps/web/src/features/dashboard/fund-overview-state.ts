@@ -69,8 +69,8 @@ export function filterAndSortFunds(
   });
 }
 
-export function initialExpandedFundIds(fundIds: string[]) {
-  return fundIds.length <= 2 ? fundIds.slice() : [];
+export function initialExpandedFundIds(_fundIds: string[]) {
+  return [];
 }
 
 export function toggleExpandedFund(
