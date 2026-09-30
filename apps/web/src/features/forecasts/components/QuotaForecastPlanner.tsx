@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Calculator, Info, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Calculator, Info, Loader2, Save, Trash2 } from "lucide-react";
 import { calculateFlatAverage } from "@/lib/flat-average";
 import {
   calculateDebtorPddAfterReduction,
@@ -16,6 +17,15 @@ import {
   selectionTotals as buildSelectionTotals,
   toggleAllVisibleTitleIds,
 } from "@/features/forecasts/stock-title-selection";
+import {
+  allocateReversalByNominal,
+  forecastImpactDate,
+  suggestedForecastName,
+  titleMatchesEvidence,
+  type ForecastSettlementMode,
+} from "@/features/forecasts/forecast-execution";
+import type { ForecastHistoryEntry } from "@/features/forecasts/forecast-history-types";
+import { ForecastHistoryPanel } from "@/features/forecasts/components/ForecastHistoryPanel";
 
 type FundOption = {
   id: string;
@@ -51,6 +61,7 @@ type ForecastStockTitle = LogicaPddTitle & {
   cedentName: string;
   cedentDocument: string | null;
   documentNumber: string;
+  yourNumber: string | null;
   nominalValue: number;
   pddRange: string | null;
   situation: string | null;
@@ -76,6 +87,7 @@ type PddCompositionItem = {
 };
 
 type QuotaForecastPlannerProps = {
+  forecastHistory: ForecastHistoryEntry[];
   funds: FundOption[];
   selectedFundId: string;
   historicalRows: HistoricalRow[];
@@ -539,7 +551,9 @@ type AppliedTitleReduction = {
 
 type AppliedReductionBatch = {
   id: string;
+  executionDate: string;
   reductionDate: string;
+  settlementMode: ForecastSettlementMode;
   titleIds: string[];
 };
 
@@ -818,6 +832,12 @@ function StockReductionPanel({
   const [isCedentMenuOpen, setIsCedentMenuOpen] = useState(false);
   const [isDebtorMenuOpen, setIsDebtorMenuOpen] = useState(false);
   const [reductionDate, setReductionDate] = useState(defaultDate);
+  const [settlementMode, setSettlementMode] = useState<ForecastSettlementMode>(
+    "NEXT_BUSINESS_DAY"
+  );
+  const impactDate = reductionDate
+    ? forecastImpactDate(reductionDate, settlementMode)
+    : "";
   const [selectedTitleIds, setSelectedTitleIds] = useState<Set<string>>(
     () => new Set()
   );
@@ -989,14 +1009,14 @@ function StockReductionPanel({
         (item) => pddDebtorKey(item) === key
       );
       const previousPdd = calculateDebtorPddAfterReduction(
-        reductionDate || stockData.latestDate,
+        impactDate || stockData.latestDate,
         debtorTitles,
         appliedTitleIds
       );
       const nextAppliedTitleIds = new Set(appliedTitleIds);
       nextAppliedTitleIds.add(title.id);
       const nextPdd = calculateDebtorPddAfterReduction(
-        reductionDate || stockData.latestDate,
+        impactDate || stockData.latestDate,
         debtorTitles,
         nextAppliedTitleIds
       );
@@ -1005,7 +1025,7 @@ function StockReductionPanel({
     }
 
     return result;
-  }, [appliedTitleIds, appliedTitleReductions, cedentTitles, reductionDate, stockData]);
+  }, [appliedTitleIds, appliedTitleReductions, cedentTitles, impactDate, stockData]);
   const reductionSimulation = useMemo(() => {
     if (!stockData) {
       return {
@@ -1027,7 +1047,7 @@ function StockReductionPanel({
         (title) => pddDebtorKey(title) === key
       );
       const previousPdd = calculateDebtorPddAfterReduction(
-        reductionDate || stockData.latestDate,
+        impactDate || stockData.latestDate,
         debtorTitles,
         appliedTitleIds
       );
@@ -1038,7 +1058,7 @@ function StockReductionPanel({
         .forEach((title) => nextAppliedTitleIds.add(title.id));
 
       const nextPdd = calculateDebtorPddAfterReduction(
-        reductionDate || stockData.latestDate,
+        impactDate || stockData.latestDate,
         debtorTitles,
         nextAppliedTitleIds
       );
@@ -1077,7 +1097,7 @@ function StockReductionPanel({
       reversalValue: Math.max(0, currentPdd - newPdd),
       affectedDebtors: affectedDebtorKeys.size,
     };
-  }, [appliedTitleIds, reductionDate, selectedTitles, stockData]);
+  }, [appliedTitleIds, impactDate, selectedTitles, stockData]);
   const selectedTotals = buildSelectionTotals(
     selectedTitles,
     -reductionSimulation.reversalValue
@@ -1122,7 +1142,9 @@ function StockReductionPanel({
       ...appliedReductionBatches,
       {
         id: `${Date.now()}-${selectedTitles.map((title) => title.id).join("-")}`,
-        reductionDate,
+        executionDate: reductionDate,
+        reductionDate: impactDate,
+        settlementMode,
         titleIds: selectedTitles.map((title) => title.id),
       },
     ]);
@@ -1202,7 +1224,7 @@ function StockReductionPanel({
       </div>
 
       <div className="space-y-4 p-5">
-        <div className="grid gap-4 lg:grid-cols-[minmax(260px,1fr)_minmax(260px,1fr)_180px_auto] lg:items-start">
+        <div className="grid gap-4 lg:grid-cols-[minmax(240px,1fr)_minmax(240px,1fr)_170px_190px_auto] lg:items-start">
           <div className="relative space-y-2">
             <label className="text-sm font-medium text-slate-700" htmlFor="cedentSearch">
               Buscar cedente
@@ -1363,6 +1385,22 @@ function StockReductionPanel({
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="space-y-2 lg:self-end">
+            <label className="text-sm font-medium text-slate-700" htmlFor="settlementMode">
+              Tipo de baixa
+            </label>
+            <select
+              className="h-10 w-full rounded border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              id="settlementMode"
+              onChange={(event) => setSettlementMode(event.target.value as ForecastSettlementMode)}
+              value={settlementMode}
+            >
+              <option value="NEXT_BUSINESS_DAY">Normal (D+1 útil)</option>
+              <option value="D0">D0</option>
+            </select>
+            {impactDate ? <p className="text-xs text-slate-500">Impacto em {formatDate(impactDate)}</p> : null}
           </div>
 
           <button
@@ -1564,7 +1602,7 @@ function StockReductionPanel({
               <table className="min-w-[980px] border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
-                    <th className="px-4 py-3 text-left font-semibold">Data</th>
+                    <th className="px-4 py-3 text-left font-semibold">Execução / impacto</th>
                     <th className="px-4 py-3 text-left font-semibold">Cedente</th>
                     <th className="px-4 py-3 text-left font-semibold">Sacado</th>
                     <th className="px-4 py-3 text-right font-semibold">Titulos</th>
@@ -1577,7 +1615,8 @@ function StockReductionPanel({
                   {computedAppliedReductionBatches.map((batch) => (
                     <tr className="border-b border-slate-100 last:border-0" key={batch.id}>
                       <td className="px-4 py-3 text-slate-700">
-                        {formatDate(batch.reductionDate)}
+                        <span className="block">{formatDate(batch.executionDate)} · {batch.settlementMode === "D0" ? "D0" : "Normal"}</span>
+                        <span className="text-xs text-slate-500">Impacto {formatDate(batch.reductionDate)}</span>
                       </td>
                       <td className="px-4 py-3 text-slate-700">
                         {batch.cedentNames.join(", ") || "-"}
@@ -1625,11 +1664,13 @@ function StockReductionPanel({
 }
 
 export function QuotaForecastPlanner({
+  forecastHistory,
   funds,
   selectedFundId,
   historicalRows,
   stockData,
 }: QuotaForecastPlannerProps) {
+  const router = useRouter();
   const lastHistorical = historicalRows.at(-1) ?? null;
   const defaultViewDate = lastHistorical
     ? dateKey(lastBusinessDayOfMonth(parseDateKey(lastHistorical.date)))
@@ -1639,6 +1680,18 @@ export function QuotaForecastPlanner({
   const [appliedReductionBatches, setAppliedReductionBatches] = useState<
     AppliedReductionBatch[]
   >([]);
+  const nextVersion =
+    Math.max(
+      0,
+      ...forecastHistory
+        .filter((forecast) => forecast.periodEnd === viewDate)
+        .map((forecast) => forecast.version)
+    ) + 1;
+  const suggestedName = suggestedForecastName(viewDate, nextVersion);
+  const [forecastName, setForecastName] = useState(suggestedName);
+  const [savingForecast, setSavingForecast] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState("");
+  const [sourceForecastId, setSourceForecastId] = useState<string | null>(null);
   const averageCreditRightsRevenue = useMemo(
     () => calculateAverageCreditRightsRevenue(historicalRows),
     [historicalRows]
@@ -1653,9 +1706,13 @@ export function QuotaForecastPlanner({
   const lastMonthlyReturn = lastHistorical?.variacaoMensal ?? 0;
   const lastYearlyReturn = lastHistorical?.variacaoAnual ?? 0;
 
+  const forecastEndDate = appliedReductionBatches.reduce(
+    (latest, batch) => (batch.reductionDate > latest ? batch.reductionDate : latest),
+    viewDate
+  );
   const futureDates = useMemo(
-    () => buildFutureDates(lastHistorical?.date ?? null, viewDate),
-    [lastHistorical?.date, viewDate]
+    () => buildFutureDates(lastHistorical?.date ?? null, forecastEndDate),
+    [forecastEndDate, lastHistorical?.date]
   );
   const pddMovementsByDate = useMemo(
     () =>
@@ -1670,7 +1727,12 @@ export function QuotaForecastPlanner({
   useEffect(() => {
     setAppliedReductionBatches([]);
     setInputs({});
+    setSourceForecastId(null);
   }, [selectedFundId, stockData?.latestDate]);
+
+  useEffect(() => {
+    setForecastName(suggestedName);
+  }, [suggestedName]);
 
   const projections = useMemo(() => {
     let previousPl = lastPatrimonio;
@@ -1752,6 +1814,132 @@ export function QuotaForecastPlanner({
     }));
   }
 
+  async function saveForecast() {
+    if (!stockData || !forecastName.trim() || projections.length === 0) return;
+    setSavingForecast(true);
+    setSaveFeedback("");
+    const computedBatches = calculateAppliedReductionState(
+      stockData,
+      appliedReductionBatches
+    ).computedBatches;
+    const titles = computedBatches.flatMap((batch) => {
+      const selectedTitles = stockData.titles.filter((title) =>
+        batch.titleIds.includes(title.id)
+      );
+      const allocation = allocateReversalByNominal(
+        selectedTitles,
+        batch.reversalValue
+      );
+      return selectedTitles.map((title) => ({
+        sourceStockId: title.id,
+        plannedExecutionDate: batch.executionDate,
+        settlementMode: batch.settlementMode,
+        reversalAmount: allocation[title.id] ?? 0,
+      }));
+    });
+
+    try {
+      const response = await fetch("/api/previsoes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          fundId: selectedFundId,
+          name: forecastName.trim(),
+          periodEnd: viewDate,
+          sourceForecastId: sourceForecastId ?? undefined,
+          stockReferenceDate: stockData.latestDate,
+          stockFundName: stockData.fundName,
+          titles,
+          projections: projections.map((row) => ({
+            date: row.date,
+            pddTurnover: row.pddTurnover,
+            pddReversal: row.pddReversal,
+            pddNet: row.pddNet,
+            manualPddDelta: row.manualPddDelta,
+            creditRightsRevenue: row.creditRightsRevenue,
+            fundCost: row.fundCost,
+            creditRights: row.creditRights,
+            pdd: row.pdd,
+            patrimonio: row.patrimonio,
+            dailyReturn: row.dailyReturn,
+            monthlyReturn: row.monthlyReturn,
+            yearlyReturn: row.yearlyReturn,
+          })),
+        }),
+      });
+      const payload = await response.json();
+      setSaveFeedback(payload.message ?? "Operação concluída.");
+      if (payload.ok) router.refresh();
+    } catch {
+      setSaveFeedback("Não foi possível gravar a previsão.");
+    } finally {
+      setSavingForecast(false);
+    }
+  }
+
+  function useForecastAsBase(forecast: ForecastHistoryEntry) {
+    const groups = new Map<string, AppliedReductionBatch>();
+
+    forecast.titles.forEach((historicalTitle) => {
+      const currentTitle = stockData?.titles.find(
+        (title) =>
+          title.id === historicalTitle.sourceStockId ||
+          titleMatchesEvidence(
+            {
+              documentNumber: title.documentNumber,
+              dueDate: title.originalDueDate,
+              nominalValue: title.nominalValue,
+              yourNumber: title.yourNumber,
+            },
+            {
+              documentNumber: historicalTitle.documentNumber,
+              dueDate: historicalTitle.originalDueDate,
+              nominalValue: Number(historicalTitle.nominalValue),
+              yourNumber: historicalTitle.yourNumber,
+            }
+          )
+      );
+      if (!currentTitle) return;
+      const key = `${historicalTitle.plannedExecutionDate}:${historicalTitle.settlementMode}`;
+      const current = groups.get(key) ?? {
+        id: `version-${forecast.id}-${key}`,
+        executionDate: historicalTitle.plannedExecutionDate,
+        reductionDate: forecastImpactDate(
+          historicalTitle.plannedExecutionDate,
+          historicalTitle.settlementMode
+        ),
+        settlementMode: historicalTitle.settlementMode,
+        titleIds: [],
+      };
+      current.titleIds.push(currentTitle.id);
+      groups.set(key, current);
+    });
+
+    const version =
+      Math.max(
+        0,
+        ...forecastHistory
+          .filter((item) => item.periodEnd === forecast.periodEnd)
+          .map((item) => item.version)
+      ) + 1;
+    setViewDate(forecast.periodEnd);
+    setInputs(
+      Object.fromEntries(
+        forecast.manualPddInputs.map((input) => [
+          input.date,
+          { pddDelta: input.value, pddDeltaRaw: formatInputNumber(input.value) },
+        ])
+      )
+    );
+    setAppliedReductionBatches(Array.from(groups.values()));
+    setSourceForecastId(forecast.id);
+    setForecastName(suggestedForecastName(forecast.periodEnd, version));
+    setSaveFeedback(
+      `A previsão “${forecast.name}” foi carregada como base. Ajuste a simulação e grave a nova versão.`
+    );
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   const projectedDailyReturn = finalProjection?.dailyReturn ?? 0;
   const projectedMonthlyReturn =
     finalProjection?.monthlyReturn ?? lastMonthlyReturn;
@@ -1809,7 +1997,7 @@ export function QuotaForecastPlanner({
             Previsão diária
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            {futureDates.length} datas futuras até {viewDate ? formatDate(viewDate) : "-"}
+            {futureDates.length} datas futuras até {forecastEndDate ? formatDate(forecastEndDate) : "-"}
           </p>
         </div>
 
@@ -2048,6 +2236,38 @@ export function QuotaForecastPlanner({
         onAppliedReductionBatchesChange={setAppliedReductionBatches}
         stockData={stockData}
       />
+
+      <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl flex-1 space-y-2">
+            <label className="text-sm font-medium text-slate-700" htmlFor="forecastName">
+              Nome da previsão
+            </label>
+            <input
+              className="h-10 w-full rounded border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              id="forecastName"
+              maxLength={120}
+              onChange={(event) => setForecastName(event.target.value)}
+              value={forecastName}
+            />
+            <p className="text-xs text-slate-500">
+              A gravação congela os cálculos e cria uma nova versão no histórico.
+            </p>
+          </div>
+          <button
+            className="inline-flex h-10 items-center justify-center gap-2 rounded bg-primary px-5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={savingForecast || !stockData || !forecastName.trim() || projections.length === 0}
+            onClick={() => void saveForecast()}
+            type="button"
+          >
+            {savingForecast ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Gravar previsão
+          </button>
+        </div>
+        {saveFeedback ? <p className="mt-3 rounded bg-slate-50 px-3 py-2 text-sm text-slate-700">{saveFeedback}</p> : null}
+      </section>
+
+      <ForecastHistoryPanel history={forecastHistory} onUseAsBase={useForecastAsBase} />
     </div>
   );
 }

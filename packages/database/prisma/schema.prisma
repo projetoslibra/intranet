@@ -179,6 +179,18 @@ enum BankDifferenceStatus {
   CANCELLED
 }
 
+enum ForecastSettlementMode {
+  D0
+  NEXT_BUSINESS_DAY
+}
+
+enum ForecastExecutionStatus {
+  PENDING
+  EXECUTED
+  STOCK_CONFIRMED
+  DIVERGENT
+}
+
 model User {
   id                        String                          @id @default(cuid())
   name                      String
@@ -203,6 +215,8 @@ model User {
   operationalStatusEvents   ConsignadoStatusEvent[]
   pddImports                ConsignadoPddImport[]
   fundModuleVisibilityUpdates FundModuleVisibility[]
+  createdForecasts            Forecast[]                       @relation("ForecastCreatedBy")
+  executedForecastItems       ForecastTitle[]                  @relation("ForecastTitleExecutedBy")
 
   @@map("users")
 }
@@ -272,6 +286,7 @@ model Fund {
   consignadoPddTitles   ConsignadoPddTitle[]
   vopSnapshots          FundVopSnapshot[]
   moduleVisibilities    FundModuleVisibility[]
+  forecasts             Forecast[]
 
   @@map("funds")
 }
@@ -1152,6 +1167,94 @@ model RiskLimitPosition {
   @@index([code])
   @@index([cedentDimensionEntryId])
   @@map("risk_limit_positions")
+}
+
+model Forecast {
+  id                 String                    @id @default(cuid())
+  fundId             String                    @map("fund_id")
+  createdByUserId    String                    @map("created_by_user_id")
+  sourceForecastId   String?                   @map("source_forecast_id")
+  name               String
+  version            Int
+  periodEnd          DateTime                  @map("period_end") @db.Date
+  stockReferenceDate DateTime                  @map("stock_reference_date") @db.Date
+  stockFundName      String                    @map("stock_fund_name")
+  isActive           Boolean                   @default(true) @map("is_active")
+  createdAt          DateTime                  @default(now()) @map("created_at")
+  updatedAt          DateTime                  @updatedAt @map("updated_at")
+  fund               Fund                      @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  createdBy          User                      @relation("ForecastCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  sourceForecast     Forecast?                 @relation("ForecastVersions", fields: [sourceForecastId], references: [id], onDelete: SetNull)
+  derivedForecasts   Forecast[]                @relation("ForecastVersions")
+  dailyProjections   ForecastDailyProjection[]
+  titles             ForecastTitle[]
+
+  @@unique([fundId, periodEnd, version])
+  @@index([fundId, isActive, createdAt])
+  @@map("forecasts")
+}
+
+model ForecastDailyProjection {
+  id                  String   @id @default(cuid())
+  forecastId          String   @map("forecast_id")
+  projectionDate      DateTime @map("projection_date") @db.Date
+  pddTurnover         Decimal  @default(0) @map("pdd_turnover") @db.Decimal(24, 10)
+  pddReversal         Decimal  @default(0) @map("pdd_reversal") @db.Decimal(24, 10)
+  pddNet              Decimal  @default(0) @map("pdd_net") @db.Decimal(24, 10)
+  manualPddDelta      Decimal  @default(0) @map("manual_pdd_delta") @db.Decimal(24, 10)
+  creditRightsRevenue Decimal  @default(0) @map("credit_rights_revenue") @db.Decimal(24, 10)
+  fundCost            Decimal  @default(0) @map("fund_cost") @db.Decimal(24, 10)
+  creditRights        Decimal  @default(0) @map("credit_rights") @db.Decimal(24, 10)
+  pdd                 Decimal  @default(0) @db.Decimal(24, 10)
+  patrimonio          Decimal  @default(0) @db.Decimal(24, 10)
+  dailyReturn         Decimal  @default(0) @map("daily_return") @db.Decimal(18, 10)
+  monthlyReturn       Decimal  @default(0) @map("monthly_return") @db.Decimal(18, 10)
+  yearlyReturn        Decimal  @default(0) @map("yearly_return") @db.Decimal(18, 10)
+  forecast            Forecast @relation(fields: [forecastId], references: [id], onDelete: Cascade)
+
+  @@unique([forecastId, projectionDate])
+  @@index([projectionDate])
+  @@map("forecast_daily_projections")
+}
+
+model ForecastTitle {
+  id                        String                  @id @default(cuid())
+  forecastId                String                  @map("forecast_id")
+  sourceStockId             String                  @map("source_stock_id") @db.Uuid
+  cedentName                String                  @map("cedent_name")
+  cedentDocument            String?                 @map("cedent_document")
+  debtorName                String                  @map("debtor_name")
+  debtorDocument            String?                 @map("debtor_document")
+  documentNumber            String                  @map("document_number")
+  yourNumber                String?                 @map("your_number")
+  originalDueDate           DateTime                @map("original_due_date") @db.Date
+  nominalValue              Decimal                 @map("nominal_value") @db.Decimal(24, 10)
+  presentValue              Decimal                 @map("present_value") @db.Decimal(24, 10)
+  pddValue                  Decimal                 @map("pdd_value") @db.Decimal(24, 10)
+  reversalAmount            Decimal                 @map("reversal_amount") @db.Decimal(24, 10)
+  settlementMode            ForecastSettlementMode  @map("settlement_mode")
+  plannedExecutionDate      DateTime                @map("planned_execution_date") @db.Date
+  plannedImpactDate         DateTime                @map("planned_impact_date") @db.Date
+  status                    ForecastExecutionStatus @default(PENDING)
+  executedAt                DateTime?               @map("executed_at")
+  executedByUserId          String?                 @map("executed_by_user_id")
+  actualExecutionDate       DateTime?               @map("actual_execution_date") @db.Date
+  actualImpactDate          DateTime?               @map("actual_impact_date") @db.Date
+  openMovementReferenceDate DateTime?               @map("open_movement_reference_date") @db.Date
+  openMovementPeriod        String?                 @map("open_movement_period")
+  openMovementObservedAt    DateTime?               @map("open_movement_observed_at")
+  checkedStockReferenceDate DateTime?               @map("checked_stock_reference_date") @db.Date
+  stockConfirmedAt          DateTime?               @map("stock_confirmed_at")
+  createdAt                 DateTime                @default(now()) @map("created_at")
+  updatedAt                 DateTime                @updatedAt @map("updated_at")
+  forecast                  Forecast                @relation(fields: [forecastId], references: [id], onDelete: Cascade)
+  executedBy                User?                   @relation("ForecastTitleExecutedBy", fields: [executedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([forecastId, sourceStockId])
+  @@index([forecastId, plannedExecutionDate])
+  @@index([status, actualImpactDate])
+  @@index([documentNumber, originalDueDate])
+  @@map("forecast_titles")
 }
 
 model AuditLog {
