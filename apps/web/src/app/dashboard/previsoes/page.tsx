@@ -3,6 +3,7 @@ import { findDefaultFund, sortFundsByDisplayPriority } from "@/lib/fund-order";
 import { fundListWhere } from "@/lib/fund-modules";
 import { hasPermission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
+import { getForecastHistory } from "@/server/forecasts/forecast-history";
 
 type ForecastsPageProps = {
   searchParams?: {
@@ -31,6 +32,7 @@ type ForecastStockTitle = {
   debtorName: string;
   debtorDocument: string | null;
   documentNumber: string;
+  yourNumber: string | null;
   originalDueDate: string;
   nominalValue: number;
   presentValue: number;
@@ -322,6 +324,7 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
           nomeSacado: true,
           docSacado: true,
           numeroDocumento: true,
+          seuNumero: true,
           dataVencimentoOriginal: true,
           valorNominal: true,
           valorPresente: true,
@@ -371,6 +374,7 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
             debtorName: row.nomeSacado,
             debtorDocument: row.docSacado,
             documentNumber: row.numeroDocumento,
+            yourNumber: row.seuNumero,
             originalDueDate: dateKey(row.dataVencimentoOriginal),
             nominalValue: Number(row.valorNominal),
             presentValue: Number(row.valorPresente),
@@ -503,8 +507,11 @@ export default async function ForecastsPage({ searchParams }: ForecastsPageProps
       -(seniorVariation + mezzanineVariation + Math.min(expensesVariation, 0));
   }
 
+  const forecastHistory = await getForecastHistory(selectedFund.id);
+
   return (
     <QuotaForecastPlanner
+      forecastHistory={forecastHistory}
       funds={funds}
       historicalRows={historicalRows}
       selectedFundId={selectedFund?.id ?? ""}
