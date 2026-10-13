@@ -402,7 +402,7 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
             />
           ) : null}
 
-          <section className="rounded border border-slate-200 bg-white shadow-executive">
+          <section className="overflow-hidden rounded border border-slate-200 bg-white shadow-executive">
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
               <div>
                 <h3 className="text-base font-semibold text-slate-950">Risco</h3>
@@ -415,30 +415,26 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
 
             {data.risk.rows.length ? (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[900px] text-sm">
+                <table className="w-full min-w-[820px] text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
-                      <th className="px-4 py-3 text-left font-semibold">Comercial</th>
                       <th className="px-4 py-3 text-left font-semibold">Código</th>
                       <th className="px-4 py-3 text-left font-semibold">Cedente</th>
                       <th className="px-4 py-3 text-right font-semibold">Lim. utilizado</th>
                       <th className="px-4 py-3 text-right font-semibold">Lim. disponível</th>
                       <th className="px-4 py-3 text-right font-semibold">Vencidos</th>
-                      <th className="px-4 py-3 text-right font-semibold">Performance</th>
+                      <th className="border-l border-blue-100 bg-blue-50 px-5 py-3 text-right font-bold text-blue-800">Performance</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.risk.rows.map((row) => (
-                      <tr className="border-b border-slate-100" key={`${row.code}-${row.cedentName}`}>
-                        <td className="px-4 py-3 text-slate-700">
-                          {row.commercial ?? "Não identificado"}
-                        </td>
+                      <tr className="border-b border-slate-100 transition-colors hover:bg-slate-50" key={`${row.code}-${row.cedentName}`}>
                         <td className="px-4 py-3 text-slate-500">{row.code ?? "-"}</td>
                         <td className="px-4 py-3 font-medium text-slate-800">{row.cedentName}</td>
                         <td className="px-4 py-3 text-right">{formatCurrency(row.limitUsed)}</td>
                         <td className="px-4 py-3 text-right">{formatCurrency(row.limitAvailable)}</td>
                         <td className="px-4 py-3 text-right">{formatCurrency(row.overdueAmount)}</td>
-                        <td className="px-4 py-3 text-right font-semibold">
+                        <td className="border-l border-blue-100 bg-blue-50/60 px-5 py-3 text-right text-base font-bold tabular-nums text-blue-900">
                           {formatPercent(row.performance)}
                         </td>
                       </tr>
@@ -455,28 +451,6 @@ export default async function MesaPage({ searchParams }: MesaPageProps) {
         </div>
       ) : null}
 
-      <section className="rounded border border-slate-200 bg-white p-5 shadow-executive">
-        <h3 className="text-sm font-semibold text-slate-950">Últimas importações operacionais</h3>
-        <div className="mt-4 grid gap-2">
-          {data.imports.length ? (
-            data.imports.map((item) => (
-              <div
-                className="flex flex-wrap items-center justify-between gap-3 rounded border border-slate-200 px-3 py-2 text-sm"
-                key={item.id}
-              >
-                <span className="font-medium text-slate-800">
-                  {item.module} · {item.fundName ?? "Geral"}
-                </span>
-                <span className="text-slate-500">
-                  {formatDateKey(item.referenceDate)} · {item.importedRows} linhas · {item.status}
-                </span>
-              </div>
-            ))
-          ) : (
-            <p className="text-sm text-slate-500">Nenhuma importação operacional registrada.</p>
-          )}
-        </div>
-      </section>
     </div>
   );
 }

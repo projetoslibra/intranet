@@ -3,18 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { fundDisplayPriority } from "@/lib/fund-order";
 import type { CashDailyBalance } from "@/features/cash/types/cash";
 
-export type OperationalImportSummary = {
-  id: string;
-  module: string;
-  fileName: string;
-  status: string;
-  referenceDate: string | null;
-  importedRows: number;
-  errorRows: number;
-  createdAt: string;
-  fundName: string | null;
-};
-
 export type ConcentrationRow = {
   name: string;
   document: string;
@@ -69,7 +57,6 @@ export type OperationDeskData = {
   refreshedAt: string;
   usingLatestStockAndPl: boolean;
   cashBalances: CashDailyBalance[];
-  imports: OperationalImportSummary[];
   stockSummaries: StockComplianceSummary[];
   risk: {
     referenceDate: string | null;
@@ -346,27 +333,6 @@ async function getAvailableDates(): Promise<string[]> {
   ).sort((a, b) => b.localeCompare(a));
 }
 
-async function getLatestImports(): Promise<OperationalImportSummary[]> {
-  const rows = await prisma.importBatch.findMany({
-    where: { module: { in: ["RECEIVABLE_STOCK", "RISK_LIMITS", "CEDENT_DIMENSION"] } },
-    orderBy: { createdAt: "desc" },
-    take: 8,
-    include: { fund: { select: { shortName: true, name: true } } },
-  });
-
-  return rows.map((row) => ({
-    id: row.id,
-    module: row.module,
-    fileName: row.fileName,
-    status: row.status,
-    referenceDate: row.referenceDate ? dateKey(row.referenceDate) : null,
-    importedRows: row.importedRows,
-    errorRows: row.errorRows,
-    createdAt: row.createdAt.toISOString(),
-    fundName: row.fund?.shortName ?? row.fund?.name ?? null,
-  }));
-}
-
 async function getStockSummaries(
   referenceDate: Date,
   filters: StockComplianceFilters = {},
@@ -454,6 +420,18 @@ async function getStockSummaries(
     });
 }
 
+export function buildRiskRows(rows: Omit<RiskRow, "performance">[]): RiskRow[] {
+  const filtered = rows.filter((row) =>
+    ![row.code, row.cedentName].some((value) => /^total\s+geral\s*:?$/i.test(value?.trim() ?? ""))
+  );
+  const totalUsed = filtered.reduce((sum, row) => sum + row.limitUsed, 0);
+
+  return filtered.map((row) => ({
+    ...row,
+    performance: totalUsed > 0 ? row.limitUsed / totalUsed : 0,
+  }));
+}
+
 async function getRisk(referenceDate: Date): Promise<OperationDeskData["risk"]> {
   const batch = await prisma.importBatch.findFirst({
     where: {
@@ -475,8 +453,7 @@ async function getRisk(referenceDate: Date): Promise<OperationDeskData["risk"]> 
   });
 
   const filtered = positions.filter((row) => !row.limitUsed.equals(row.overdueAmount));
-  const totalUsed = filtered.reduce((sum, row) => sum + toNumber(row.limitUsed), 0);
-  const rows = filtered.map((row) => ({
+  const rows = buildRiskRows(filtered.map((row) => ({
     code: row.code,
     cedentName: row.cedentName,
     commercial: row.cedentDimensionEntry?.commercial ?? null,
@@ -484,9 +461,8 @@ async function getRisk(referenceDate: Date): Promise<OperationDeskData["risk"]> 
     limitUsed: toNumber(row.limitUsed),
     limitAvailable: toNumber(row.limitAvailable),
     overdueAmount: toNumber(row.overdueAmount),
-    performance: totalUsed > 0 ? toNumber(row.limitUsed) / totalUsed : 0,
     identified: Boolean(row.cedentDimensionEntryId),
-  }));
+  })));
 
   return {
     referenceDate: dateKey(batch.referenceDate),
@@ -507,13 +483,12 @@ export async function getOperationDeskData(
     new Date().toISOString().slice(0, 10);
   const referenceDate = parseDateKey(selectedDate);
 
-  const [cashRows, imports, stockSummaries, risk] = await Promise.all([
+  const [cashRows, stockSummaries, risk] = await Promise.all([
     prisma.companyCashDailyBalance.findMany({
       where: { referenceDate },
       include: { fund: { select: { name: true, shortName: true } } },
       orderBy: { fund: { name: "asc" } },
     }),
-    getLatestImports(),
     getStockSummaries(referenceDate, stockFilters, useLatestStockAndPl),
     getRisk(referenceDate),
   ]);
@@ -524,7 +499,6 @@ export async function getOperationDeskData(
     refreshedAt: new Date().toISOString(),
     usingLatestStockAndPl: useLatestStockAndPl,
     cashBalances: cashRows.map(serializeCash),
-    imports,
     stockSummaries,
     risk,
   };
