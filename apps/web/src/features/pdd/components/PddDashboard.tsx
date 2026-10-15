@@ -269,16 +269,18 @@ function SummaryMetricCard({
       ) : null}
       {detail ? <p className="mt-1 text-xs text-slate-500">{detail}</p> : null}
       {hoverItems?.length ? (
-        <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-40 hidden w-[min(520px,calc(100vw-48px))] rounded border border-slate-200 bg-white p-3 text-slate-700 shadow-xl group-hover:block">
-          <p className="text-xs font-semibold uppercase text-slate-500">
-            Composicao
-          </p>
-          <div className="mt-2 max-h-72 space-y-2 overflow-y-auto pr-1">
-            {hoverItems.map((item, index) => (
-              <p className="text-xs leading-5" key={`${item}-${index}`}>
-                {item}
-              </p>
-            ))}
+        <div className="absolute left-0 top-full z-40 hidden w-[min(520px,calc(100vw-48px))] pt-2 group-hover:block">
+          <div className="rounded border border-slate-200 bg-white p-3 text-slate-700 shadow-xl">
+            <p className="text-xs font-semibold uppercase text-slate-500">
+              Composicao
+            </p>
+            <div className="mt-2 max-h-72 space-y-2 overflow-y-auto pr-1">
+              {hoverItems.map((item, index) => (
+                <p className="text-xs leading-5" key={`${item}-${index}`}>
+                  {item}
+                </p>
+              ))}
+            </div>
           </div>
         </div>
       ) : null}
